@@ -6,21 +6,18 @@ Pi対応プロバイダーのログインとモデル選択をDeepSeek Harness�
 
 ## 導入
 
-Node.js 22.19.0以上で配布ファイルを作成します。
+サイドバーの「Plugins → Add plugin」を開き、次のURLを入力します。
 
-```sh
-npm ci
-npm run build
-npm test
-npm run pack:plugin
+```text
+https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.0/local-dsh-pi-login-0.2.0.tgz
 ```
 
-`artifacts/local-dsh-pi-login-0.2.0.tgz`をDS Harnessのプラグイン管理画面で指定し、バンドルを有効にします。ファイルはHostから読み込める場所に置いてください。更新後はアプリを再起動します。
+「Install」→「Enable now」を押し、アプリを再起動します。[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.2.0)はGitHub Releasesにあります。
 
-WebプロファイルではCLIからも追加できます。デスクトップではアプリのプラグイン管理画面を使います。
+WebプロファイルではCLIからも追加できます。
 
 ```sh
-dsh plugin --profile web add /absolute/path/local-dsh-pi-login-0.2.0.tgz
+dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.0/local-dsh-pi-login-0.2.0.tgz
 ```
 
 ## 使い方
