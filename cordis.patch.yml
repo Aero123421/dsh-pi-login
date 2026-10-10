@@ -1,0 +1,3 @@
+- insert:
+    - id: dsh-pi-login
+      name: '@local/dsh-pi-login'

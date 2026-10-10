@@ -1,0 +1,28 @@
+export const en = {
+  title: 'Connect with Pi', description: 'Sign in to a provider to use its models.',
+  provider: 'Provider', method: 'Sign-in method', oauth: 'Browser sign-in', apiKey: 'API key',
+  signIn: 'Sign in', signInAgain: 'Sign in again', connected: 'Connected', notConnected: 'Not connected', busy: 'Signing in…',
+  openBrowser: 'Continue in browser', code: 'Verification code', copy: 'Copy code', copied: 'Copied',
+  cancel: 'Cancel', close: 'Close', submit: 'Continue', success: 'Signed in',
+  successDescription: 'Your credentials are saved in DeepSeek Harness.',
+  enable: 'Enable provider models', enabled: 'Provider enabled. Its models are available in the model picker.',
+  failed: 'Sign-in failed. Please try again.', expired: 'This sign-in session has ended. Start again.',
+  loadFailed: 'Could not load the providers.', retry: 'Retry', empty: 'No Pi sign-in providers are available.',
+  answer: 'Enter the requested value', secret: 'Enter your API key', selection: 'Choose an option',
+  enableFailed: 'Signed in, but the model settings could not be saved. Try again from Models settings.',
+  waiting: 'Complete the sign-in in your browser.', readOnly: 'Credentials are read-only in this environment.',
+}
+export const ja = {
+  title: 'Piで接続', description: 'プロバイダーにログインしてモデルを使用します。',
+  provider: 'プロバイダー', method: '接続方法', oauth: 'ブラウザでログイン', apiKey: 'APIキー',
+  signIn: 'ログイン', signInAgain: '再ログイン', connected: '接続済み', notConnected: '未接続', busy: 'ログイン中…',
+  openBrowser: 'ブラウザで続ける', code: '認証コード', copy: 'コードをコピー', copied: 'コピーしました',
+  cancel: 'キャンセル', close: '閉じる', submit: '続ける', success: 'ログインしました',
+  successDescription: '認証情報をDeepSeek Harnessに保存しました。',
+  enable: 'プロバイダーのモデルを有効にする', enabled: 'プロバイダーを有効にしました。モデルピッカーから選べます。',
+  failed: 'ログインできませんでした。もう一度お試しください。', expired: 'ログイン操作の有効期限が切れました。最初からやり直してください。',
+  loadFailed: 'プロバイダーを読み込めませんでした。', retry: '再試行', empty: 'ログインできるPiプロバイダーがありません。',
+  answer: '要求された値を入力', secret: 'APIキーを入力', selection: '項目を選択',
+  enableFailed: 'ログインは完了しましたが、モデル設定を保存できませんでした。モデル設定からもう一度お試しください。',
+  waiting: 'ブラウザでログインを完了してください。', readOnly: 'この環境では認証情報を保存できません。',
+}
