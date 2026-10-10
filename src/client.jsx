@@ -1,7 +1,10 @@
 import React, { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { LoginController } from './controller.mjs'
 import { en, ja } from './locales.mjs'
 import css from './styles.css'
+import controlsCss from '../../../.cache/native-controls.css'
+
 const NS = 'dsh.piLogin'
 export const inject = ['slots', 'locale', 'connection']
 
@@ -11,8 +14,25 @@ function useCopy(locale) {
 }
 
 function safeUrl(value) {
-  try { const url = new URL(value); if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) return url.href } catch {}
-  return undefined
+  try {
+    const url = new URL(value)
+    if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) return url.href
+  } catch {}
+}
+
+/** The same anchored, keyboard-navigable menu used throughout Harness. */
+function Choice({ label, value, options, onChange, disabled }) {
+  const [open, setOpen] = useState(false)
+  const id = useId()
+  return <div className="dsh-pi-choice">
+    <span id={id} className="dsh-pi-caption">{label}</span>
+    <Menu open={open} onClose={() => setOpen(false)} portal selectedId={value} items={options}
+      onSelect={id => { onChange(id); setOpen(false) }}
+      anchor={<Button variant="outline" disabled={disabled} aria-labelledby={id} aria-haspopup="menu" aria-expanded={open}
+        onClick={() => setOpen(!open)} className="dsh-pi-choice-button">
+        <span>{options.find(option => option.id === value)?.label}</span><IconChevronDownOutlineRegular size={14} />
+      </Button>} />
+  </div>
 }
 
 function Prompt({ prompt, ticket, controller, t, onFailure }) {
@@ -23,30 +43,30 @@ function Prompt({ prompt, ticket, controller, t, onFailure }) {
     event.preventDefault()
     const answer = value
     setValue(''); setBusy(true)
-    try { await controller.call('answer', { ticket, id: prompt.id, value: answer }) } catch { onFailure() } finally { setBusy(false) }
+    try { await controller.call('answer', { ticket, id: prompt.id, value: answer }) }
+    catch { onFailure() } finally { setBusy(false) }
   }
-  return <form onSubmit={submit}>
-    <label htmlFor={id}>{prompt.message || t(prompt.kind === 'secret' ? 'secret' : 'answer')}</label>
+  return <form onSubmit={submit} className="dsh-pi-prompt">
     {prompt.kind === 'select'
-      ? <select id={id} value={value} onChange={event => setValue(event.target.value)} required><option value="">{t('selection')}</option>{prompt.options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select>
-      : <input id={id} autoFocus type={prompt.kind === 'secret' ? 'password' : 'text'} autoComplete="off" spellCheck={false} value={value} placeholder={prompt.placeholder} onChange={event => setValue(event.target.value)} />}
-    <div className="dsh-pi-actions"><button data-primary disabled={busy}>{t('submit')}</button></div>
+      ? <Choice label={prompt.message || t('selection')} value={value} options={prompt.options} onChange={setValue} disabled={busy} />
+      : <><label htmlFor={id}>{prompt.message || t(prompt.kind === 'secret' ? 'secret' : 'answer')}</label>
+        <Input id={id} data-modal-autofocus type={prompt.kind === 'secret' ? 'password' : 'text'} autoComplete="off" spellCheck={false}
+          value={value} placeholder={prompt.placeholder} onChange={event => setValue(event.target.value)} /></>}
+    <div className="dsh-pi-actions"><Button type="submit" variant="primary" disabled={busy || (prompt.kind === 'select' && !value)}>{t('submit')}</Button></div>
   </form>
 }
 
 function LoginDialog({ entry, method, controller, t, onClose }) {
-  const dialog = useRef(null)
-  const ticketRef = useRef(undefined)
-  const [ticket, setTicket] = useState(undefined)
+  const ticketRef = useRef()
+  const [ticket, setTicket] = useState()
   const [state, setState] = useState({ status: 'running' })
   const [error, setError] = useState(false)
   const [enabling, setEnabling] = useState(false)
   const [enabled, setEnabled] = useState(false)
   const [enableError, setEnableError] = useState(false)
+  const [keyOverride, setKeyOverride] = useState(false)
   const [copied, setCopied] = useState(false)
-  const titleId = useId()
   useEffect(() => {
-    dialog.current.showModal()
     let alive = true
     void controller.start(entry.key, method).then(value => {
       ticketRef.current = value
@@ -57,9 +77,8 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
   }, [])
   useEffect(() => {
     if (!ticket) return
-    let alive = true
+    let alive = true, timer
     const abort = new AbortController()
-    let timer
     async function poll() {
       try {
         const snapshot = await controller.call('state', { ticket }, abort.signal)
@@ -74,54 +93,111 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
   }, [ticket])
   const link = safeUrl(state.notice?.url)
   const complete = state.status !== 'running' || error
-  async function enable() {
+  async function enable(useLogin = false) {
     setEnabling(true); setEnableError(false)
-    try { await controller.call('enable', { key: entry.key }); setEnabled(true) } catch { setEnableError(true) } finally { setEnabling(false) }
+    try { await controller.call(useLogin ? 'use-login' : 'enable', { key: entry.key }); setEnabled(true); await controller.load() }
+    catch (error) { setEnableError(true); setKeyOverride(error.message.endsWith('/api-key-override')) } finally { setEnabling(false) }
   }
-  return <dialog ref={dialog} className="dsh-pi-login dsh-pi-dialog" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); onClose() }} onClick={event => {
-    if (event.target !== dialog.current) return
-    const rect = dialog.current.getBoundingClientRect()
-    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
-  }}>
-    <h2 id={titleId}>{entry.label}</h2>
+  return <Modal open onClose={onClose} title={entry.label} closeLabel={t('close')} className="dsh-pi-login"
+    footer={<Button variant="outline" onClick={onClose}>{t(complete ? 'close' : 'cancel')}</Button>}>
     {error || state.status === 'failed' ? <p role="alert">{t('failed')}</p> : null}
-    {state.status === 'authorized' ? <><p role="status">{t('success')}</p><p>{t('successDescription')}</p>{enabled ? <p role="status">{t('enabled')}</p> : <button onClick={enable} disabled={enabling}>{t('enable')}</button>}{enableError ? <p role="alert">{t('enableFailed')}</p> : null}</> : null}
+    {state.status === 'authorized' ? <><p role="status">{t('success')}</p><p className="dsh-pi-muted">{t('successDescription')}</p>
+      {enabled ? <p role="status">{t('enabled')}</p> : <Button variant="primary" onClick={() => { void enable() }} disabled={enabling}>{t('enable')}</Button>}
+      {enableError ? <p role="alert">{t(keyOverride ? 'keyOverride' : 'enableFailed')}</p> : null}
+      {keyOverride && !enabled ? <Button variant="outline" onClick={() => { void enable(true) }} disabled={enabling}>{t('useLogin')}</Button> : null}</> : null}
     {state.status === 'cancelled' ? <p>{t('expired')}</p> : null}
     {!complete ? <>
       <p role="status">{state.notice?.message || t(link ? 'waiting' : 'busy')}</p>
       {link ? <a className="dsh-pi-link" href={link} target="_blank" rel="noopener noreferrer">{t('openBrowser')}</a> : null}
-      {state.notice?.code ? <><p>{t('code')}</p><code className="dsh-pi-code">{state.notice.code}</code><button onClick={async () => { try { await navigator.clipboard.writeText(state.notice.code); setCopied(true) } catch { setCopied(false) } }}>{t(copied ? 'copied' : 'copy')}</button></> : null}
+      {state.notice?.code ? <div className="dsh-pi-verification"><span className="dsh-pi-muted">{t('code')}</span>
+        <div className="dsh-pi-verification-row"><code>{state.notice.code}</code>
+          <Button size="sm" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(state.notice.code); setCopied(true) } catch { setCopied(false) } }}>{t(copied ? 'copied' : 'copy')}</Button></div></div> : null}
       {state.prompt ? <Prompt key={state.prompt.id} prompt={state.prompt} ticket={ticket} controller={controller} t={t} onFailure={() => setError(true)} /> : null}
     </> : null}
-    <div className="dsh-pi-actions"><button onClick={onClose}>{t(complete ? 'close' : 'cancel')}</button></div>
-  </dialog>
+  </Modal>
+}
+
+function ModelsDialog({ entry, controller, t, onClose }) {
+  const [snapshot, setSnapshot] = useState()
+  const [search, setSearch] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
+  useEffect(() => {
+    const abort = new AbortController()
+    void controller.call('models', { key: entry.key }, abort.signal).then(setSnapshot, () => { if (!abort.signal.aborted) setError(true) })
+    return () => abort.abort()
+  }, [entry.key])
+  async function toggle(model, enabled) {
+    setBusy(true); setError(false)
+    try {
+      await controller.call('set-model', { key: entry.key, model, enabled, revision: snapshot.revision })
+      setSnapshot(await controller.call('models', { key: entry.key }))
+    } catch {
+      setError(true)
+      try { setSnapshot(await controller.call('models', { key: entry.key })) } catch {}
+    } finally { setBusy(false) }
+  }
+  const needle = search.trim().toLowerCase()
+  const models = snapshot?.models.filter(model => `${model.id} ${model.name}`.toLowerCase().includes(needle))
+  return <Modal open title={`${entry.label} · ${t('models')}`} description={t('modelsHint')} closeLabel={t('close')} onClose={onClose}
+    className="dsh-pi-login dsh-pi-models-dialog" footer={<Button variant="outline" onClick={onClose}>{t('close')}</Button>}>
+    <Input icon={<IconSearchOutlineRegular size={16} />} aria-label={t('searchModels')} placeholder={t('searchModels')} data-modal-autofocus value={search} onChange={event => setSearch(event.target.value)} />
+    {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
+    {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
+    {snapshot && !entry.managed ? <p className="dsh-pi-muted">{t('activateFirst')}</p> : null}
+    <div className="dsh-pi-model-list">
+      {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
+        <div className="dsh-pi-model-label"><span>{model.name}</span><span className="dsh-pi-model-id">{model.id}</span></div>
+        <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={busy || !entry.writable || !entry.managed} onChange={enabled => { void toggle(model.id, enabled) }} />
+      </div>)}
+      {models?.length === 0 ? <p className="dsh-pi-muted">{t('noResults')}</p> : null}
+    </div>
+  </Modal>
 }
 
 export function ConnectionUI({ controller, locale, provider }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const t = useCopy(locale)
-  const [selected, setSelected] = useState('llm-pi-ai/openai-codex')
+  const [selected, setSelected] = useState('llm-pi-ai/openai')
   const [preferredMethod, setPreferredMethod] = useState('oauth')
-  const [opened, setOpened] = useState(undefined)
-  const id = useId()
+  const [opened, setOpened] = useState()
+  const [choosingModels, setChoosingModels] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState(false)
   useEffect(() => { void controller.load() }, [controller])
   const entries = provider ? state.entries.filter(entry => entry.provider === provider.provider) : state.entries
   const entry = entries.find(entry => entry.key === selected) || entries[0]
   const method = entry?.methods.find(item => item.id === preferredMethod) || entry?.methods[0]
+  async function toggleProvider(enabled) {
+    setBusy(true); setError(false)
+    try {
+      const snapshot = await controller.call('models', { key: entry.key })
+      await controller.call('set-provider', { key: entry.key, enabled, revision: snapshot.revision })
+      await controller.load()
+    } catch { setError(true); await controller.load() } finally { setBusy(false) }
+  }
   if (provider && !entry && !state.error) return null
   return <section className={`dsh-pi-login ${provider ? 'dsh-pi-card' : 'dsh-pi-footer'}`}>
-    {!provider ? <><h3>{t('title')}</h3><p className="dsh-pi-status">{t('description')}</p></> : null}
-    {state.error ? <p role="alert">{t('loadFailed')} <button onClick={() => { void controller.load() }}>{t('retry')}</button></p> : null}
+    {!provider ? <><h3>{t('title')}</h3><p className="dsh-pi-muted">{t('description')}</p></> : null}
+    {state.error ? <p role="alert">{t('loadFailed')} <Button size="sm" onClick={() => { void controller.load() }}>{t('retry')}</Button></p> : null}
     {state.status === 'ready' && !state.error && entries.length === 0 && !provider ? <p>{t('empty')}</p> : null}
     {entry ? <>
       <div className="dsh-pi-fields">
-        {!provider ? <label htmlFor={`${id}-provider`}>{t('provider')}<select id={`${id}-provider`} value={entry.key} onChange={event => setSelected(event.target.value)}>{entries.map(item => <option key={item.key} value={item.key}>{item.label}</option>)}</select></label> : null}
-        {entry.methods.length > 1 ? <label htmlFor={`${id}-method`}>{t('method')}<select id={`${id}-method`} value={method.id} onChange={event => setPreferredMethod(event.target.value)}>{entry.methods.map(item => <option key={item.id} value={item.id}>{item.id === 'oauth' ? t('oauth') : item.id === 'api-key' ? t('apiKey') : item.label}</option>)}</select></label> : null}
+        {!provider ? <Choice label={t('provider')} value={entry.key} options={entries.map(item => ({ id: item.key, label: item.label }))}
+          onChange={setSelected} disabled={busy} /> : null}
+        {entry.methods.length > 1 ? <Choice label={t('method')} value={method.id} options={entry.methods.map(item => ({ id: item.id, label: item.id === 'oauth' ? t('oauth') : item.id === 'api-key' ? t('apiKey') : item.label }))}
+          onChange={setPreferredMethod} disabled={busy} /> : null}
       </div>
-      <div className="dsh-pi-row"><span className="dsh-pi-status">{t(entry.inFlight ? 'busy' : entry.configured ? 'connected' : 'notConnected')}</span><button data-primary disabled={entry.inFlight || !entry.writable || !method} onClick={() => setOpened({ entry, method: method.id })}>{t(entry.configured ? 'signInAgain' : 'signIn')}</button></div>
-      {!entry.writable ? <p>{t('readOnly')}</p> : null}
+      <div className="dsh-pi-account-row"><span className="dsh-pi-status"><StateDot state={entry.inFlight ? 'ongoing' : entry.configured ? 'done' : 'pending'} size={10} />{t(entry.inFlight ? 'busy' : entry.configured ? 'connected' : 'notConnected')}</span>
+        <Button variant={entry.configured ? 'outline' : 'primary'} size="sm" disabled={entry.inFlight || !entry.writable || !method} onClick={() => setOpened({ entry, method: method.id })}>{t(entry.configured ? 'signInAgain' : 'signIn')}</Button></div>
+      <div className="dsh-pi-provider-row"><div><span>{t('useProvider')}</span><p className="dsh-pi-muted">{t('disabledHint')}</p></div>
+        <Switch label={`${t('useProvider')}: ${entry.label}`} checked={entry.enabled} disabled={busy || !entry.writable || (!entry.configured && !entry.managed)} onChange={enabled => { void toggleProvider(enabled) }} /></div>
+      <Button variant="outline" size="sm" disabled={busy} onClick={() => setChoosingModels(true)}>{t('manageModels')}</Button>
+      {error ? <p role="alert">{t('saveFailed')}</p> : null}
+      {!entry.writable ? <p className="dsh-pi-muted">{t('readOnly')}</p> : null}
     </> : null}
     {opened ? <LoginDialog {...opened} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
+    {choosingModels && entry ? <ModelsDialog entry={entry} controller={controller} t={t} onClose={() => setChoosingModels(false)} /> : null}
   </section>
 }
 
@@ -130,11 +206,11 @@ export function apply(ctx) {
   ctx.effect(() => () => controller.dispose(), 'dsh-pi-login: UI requests')
   ctx.effect(() => ctx.locale.register(NS, { en, ja }), 'dsh-pi-login: copy')
   ctx.effect(() => {
-    const style = document.createElement('style'); style.dataset.dshPiLogin = ''; style.textContent = css; document.head.append(style)
+    const style = document.createElement('style'); style.dataset.dshPiLogin = ''; style.textContent = controlsCss + css; document.head.append(style)
     return () => style.remove()
-  }, 'dsh-pi-login: styles')
+  }, 'dsh-pi-login: official controls')
   ctx.on('connection/reset', () => { void controller.load() })
   const inject = () => ({ controller, locale: ctx.locale })
   ctx.slots.inject('settings.models.footer', () => ctx.slots.register({ name: 'settings.models.footer', id: 'dsh-pi-login', order: 10, inject }, ConnectionUI))
-  ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({ name: 'settings.models.provider-card', id: 'dsh-pi-login', key: 'llm-pi-ai', inject }, ConnectionUI))
+  ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({ name: 'settings.models.provider-card', id: 'dsh-pi-login', key: 'dsh-pi-login', inject }, ConnectionUI))
 }

@@ -1,4 +1,9 @@
 export const en = {
+  useLogin: 'Use the saved sign-in', keyOverride: 'The existing API-key reference takes priority. You can switch this provider to the saved sign-in.',
+  models: 'Models', manageModels: 'Choose models', useProvider: 'Use this provider', searchModels: 'Search models',
+  modelEnabled: 'Use model', loading: 'Loading…', modelsFailed: 'Could not load the models.', saveFailed: 'Could not save. Reload the latest settings and try again.',
+  modelsHint: 'Enabled models appear in the model picker and are available to agents.', noResults: 'No matching models.',
+  disabledHint: 'Turning this off keeps your credentials and model choices.', activateFirst: 'Enable the provider before choosing models.',
   title: 'Connect with Pi', description: 'Sign in to a provider to use its models.',
   provider: 'Provider', method: 'Sign-in method', oauth: 'Browser sign-in', apiKey: 'API key',
   signIn: 'Sign in', signInAgain: 'Sign in again', connected: 'Connected', notConnected: 'Not connected', busy: 'Signing in…',
@@ -13,6 +18,11 @@ export const en = {
   waiting: 'Complete the sign-in in your browser.', readOnly: 'Credentials are read-only in this environment.',
 }
 export const ja = {
+  useLogin: '保存したログインを使う', keyOverride: '既存のAPIキー参照が優先されています。このプロバイダーを保存したログイン認証に切り替えられます。',
+  models: 'モデル', manageModels: 'モデルを選ぶ', useProvider: 'このプロバイダーを使う', searchModels: 'モデルを検索',
+  modelEnabled: 'モデルを使う', loading: '読み込み中…', modelsFailed: 'モデルを読み込めませんでした。', saveFailed: '保存できませんでした。最新の設定を読み込み、もう一度お試しください。',
+  modelsHint: '有効なモデルがモデルピッカーに表示され、エージェントからも使えます。', noResults: '一致するモデルがありません。',
+  disabledHint: 'オフにしても認証情報とモデルの選択は保存されます。', activateFirst: 'プロバイダーを有効にしてからモデルを選んでください。',
   title: 'Piで接続', description: 'プロバイダーにログインしてモデルを使用します。',
   provider: 'プロバイダー', method: '接続方法', oauth: 'ブラウザでログイン', apiKey: 'APIキー',
   signIn: 'ログイン', signInAgain: '再ログイン', connected: '接続済み', notConnected: '未接続', busy: 'ログイン中…',

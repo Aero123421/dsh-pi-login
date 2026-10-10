@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 const KEY_PATTERN = /^llm-pi-ai\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const LIVE = 'running'
+const NS = 'dsh-pi-login'
 
 export class LoginError extends Error {
   constructor(code) { super(code); this.code = code }
@@ -26,25 +27,65 @@ function publicNotice(notice) {
 
 /** A private ticket binds interaction to the initiating page, including other tabs. */
 export class PiLoginBroker {
-  constructor(authorization, credentials, settings, { timeoutMs = 600000, retentionMs = 60000 } = {}) {
+  constructor(authorization, credentials, settings, { timeoutMs = 600000, retentionMs = 60000, catalog } = {}) {
     this.authorization = authorization
     this.credentials = credentials
     this.settings = settings
     this.timeoutMs = timeoutMs
     this.retentionMs = retentionMs
+    this.catalog = catalog
     this.attempts = new Map()
     this.closed = false
   }
 
   async list() {
+    const section = this.section()
     return Promise.all(this.authorization.list().filter(entry => KEY_PATTERN.test(entry.key)).map(async entry => {
       const credential = await this.credentials.describeRecord(entry.key)
       return {
         key: entry.key, provider: entry.key.slice('llm-pi-ai/'.length), label: entry.label,
         methods: entry.methods.map(method => ({ id: method.id, label: method.label })),
         inFlight: entry.inFlight, configured: credential.configured, writable: credential.writable,
+        managed: Object.hasOwn(section?.value?.providers ?? {}, entry.key.slice('llm-pi-ai/'.length)),
+        enabled: Object.hasOwn(section?.value?.providers ?? {}, entry.key.slice('llm-pi-ai/'.length)) && section.value.providers[entry.key.slice('llm-pi-ai/'.length)].enabled !== false,
       }
     }))
+  }
+
+  section() { return this.settings.describe({ redactSecrets: true }).find(row => row.ns === NS) }
+
+  models(key) {
+    if (!KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key) || !this.catalog) throw new LoginError('invalid-request')
+    const provider = key.slice('llm-pi-ai/'.length)
+    const section = this.section()
+    const profile = section?.value?.providers?.[provider] ?? {}
+    return { revision: section?.revision, enabled: Object.hasOwn(section?.value?.providers ?? {}, provider) && profile.enabled !== false,
+      models: this.catalog(provider, profile).map(model => ({ id: model.id, name: model.name, enabled: !profile.disabledModels?.includes(model.id) })) }
+  }
+
+  async setModel(key, model, enabled, revision) {
+    if (typeof enabled !== 'boolean' || !Number.isSafeInteger(revision)) throw new LoginError('invalid-request')
+    const current = this.models(key)
+    if (!current.models.some(entry => entry.id === model)) throw new LoginError('invalid-request')
+    if (current.revision !== revision) throw new LoginError('settings-changed')
+    const provider = key.slice('llm-pi-ai/'.length)
+    const profile = this.section().value?.providers?.[provider]
+    if (!profile) throw new LoginError('not-enabled')
+    const disabled = new Set(profile.disabledModels ?? [])
+    enabled ? disabled.delete(model) : disabled.add(model)
+    await this.settings.update(NS, { providers: { [provider]: { disabledModels: [...disabled] } } }, revision)
+    return { saved: true }
+  }
+
+  async setProvider(key, enabled, revision) {
+    if (typeof enabled !== 'boolean' || !Number.isSafeInteger(revision) || !KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key)) throw new LoginError('invalid-request')
+    const section = this.section()
+    if (!section || section.revision !== revision) throw new LoginError('settings-changed')
+    const provider = key.slice('llm-pi-ai/'.length)
+    const profile = section.value?.providers?.[provider]
+    if (!profile && !(await this.credentials.describeRecord(key)).configured) throw new LoginError('not-connected')
+    await this.settings.update(NS, { providers: { [provider]: { enabled } } }, revision)
+    return { saved: true }
   }
 
   start(key, method) {
@@ -143,13 +184,23 @@ export class PiLoginBroker {
     if (!KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key)) throw new LoginError('invalid-request')
     if (!(await this.credentials.describeRecord(key)).configured) throw new LoginError('not-connected')
     const provider = key.slice('llm-pi-ai/'.length)
-    const section = this.settings.describe({ redactSecrets: true }).find(row => row.ns === 'llm-pi-ai')
+    const section = this.section()
     if (!section) throw new LoginError('unavailable')
     const existing = section.value?.providers?.[provider]
     if (existing?.apiKeyEnv) throw new LoginError('api-key-override')
-    if (Object.hasOwn(section.value?.providers ?? {}, provider)) return { enabled: true }
-    await this.settings.update('llm-pi-ai', { providers: { [provider]: {} } }, section.revision)
+    if (existing && existing.enabled !== false) return { enabled: true }
+    await this.settings.update(NS, { providers: { [provider]: { enabled: true } } }, section.revision)
     return { enabled: true }
+  }
+
+  async useLogin(key) {
+    if (!KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key)) throw new LoginError('invalid-request')
+    if (!(await this.credentials.describeRecord(key)).configured) throw new LoginError('not-connected')
+    const section = this.section()
+    if (!section) throw new LoginError('unavailable')
+    const provider = key.slice('llm-pi-ai/'.length)
+    await this.settings.mutate(NS, [{ op: 'unset', path: ['providers', provider, 'apiKeyEnv'] }], section.revision)
+    return this.enable(key)
   }
 
   async dispose() {
@@ -177,6 +228,10 @@ export async function dispatch(broker, method, payload) {
     case 'answer': return broker.answer(payload.ticket, payload.id, payload.value)
     case 'cancel': return broker.cancel(payload.ticket)
     case 'enable': return broker.enable(payload.key)
+    case 'models': return broker.models(payload.key)
+    case 'set-model': return broker.setModel(payload.key, payload.model, payload.enabled, payload.revision)
+    case 'set-provider': return broker.setProvider(payload.key, payload.enabled, payload.revision)
+    case 'use-login': return broker.useLogin(payload.key)
     default: throw new LoginError('invalid-request')
   }
 }
