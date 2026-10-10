@@ -3,7 +3,7 @@ import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineReg
 import { LoginController } from './controller.mjs'
 import { en, ja } from './locales.mjs'
 import css from './styles.css'
-import controlsCss from '../../../.cache/native-controls.css'
+import controlsCss from '../.cache/native-controls.css'
 
 const NS = 'dsh.piLogin'
 export const inject = ['slots', 'locale', 'connection']

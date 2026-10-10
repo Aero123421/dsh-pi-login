@@ -81,5 +81,27 @@
     "@deepseek-ai/schemastery": {
       "optional": true
     }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node scripts/browser-check.mjs",
+    "pack:plugin": "node scripts/pack.mjs",
+    "test:compat": "node scripts/compat-check.mjs",
+    "test:runtime": "node scripts/runtime-check.mjs",
+    "update:pi": "node scripts/update-pi.mjs"
+  },
+  "devDependencies": {
+    "clsx": "^2.1.1",
+    "esbuild": "0.28.2",
+    "immer": "^10.2.0",
+    "playwright": "^1.56.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "typescript": "6.0.3",
+    "use-sync-external-store": "^1.7.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.5",
+    "zustand": "^5.0.15"
   }
 }
