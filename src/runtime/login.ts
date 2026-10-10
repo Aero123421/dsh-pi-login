@@ -1,10 +1,7 @@
 /**
- * Authorization flows for the pi-ai providers that ship a login. This is the
- * whole of the translation between the harness's neutral notice/prompt
- * vocabulary and pi-ai's `AuthInteraction`; nothing above it knows which
- * library ran the conversation.
+ * Maps Pi login events and prompts to Harness Authorization flows.
  *
- * @module dsh-llm-pi-ai/login
+ * @module dsh-pi-login/runtime/login
  */
 
 import type { AuthEvent, AuthPrompt, AuthType, Provider } from '@earendil-works/pi-ai'
@@ -35,11 +32,8 @@ function loginMethods(provider: Provider | undefined): AuthorizationMethod[] {
 }
 
 /**
- * Restate one pi-ai login event in the seam's vocabulary.
- *
- * A device-code grant is the one event carrying two things the human needs at
- * once — where to go and what to type there — which is why the neutral notice
- * has a `code` beside its `url` rather than folding the code into the message.
+ * Convert a Pi login event to an Authorization notice.
+ * Device-code notices retain both the verification URL and the code.
  * @param event - what pi-ai reported.
  * @param session - the attempt to report it to.
  */
@@ -67,23 +61,17 @@ function relay(event: AuthEvent, session: AuthorizationSession): void {
       session.notify({ message: event.message })
       return
     default:
-      // pi-ai's event union is open to new members: a build that meets one it
-      // does not know still shows the human that something is happening rather
-      // than going silent mid-login.
+      // Keep showing progress for event types added by a newer SDK.
       session.notify({ message: 'Signing in…' })
   }
 }
 
 /**
- * Restate one pi-ai prompt in the seam's vocabulary.
- *
- * `manual_code` becomes a plain text question because the difference pi-ai
- * draws — a code the human copies from a browser rather than a value they know
- * — changes nothing a surface renders. Its own `signal` is carried through, and
- * that is the part which matters: it is how a flow racing a typed code against
- * a browser callback withdraws the losing question.
+ * Convert a Pi prompt to an Authorization prompt.
+ * Manual codes use a text input. Preserve the abort signal so a browser
+ * callback can cancel a pending code prompt.
  * @param prompt - what pi-ai asked.
- * @returns the neutral prompt to put to the human.
+ * @returns the prompt shown by the login UI.
  */
 function restate(prompt: AuthPrompt): AuthorizationPrompt {
   const signal = prompt.signal === undefined ? {} : { signal: prompt.signal }
@@ -110,9 +98,7 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
 /**
  * Register one authorization flow per installed provider that ships a login.
  *
- * Registration is unconditional on configuration: a provider has to be signed
- * into before a route for it is worth adding, so the flow exists from the
- * moment the plugin mounts rather than appearing once a profile does.
+ * Register flows on mount so login is available before configuring a provider.
  * @param ctx - the plugin context carrying `ctx.authorization`.
  * @param auth - the injectables every collection here is built with.
  */
@@ -139,13 +125,10 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
       label: provider.name,
       methods: [first, ...rest],
       async run(session) {
-        // A collection of its own, holding only the provider being signed
-        // into: login is not serving requests, and the credential it produces
-        // lands in the shared store either way.
+        // Login uses a separate Models collection with the shared credential store.
         const models = createModels(auth)
         models.setProvider(provider)
-        // Total over the two ids declared above, and the seam only ever hands
-        // back one a flow declared.
+        // Authorization accepts only methods declared by this flow.
         const type: AuthType = session.method === 'oauth' ? 'oauth' : 'api_key'
         let deviceId: string | undefined
         if (providerId === 'openai' && type === 'oauth') {
@@ -155,8 +138,7 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
           })
           deviceId = (record?.kind === 'grant' ? record.payload.deviceId : undefined) as string | undefined
         }
-        // pi-ai persists what the login returns through that same store, which
-        // is what makes it the single writer of this record.
+        // The SDK writes login credentials through the shared store.
         await models.login(providerId, type, {
           signal: session.signal,
           notify: (event) => { relay(event, session) },

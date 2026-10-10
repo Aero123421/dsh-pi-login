@@ -1,11 +1,9 @@
 /**
- * pi-ai assistant event translation into the Harness streaming protocol.
+ * Converts Pi assistant events to Harness stream chunks.
+ * Parsed tool arguments become JSON strings, and terminal errors become
+ * Harness finish chunks.
  *
- * pi-ai tool-call arguments are parsed objects while the Harness keeps their
- * raw JSON representation. pi-ai also reports failures as terminal stream
- * events, which this module maps into Harness finish chunks.
- *
- * @module dsh-llm-pi-ai/stream
+ * @module dsh-pi-login/runtime/stream
  */
 
 import { brandString } from '@deepseek-ai/dsh-brand'

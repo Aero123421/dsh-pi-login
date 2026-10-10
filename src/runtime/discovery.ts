@@ -1,25 +1,15 @@
 /**
- * Answering "which models can this provider serve?" for the configuration
- * surface's "fetch available models" action.
+ * Lists model candidates for a provider configuration draft.
  *
- * A route the installed pi-ai catalog ships is answered **from that catalog**,
- * with no network call at all: pi-ai's registry is the authoritative list for
- * its own providers, and it carries the capacities a listing endpoint would
- * not disclose. Only a route the catalog does not describe — a gateway, a
- * self-hosted server — is interrogated over the wire.
+ * Catalog providers use the SDK's local catalog, including model capacities.
+ * Custom providers query OpenAI-compatible or Anthropic listing endpoints.
+ * Both the standard data array and enriched models map are supported.
+ * Other protocols require manual model entry.
  *
- * Neither path is a catalog refresh. Nothing here is stored: the request
- * carries a draft the user is still editing, and the reply is candidate
- * metadata the surface offers for adoption. `cordis.patch.yml` remains the only
- * thing that decides what a route serves.
+ * Discovery does not save or refresh the configured catalog. The caller chooses
+ * which candidates to add to cordis.patch.yml.
  *
- * OpenAI-compatible and Anthropic Messages protocols are interrogated through
- * their native model-listing endpoints. The parser accepts the standard
- * `data` array and the enriched `models` map some compatible gateways expose.
- * Every other protocol reports that it cannot be interrogated so the surface
- * falls back to hand-entry rather than guessing its response fields.
- *
- * @module dsh-llm-pi-ai/discovery
+ * @module dsh-pi-login/runtime/discovery
  */
 
 import { INVALID_CREDENTIAL_CODE, LlmError, normalizeApiKey } from '@deepseek-ai/dsh-llm'

@@ -1,7 +1,7 @@
 {
   "name": "@local/dsh-pi-login",
   "version": "0.2.0",
-  "description": "DeepSeek Harness用の独立Pi SDK・モデル管理・ログインUI",
+  "description": "DeepSeek Harness用のPiログインとモデル管理",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -16,7 +16,10 @@
     "icon.svg",
     "cordis.patch.yml",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs",
+    "src/runtime/UPSTREAM.md",
+    "upstream.json"
   ],
   "dsh": {
     "bundle": {

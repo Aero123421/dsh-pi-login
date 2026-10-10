@@ -61,7 +61,7 @@ try {
  page.on('console',message=>{if(message.type()==='error')console.error('Console error:',message.text().slice(0,500))})
  page.setDefaultTimeout(10000)
  await page.goto(ctx.connection.authenticatedUrl(base))
- try {await page.getByRole('heading',{name:'Piで接続'}).waitFor()} catch(error) {await page.screenshot({path:'artifacts/browser-failure.png'});console.error('Page text:',await page.locator('body').innerText());throw error}
+ try {await page.getByRole('heading',{name:'Pi接続'}).waitFor()} catch(error) {await page.screenshot({path:'artifacts/browser-failure.png'});console.error('Page text:',await page.locator('body').innerText());throw error}
  await page.screenshot({path:'artifacts/pi-login-light.png'})
  await page.getByRole('button',{name:'ログイン',exact:true}).first().click()
  await page.getByRole('link',{name:'ブラウザで続ける'}).waitFor()
@@ -70,8 +70,8 @@ try {
  await page.getByRole('button',{name:'続ける',exact:true}).click()
  await page.getByText('ログインしました',{exact:true}).waitFor()
  assert.equal(await page.getByText('browser-fixture-secret',{exact:true}).count(),0)
- await page.getByRole('button',{name:'プロバイダーのモデルを有効にする'}).click()
- await page.getByText('プロバイダーを有効にしました。モデルピッカーから選べます。').waitFor()
+ await page.getByRole('button',{name:'プロバイダーを有効にする'}).click()
+ await page.getByText('プロバイダーを有効にしました。',{exact:true}).waitFor()
  assert.deepEqual(writes,[['dsh-pi-login',{providers:{'openai-codex':{enabled:true}}},7]])
  await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
@@ -113,7 +113,7 @@ try {
  await page.screenshot({path:'artifacts/pi-login-mobile.png'})
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
  await page.evaluate(async()=>{await testRuntime.locale.setLocale('en');document.documentElement.lang='en'})
- await page.getByRole('heading',{name:'Connect with Pi'}).waitFor()
+ await page.getByRole('heading',{name:'Pi connections'}).waitFor()
  await page.evaluate(()=>testRuntime.dispose())
  assert.equal(await page.locator('style[data-dsh-pi-login]').count(),0)
  assert.deepEqual(errors,[])

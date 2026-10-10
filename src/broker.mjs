@@ -19,13 +19,13 @@ function publicNotice(notice) {
     try {
       const url = new URL(notice.url)
       if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) result.url = url.href
-    } catch { /* A provider-supplied invalid URL is never rendered as a link. */ }
+    } catch { /* Ignore invalid provider URLs. */ }
   }
   if (typeof notice.code === 'string') result.code = notice.code.slice(0, 256)
   return result
 }
 
-/** A private ticket binds interaction to the initiating page, including other tabs. */
+/** Private tickets keep login prompts out of shared tab state. */
 export class PiLoginBroker {
   constructor(authorization, credentials, settings, { timeoutMs = 600000, retentionMs = 60000, catalog } = {}) {
     this.authorization = authorization
@@ -218,7 +218,7 @@ export class PiLoginBroker {
   }
 }
 
-/** All methods travel through Harness' trusted Connection transport. */
+/** Uses the authenticated Host Connection RPC transport. */
 export async function dispatch(broker, method, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new LoginError('invalid-request')
   switch (method) {

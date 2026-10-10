@@ -1,7 +1,7 @@
 /**
- * Harness request-history conversion into pi-ai's Context vocabulary.
+ * Converts Harness request history to the Pi Context format.
  *
- * @module dsh-llm-pi-ai/context
+ * @module dsh-pi-login/runtime/context
  */
 
 import { brandString } from '@deepseek-ai/dsh-brand'

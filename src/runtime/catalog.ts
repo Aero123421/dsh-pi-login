@@ -1,15 +1,12 @@
 /**
- * Materialization of one provider route's model catalog. The installed pi-ai
- * catalog supplies defaults keyed by model id, and a profile's own model
- * entries override them field by field, so a route naming a catalog provider
- * stays configuration-free while a route pi-ai has never heard of is fully
- * describable from `cordis.patch.yml`.
+ * Resolves provider model catalogs using Pi defaults and profile overrides.
+ * Custom providers can declare their full catalog in cordis.patch.yml.
  *
- * Strict resolution rejects unserviceable models before settings writes.
- * Deferred resolution retains their diagnostics so stored catalog drift does
- * not prevent inspection, repair, or requests to independently valid models.
+ * Strict resolution rejects invalid models before settings are saved.
+ * Deferred resolution keeps diagnostics so valid models remain usable while
+ * stored configuration is inspected or repaired.
  *
- * @module dsh-llm-pi-ai/catalog
+ * @module dsh-pi-login/runtime/catalog
  */
 
 import { builtinProviders, getAllBuiltinModels, getBuiltinModels } from '@earendil-works/pi-ai/providers/all'

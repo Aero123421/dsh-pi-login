@@ -28,8 +28,7 @@ async function packageRoots(folder, result = new Map()) {
 export async function compileOfficial(entry, outfile, platform='node') {
   await ensureUpstream()
   const roots=await packageRoots(upstreamRoot)
-  // Authorization consumes only this public error class. Import its actual
-  // source directly so unrelated Remote services do not need Typert codegen.
+  // Compile public LLM classes without RPC services or Typert-generated code.
   const llmSource=await readFile(join(upstreamRoot,'packages/llm/llm/src/index.ts'),'utf8')
   const llmAst=ts.createSourceFile('llm.ts',llmSource,ts.ScriptTarget.Latest,true)
   const contract=llmAst.statements.filter(node=>['LlmError','LlmAdapter','assertUsableApiKey'].includes(node.name?.text)).map(node=>node.getText(llmAst)).join('\n')
@@ -50,8 +49,7 @@ export async function compileOfficial(entry, outfile, platform='node') {
       throw new Error(`No official source entry for ${args.path}`)
     })
   }}
-  // Third-party dependencies may be provided by an existing source checkout;
-  // every @deepseek-ai runtime import is always resolved to the pinned official tree.
+  // Resolve Harness imports from the pinned source; use node_modules for third-party dependencies.
   const nodePaths=[resolve('node_modules'),...(process.env.DSH_TEST_NODE_MODULES?[resolve(process.env.DSH_TEST_NODE_MODULES)]:[])]
   await build({entryPoints:[entry],outfile,bundle:true,platform,format:platform==='node'?'esm':'iife',target:'es2022',jsx:'automatic',nodePaths,plugins:[aliases],loader:{'.css':'text'},external:platform==='node'?['@earendil-works/pi-ai','@earendil-works/pi-ai/*']:[],logLevel:'silent',tsconfigRaw:{compilerOptions:{experimentalDecorators:true}},...platform==='node'?{banner:{js:"import {createRequire as pluginCheckRequireFactory} from 'node:module'; const require=pluginCheckRequireFactory(import.meta.url);"}}:{}})
 }

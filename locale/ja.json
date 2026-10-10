@@ -1,3 +1,6 @@
 {
-  "meta": { "title": "Piログイン", "description": "ChatGPTなどのPi対応プロバイダーへのログイン操作を追加" }
+  "meta": {
+    "title": "Piログイン",
+    "description": "Pi対応プロバイダーへのログインとモデル選択"
+  }
 }

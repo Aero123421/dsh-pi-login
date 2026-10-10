@@ -20,7 +20,6 @@ function safeUrl(value) {
   } catch {}
 }
 
-/** The same anchored, keyboard-navigable menu used throughout Harness. */
 function Choice({ label, value, options, onChange, disabled }) {
   const [open, setOpen] = useState(false)
   const id = useId()

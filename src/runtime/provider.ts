@@ -1,22 +1,15 @@
 /**
- * Construction of the pi-ai `Provider` that one configured route registers into
- * the adapter's `Models` collection.
+ * Builds the Pi Provider for a configured route.
  *
- * Two constructions, one decision: a route the installed catalog ships, whose
- * profile does not override the wire protocol, **reuses that catalog provider**
- * with its models replaced — the catalog provider owns API implementations this
- * package cannot reconstruct (Bedrock loads its Smithy module through a
- * separate entry point), so rebuilding it from parts would silently narrow
- * which providers work. Every other route — one pi-ai has never heard of, or a
- * catalog route pointed at a different protocol — is built by `createProvider`
- * over the protocol table below.
+ * Catalog routes without a protocol override reuse their SDK provider with a
+ * replacement model list. This preserves provider-specific implementations,
+ * including Bedrock's separate Smithy entry point. Custom routes and protocol
+ * overrides use createProvider().
  *
- * Credentials never reach this module's storage: the harness resolves a route's
- * key through `ctx.credentials` before the request enters pi-ai and hands it
- * over as a stream option, which `Models` presents to `resolve()` as the
- * credential key.
+ * Credentials are resolved before the request and passed as stream options;
+ * this module does not store them.
  *
- * @module dsh-llm-pi-ai/provider
+ * @module dsh-pi-login/runtime/provider
  */
 
 import type { Api, ApiKeyAuth, Model, Provider, ProviderStreams } from '@earendil-works/pi-ai'

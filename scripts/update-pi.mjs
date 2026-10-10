@@ -22,4 +22,4 @@ updated.version = `${major}.${minor}.${patch + 1}`
 await writeFile(manifestPath, JSON.stringify(updated, null, 2) + '\n')
 const lock = spawnSync(npm, ['install', '--package-lock-only', '--ignore-scripts'], { stdio: 'inherit', shell: process.platform === 'win32' })
 if (lock.status !== 0) process.exit(lock.status ?? 1)
-console.log(`Pi SDK ${version} pinned; plugin ${updated.version}. Run build, test, test:compat, test:runtime, test:browser, and pack:plugins before distributing.`)
+console.log(`Pi SDK ${version}; plugin ${updated.version}. Run build, test, test:compat, test:runtime, test:browser, and pack:plugin before distributing.`)

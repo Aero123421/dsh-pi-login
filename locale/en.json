@@ -1,3 +1,6 @@
 {
-  "meta": { "title": "Pi sign-in", "description": "Sign in to Pi providers, including ChatGPT, from Models settings" }
+  "meta": {
+    "title": "Pi sign-in",
+    "description": "Sign in to Pi providers and choose models"
+  }
 }

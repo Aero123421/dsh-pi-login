@@ -1,11 +1,8 @@
 /**
- * The three adapters between pi-ai's auth model and the harness credential
- * plane. Every pi-ai-specific concept stays on this side of them: the harness
- * seams they consume — `ctx.credentials` records and `ctx.authorization` flows —
- * name nothing from this library, so another adapter family can arrive with a
- * different auth model and share the same two seams.
+ * Connects Pi's credential store, auth context, and login flows to
+ * Harness Credentials and Authorization services.
  *
- * @module dsh-llm-pi-ai/auth
+ * @module dsh-pi-login/runtime/auth
  */
 
 import { homedir } from 'node:os'

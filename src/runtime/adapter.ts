@@ -1,29 +1,17 @@
 /**
- * Generic pi-ai-backed implementation of the Harness LLM seam.
+ * Pi SDK adapter for Harness LLM requests.
  *
- * Each resolution produces one **immutable** snapshot — the profiles plus a
- * `Models` collection holding the `Provider` each route built — and an
- * operation captures a whole snapshot before its first `await`. A
- * configuration change builds a *new* collection rather than mutating the one
- * in use, because `Models.streamSimple()` is lazy: it resolves the provider
- * when the stream is first consumed, which is after the credential await, so a
- * mutated collection would let a request that started under one configuration
- * finish under another — or fail with a provider that no longer exists. This is
- * what makes the seam's per-step call freeze (`llm.prepareCall()`) hold all the
- * way down: switching models mid-reply takes effect on the next step, never
- * inside the one in flight.
+ * Each operation captures an immutable profile and Models snapshot before
+ * awaiting credentials. Models.streamSimple() resolves lazily, so changing
+ * configuration creates a new collection without affecting in-flight requests.
+ * This preserves llm.prepareCall() for the current step.
  *
- * A route naming a credential reference still resolves it through the harness
- * seam and passes it as the request's `apiKey` option, which pi-ai treats as
- * the highest-priority auth override — that is what keeps the fail-loud
- * reference semantics. Everything that override does not cover reaches pi-ai
- * through the collection's own auth: the credential store holds the records a
- * login wrote and a refresh rotates, and the auth context answers the ambient
- * questions a provider asks while resolving. Both are stable across snapshots,
- * so a configuration change rebuilds the collection without forgetting who is
- * signed in.
+ * Explicit credential references take priority through the request's apiKey.
+ * Missing referenced keys fail instead of falling back to a saved login.
+ * The shared credential store and auth context supply login, token refresh,
+ * and ambient auth across configuration changes.
  *
- * @module dsh-llm-pi-ai/adapter
+ * @module dsh-pi-login/runtime/adapter
  */
 
 import type {

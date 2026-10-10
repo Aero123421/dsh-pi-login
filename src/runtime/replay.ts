@@ -1,11 +1,8 @@
 /**
- * Durable pi-ai replay metadata and assistant-history reconstruction.
+ * Stores Pi metadata used to rebuild assistant history on later requests.
+ * Harness content remains the source of text and tool calls.
  *
- * Harness content remains the durable source for text and tool calls. This
- * module stores only the provider-native metadata needed to reconstruct a
- * pi-ai assistant message on a later request.
- *
- * @module dsh-llm-pi-ai/replay
+ * @module dsh-pi-login/runtime/replay
  */
 
 import { LlmError } from '@deepseek-ai/dsh-llm'

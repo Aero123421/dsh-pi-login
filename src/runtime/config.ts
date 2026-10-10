@@ -1,16 +1,13 @@
 /**
- * Configuration schema and provider-profile validation for the pi-ai adapter.
- * Profiles are a dict keyed by provider route, so the composition base and a
- * user-settings layer merge per provider and the route set is structural.
+ * Configuration schema and validation for provider profiles.
+ * Profiles merge by provider key across composition and user settings.
  *
- * A route key is not required to name an installed pi-ai provider. When it does,
- * that provider's endpoint, protocol, display name, and model catalog are the
- * profile's defaults and the profile overrides them field by field; when it does
- * not, the profile is the whole provider declaration. Stored reads retain
- * catalog diagnostics beside serviceable models; writes validate every changed
- * provider before persistence. Self-contained profile constraints apply to both.
+ * Catalog providers supply defaults that profiles can override. Other providers
+ * use the profile as their declaration. Reads retain model
+ * diagnostics; writes validate changed providers before saving. Profile-level
+ * constraints apply in both cases.
  *
- * @module dsh-llm-pi-ai/config
+ * @module dsh-pi-login/runtime/config
  */
 import type { Volatile } from '@deepseek-ai/cordis'
 
