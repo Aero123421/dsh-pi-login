@@ -2,7 +2,7 @@
 
 Pi対応プロバイダーのログインとモデル選択をDeepSeek Harnessに追加します。Pi SDKはプラグイン側で更新します。
 
-対応版：DS Harness `0.2.1-alpha.2`。SDK：`@earendil-works/pi-ai` `1.1.0`。画面全体の日本語化とフォントは別の言語パックで追加できます。
+対応版：DS Harness `0.2.1-alpha.2`。SDK：`@earendil-works/pi-ai` `1.1.0`。
 
 ## 導入
 
