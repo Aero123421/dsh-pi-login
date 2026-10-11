@@ -30,12 +30,7 @@ dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases
 
 ## Meta Museの推論強度とGPT Fastモード
 
-- **Meta Muse Spark 1.3（Standard）**: 対応が確認された `Max`（API上の `reasoning_effort=max`）をモデル選択欄に公開します。`Off`はMuse Sparkで使えないため、選択肢から除外します。
-- **Muse Spark 1.3 Contributor**: `Max`には非対応です。`xhigh`までが選択候補になります。
-- **Muse Spark 1.2/1.1**: `Max`は追加しません。
-- **カスタム設定**: モデルの`reasoningEfforts`を明示した場合はその設定を尊重します。宣言していない段階は自動追加されません。
-
-根拠: [Meta Reasoning](https://dev.meta.ai/docs/reasoning)、[Meta Models](https://dev.meta.ai/docs/models)。
+Pi SDK `1.1.0`のモデルカタログでは、Meta Muse Spark 1.3 Standardは`Max`を選択可能です。Contributorには`Max`が表示されません。これは元のv0.2.1のモデル情報を継承した挙動であり、**このPRでMuse専用の能力上書きは行いません**。接続先の実際の対応と食い違う場合は、Provider/モデルID/認証方式を確認し、能力情報の更新・明示設定で扱います（[モデルカタログ改善 #6](https://github.com/Aero123421/dsh-pi-login/issues/6)）。
 
 **GPTのFastモード**はThinking effortとは独立した設定です。「設定 → モデル → Pi接続 → モデルを選ぶ」で、Fastに対応するOpenAI/OpenAI CodexのGPT系モデルの行にスイッチが表示されます。デフォルトは**オフ**。オンにすると、モデル実行時に`service_tier: priority`（Fast相当）を指定します。モデルのThinking effort（例: High / Max）はそのまま選択できます。
 
