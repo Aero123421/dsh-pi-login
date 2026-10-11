@@ -23,7 +23,7 @@ test('Muse Spark Max availability inherits directly from Pi catalog', () => {
   assert.ok(!ctrLevels.includes('max'))
 })
 
-test('explicit Muse effort declarations override catalog corrections', () => {
+test('explicit Muse effort declarations override the inherited Pi catalog', () => {
   const override = resolveRouteModels({
     ...meta,
     modelOverrides: { 'muse-spark-1.3': { reasoningEfforts: { high: 'high' } } },
