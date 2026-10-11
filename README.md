@@ -28,20 +28,15 @@ dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases
 
 `apiKeyEnv`で指定したAPIキーはログイン認証より優先されます。切り替えるには、認証後に表示される「保存済みの認証を使う」を選びます。
 
-## Meta Museの推論強度とGPT Fastモード
+## Fast
 
-Pi SDK `1.1.0`のモデルカタログでは、Meta Muse Spark 1.3 Standardは`Max`を選択可能です。Contributorには`Max`が表示されません。これは元のv0.2.1のモデル情報を継承した挙動であり、**このPRでMuse専用の能力上書きは行いません**。接続先の実際の対応と食い違う場合は、Provider/モデルID/認証方式を確認し、能力情報の更新・明示設定で扱います（[モデルカタログ改善 #6](https://github.com/Aero123421/dsh-pi-login/issues/6)）。
+対応モデルは、通常版とFast版を別々に選べます。例：`GPT-6.1 Sol`、`GPT-6.1 Sol Fast`。Fast版は最初はオフです。「モデルを選ぶ」でオンにすると、チャットやエージェントのモデル一覧に追加されます。通常版をオフにしてFast版だけを使うこともできます。
 
-**GPTのFastモード**はThinking effortとは独立した設定です。「設定 → モデル → Pi接続 → モデルを選ぶ」で、Fastに対応するOpenAI/OpenAI CodexのGPT系モデルの行にスイッチが表示されます。デフォルトは**オフ**。オンにすると、モデル実行時に`service_tier: priority`（Fast相当）を指定します。モデルのThinking effort（例: High / Max）はそのまま選択できます。
+認証情報とモデルの能力は共通です。Thinking effortは両方で選べます。Fast版を選んだ呼び出しにFastを指定し、通常版には標準処理を指定します。
 
-Fastは**通常より高いトークン料金やChatGPTクレジット消費**が発生する場合があります。モデル・契約・リクエストに応じて利用できないことがあり、要求が標準ティアに振り分けられる場合もあります。エラー時にFastを黙ってオフへフォールバックすることはしません。再度スイッチをオフにして実行してください。
+Fastは通常より高いAPI料金・ChatGPTクレジット消費が発生します。利用可否はモデルと契約によります。Fastが拒否された場合はエラーを表示するので、通常版を選び直してください。接続先が標準処理に振り分ける場合もあります。[OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode)
 
-- Fast設定は`dsh-pi-login`のProviderごとの`fastModels`配列に保存され、認証情報を変更しません。
-- モデルを非表示にするとFast設定が残っていても実行されません。再び有効にすると保存したFast設定が適用されます。
-- インストールしたプラグインとDSHのバージョンが一致していないと、スイッチや推論強度が表示されない場合があります。
-- **Meta MuseではFastスイッチは提供しません。** Fastティアの選択はOpenAI系の該当モデルだけに限定します。
-
-根拠: [OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode)、[Codex Fast mode](https://developers.openai.com/ja-JP/docs/agent-configuration/speed)。
+対応モデルと実装は[Fastの開発資料](docs/fast.md)を参照してください。
 
 ## 既存の設定
 

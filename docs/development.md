@@ -19,9 +19,9 @@ npm run pack:plugin
 
 | コマンド | 確認する内容 |
 | --- | --- |
-| `test` | ログインの入力・終了・有効期限、設定保存・再取得時の競合、Meta Museの推論強度、GPT Fastオプション、日本語と英語の文言、配布用Client |
+| `test` | ログインの入力・終了・有効期限、設定保存・再取得時の競合、Meta Museの推論強度、Fastモデルの対応判定とSDK送信・料金計算、日本語と英語の文言、配布用Client |
 | `test:compat` | 公式のCordis・Authorization・Credentials・Connectionによる認証保存と解除 |
-| `test:runtime` | 実SDKのモデル解決・認証保存・Device Codeの有効期限通知、ローカルサーバーへの生成、設定の取り込みとON/OFF |
+| `test:runtime` | 実SDKのモデル解決・認証保存・Device Codeの有効期限通知、ローカルサーバーへの生成、Fastモデルの履歴再利用・設定変更中の呼び出し・拒否時の動作、設定の取り込みとON/OFF |
 | `test:browser` | ログイン画面、終了理由、再接続中の再取得、認証・Originチェック、モデル選択、明暗テーマ、狭い画面、プラグイン解除 |
 
 runtimeテストの設定保存先とLLM登録先はテスト用サービスです。ブラウザテストは日本語を登録したテスト画面で行い、日本語プラグインやフォントは読み込みません。実アカウントは使用しません。
@@ -39,7 +39,7 @@ GitHub Actionsにも同じチェックを設定しています（`.github/workfl
 ## Thinking effort / Fastの実運用確認
 
 - Pi SDKのモデルカタログを変更せず、`muse-spark-1.3` Standardでは既存の`Max`が表示され、Contributorではカタログ通り表示されないことを確認する。実プロバイダーが送信値を受け付けるかは別途E2Eで検証する。
-- GPTの対象モデルでFastスイッチを入れ、同じThinking effortのまま`service_tier=priority`が送信されること、設定が再起動後も残ることを確認する。スイッチオフでは従来の`streamSimple()`経路を使う。
+- 通常版とFast版をそれぞれ選び、同じThinking effortとAPIモデルIDで`service_tier=default`／`priority`が送信されること、ON/OFFが再起動後も残ることを確認する。Fast版は最初はオフ。実装と参照ソースは[Fastの開発資料](fast.md)を参照。
 - プラン・APIティアがFast非対応のとき、失敗を隠さず利用者へ示すことを確認する。Fastリクエストが実際に高速ティアで処理されたかは、レスポンスの`service_tier`および利用明細でも確認する。
 - ユーザー認証を使った実API E2Eは、モックテストから確認できない。通信コストと契約条件に注意する。
 

@@ -137,16 +137,6 @@ function ModelsDialog({ entry, controller, t, onClose }) {
       try { setSnapshot(await controller.call('models', { key: entry.key })) } catch {}
     } finally { setBusy(false) }
   }
-  async function toggleFast(model, enabled) {
-    setBusy(true); setError(false)
-    try {
-      await controller.call('set-fast', { key: entry.key, model, enabled, revision: snapshot.revision })
-      setSnapshot(await controller.call('models', { key: entry.key }))
-    } catch {
-      setError(true)
-      try { setSnapshot(await controller.call('models', { key: entry.key })) } catch {}
-    } finally { setBusy(false) }
-  }
   const needle = search.trim().toLowerCase()
   const models = snapshot?.models.filter(model => `${model.id} ${model.name}`.toLowerCase().includes(needle))
   return <Modal open title={`${entry.label} · ${t('models')}`} description={t('modelsHint')} closeLabel={t('close')} onClose={onClose}
@@ -155,17 +145,11 @@ function ModelsDialog({ entry, controller, t, onClose }) {
     {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
     {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
     {snapshot && !entry.managed ? <p className="dsh-pi-muted">{t('activateFirst')}</p> : null}
-    {snapshot?.models.some(model => model.fastAvailable) ? <p className="dsh-pi-muted">{t('fastWarning')}</p> : null}
+    {snapshot?.models.some(model => model.fast) ? <p className="dsh-pi-muted">{t('fastWarning')}</p> : null}
     <div className="dsh-pi-model-list">
       {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
         <div className="dsh-pi-model-label"><span>{model.name}</span><span className="dsh-pi-model-id">{model.id}</span></div>
-        <div className="dsh-pi-model-actions">
-          {model.fastAvailable ? <label className="dsh-pi-fast-setting">
-            <span>Fast</span>
-            <Switch label={`${t('fastMode')}: ${model.name}`} checked={model.fastEnabled} disabled={busy || !entry.writable || !entry.managed || !model.enabled} onChange={enabled => { void toggleFast(model.id, enabled) }} />
-          </label> : null}
-          <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={busy || !entry.writable || !entry.managed} onChange={enabled => { void toggle(model.id, enabled) }} />
-        </div>
+        <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={busy || !entry.writable || !entry.managed} onChange={enabled => { void toggle(model.id, enabled) }} />
       </div>)}
       {models?.length === 0 ? <p className="dsh-pi-muted">{t('noResults')}</p> : null}
     </div>

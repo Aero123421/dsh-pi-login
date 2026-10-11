@@ -5,6 +5,8 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import { compileOfficial } from './upstream.mjs'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
 async function within(promise) {
  let timer
  try {return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Delayed list fixture did not settle')),10000)})])}
@@ -29,7 +31,9 @@ ctx.authorization.registerFlow({key,label:'ChatGPT (Codex)',methods:[{id:'oauth'
  const answer=await session.prompt({kind:session.method==='oauth'?'text':'secret',message:session.method==='oauth'?'認証コードを入力':'APIキーを入力'})
  await session.commit({kind:'grant',payload:{token:answer}})
 }})
-const plugin=ctx.plugin({inject:['authorization','credentials','connection','settings'],apply:ctx=>host.applyLoginUI(ctx,{catalog:()=>[{id:'gpt-main',name:'GPT Main'},{id:'gpt-fast',name:'GPT Fast'}]})});await plugin.await()
+const model=getBuiltinModels('openai-codex').find(model=>model.id==='gpt-6.1-sol')
+const fast=fastModelId(model.id)
+const plugin=ctx.plugin({inject:['authorization','credentials','connection','settings'],apply:ctx=>host.applyLoginUI(ctx,{catalog:(provider,profile)=>modelChoices(provider,[model],profile)})});await plugin.await()
 const handler=ctx.connection.createSharedFetchHandler('/api')
 const files=new Map([
  ['/fixture.js',resolve('.cache/browser-fixture.js')],['/login.js',resolve('dist/client.js')],
@@ -97,23 +101,31 @@ try {
  assert.equal(await page.getByText('masked-api-key-fixture',{exact:true}).count(),0)
  await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  await page.getByRole('button',{name:'モデルを選ぶ',exact:true}).first().click()
- await page.getByRole('switch',{name:'モデルを使う: GPT Main',exact:true}).waitFor()
+ await page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol',exact:true}).waitFor()
  await page.evaluate(()=>document.body.removeAttribute('data-ds-dark-theme'))
  await page.screenshot({path:'artifacts/pi-models-light.png'})
  await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
  await page.screenshot({path:'artifacts/pi-models-dark.png'})
- const modelSwitch=page.getByRole('switch',{name:'モデルを使う: GPT Main',exact:true})
+ const modelSwitch=page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol',exact:true})
  await modelSwitch.click()
- await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="モデルを使う: GPT Main"]')?.getAttribute('aria-checked')==='false')
+ await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="モデルを使う: GPT-6.1 Sol"]')?.getAttribute('aria-checked')==='false')
+ const fastSwitch=page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol Fast',exact:true})
+ assert.equal(await fastSwitch.getAttribute('aria-checked'),'false')
+ assert.equal(await fastSwitch.isEnabled(),true)
+ await fastSwitch.click()
+ await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="モデルを使う: GPT-6.1 Sol Fast"]')?.getAttribute('aria-checked')==='true')
+ assert.deepEqual(providers['openai-codex'].enabledFastModels,[fast])
+ await page.screenshot({path:'artifacts/pi-fast-models-dark.png'})
  await page.getByLabel('モデルを検索').fill('fast')
  assert.equal(await modelSwitch.count(),0)
- await page.getByRole('switch',{name:'モデルを使う: GPT Fast',exact:true}).waitFor()
+ await page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol Fast',exact:true}).waitFor()
  await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  const providerSwitch=page.getByRole('switch',{name:'このプロバイダーを使う: ChatGPT (Codex)',exact:true}).first()
  await providerSwitch.click()
  await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="このプロバイダーを使う: ChatGPT (Codex)"]')?.getAttribute('aria-checked')==='false')
  assert.equal((await ctx.credentials.readRecord(key)).kind,'grant')
- assert.deepEqual(providers['openai-codex'].disabledModels,['gpt-main'])
+ assert.deepEqual(providers['openai-codex'].disabledModels,[model.id])
+ assert.deepEqual(providers['openai-codex'].enabledFastModels,[fast])
 
  // Hold an old OFF response while a reset fetches the newly saved ON state.
  const listPath='**/api/dsh-pi-login/list'
@@ -160,6 +172,14 @@ try {
  }
  await page.setViewportSize({width:390,height:760})
  await page.screenshot({path:'artifacts/pi-login-mobile.png'})
+ await page.getByRole('button',{name:'モデルを選ぶ',exact:true}).first().click()
+ const mobileFast=page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol Fast',exact:true})
+ await mobileFast.waitFor()
+ assert.equal(await mobileFast.getAttribute('aria-checked'),'true')
+ assert.equal(await page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol',exact:true}).getAttribute('aria-checked'),'false')
+ await page.screenshot({path:'artifacts/pi-fast-models-mobile.png'})
+ assert.ok(await page.evaluate(()=>document.querySelector('[role="dialog"]').scrollWidth<=innerWidth))
+ await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
  await page.evaluate(async()=>{await testRuntime.locale.setLocale('en');document.documentElement.lang='en'})
  await page.getByRole('heading',{name:'Pi connections'}).waitFor()

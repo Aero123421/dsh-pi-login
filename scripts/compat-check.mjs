@@ -18,6 +18,7 @@ export { BrowserAuth } from './upstream/packages/client/connection/src/browser-a
 export { credentialKey } from './upstream/packages/credentials/credentials/src/index.ts';
 export * as PiPlugin from '../dist/index.js';
 export { applyEntryPatches } from './official-entry-patches.ts';
+export { toPiAssistant } from '../src/runtime/replay.ts';
 `)
 await compileOfficial('.cache/host-entry.ts','.cache/official-host.mjs')
 const {Context,AuthorizationService,MemoryCredentials,HostConnectionService,PiPlugin:host}=await import(pathToFileURL(resolve('.cache/official-host.mjs')).href)

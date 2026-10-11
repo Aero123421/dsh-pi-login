@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PiLoginBroker, dispatch } from '../src/broker.mjs'
 import { applyLoginUI as apply } from '../src/routes.mjs'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
 
 const key = 'llm-pi-ai/openai-codex'
 const pause = () => new Promise(resolve => setImmediate(resolve))
@@ -183,7 +185,7 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  apply({authorization:fixture.authorization,credentials:fixture.credentials,settings:fixture.settings,effect:body=>{effects.push(body())},connection:{fetch:{register:route=>routes.set(route.path,route)}}})
  t.after(async()=>{for(const effect of effects.reverse())await effect?.();await fixture.broker.dispose()})
  const route=routes.get('/api/dsh-pi-login/start')
- assert.equal(routes.size,11)
+ assert.equal(routes.size,10)
  const call=payload=>route.fetch(new Request('http://localhost/api/dsh-pi-login/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}))
  assert.equal((await call({})).status,400)
  const response=await call({type:'client-request',rpcId:'test-id',method:'dsh-pi-login/start',payload:{key:'other/credential',method:'oauth'}})
@@ -192,9 +194,10 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  await assert.rejects(()=>dispatch(fixture.broker,'answer',[]),/invalid-request/)
 })
 
-test('Fast opt-in is limited to eligible models and persists without losing provider settings', async t => {
+test('Fast model selection is independent, preserves credentials, and rejects stale writes', async t => {
  const fixture=setup(async()=>{})
  t.after(()=>fixture.broker.dispose())
+ fixture.stored.set(key,'preserved-token')
  let revision=22
  const profiles={'openai-codex':{enabled:true,apiKeyEnv:'SAFE_KEY',headers:{'X-Keep':'true'},disabledModels:[]}}
  fixture.settings.describe=()=>[{ns:'dsh-pi-login',value:{providers:profiles},revision}]
@@ -202,20 +205,22 @@ test('Fast opt-in is limited to eligible models and persists without losing prov
    assert.equal(ns,'dsh-pi-login');assert.equal(expected,revision);revision++
    for(const [id,change] of Object.entries(patch.providers)) profiles[id]={...profiles[id],...change}
  }
- fixture.broker.catalog=()=>[
-   {id:'gpt-6-sol',name:'GPT-6 Sol',api:'openai-codex-responses'},
-   {id:'meta-muse',name:'Other model',api:'openai-responses'},
- ]
- fixture.broker.fastSupported=(_provider, model)=>model.id==='gpt-6-sol'
- assert.equal(fixture.broker.models(key).models[0].fastAvailable,true)
- assert.equal(fixture.broker.models(key).models[1].fastAvailable,false)
- await fixture.broker.setFast(key,'gpt-6-sol',true,revision)
- assert.equal(fixture.broker.models(key).models[0].fastEnabled,true)
- assert.deepEqual(profiles['openai-codex'].fastModels,['gpt-6-sol'])
- await assert.rejects(fixture.broker.setFast(key,'meta-muse',true,revision),/invalid-request/)
- await assert.rejects(fixture.broker.setFast(key,'gpt-6-sol',false,22),/settings-changed/)
- await fixture.broker.setFast(key,'gpt-6-sol',false,revision)
- assert.deepEqual(profiles['openai-codex'].fastModels,[])
+ const model=getBuiltinModels('openai-codex').find(model=>model.id==='gpt-6.1-sol')
+ const fast=fastModelId(model.id)
+ fixture.broker.catalog=(provider,profile)=>modelChoices(provider,[model],profile)
+ assert.deepEqual(fixture.broker.models(key).models.map(model=>model.enabled),[true,false])
+ await fixture.broker.setModel(key,fast,true,revision)
+ await fixture.broker.setModel(key,model.id,false,revision)
+ assert.deepEqual(fixture.broker.models(key).models.map(model=>model.enabled),[false,true])
+ await assert.rejects(fixture.broker.setModel(key,'unknown::fast',true,revision),/invalid-request/)
+ await assert.rejects(fixture.broker.setModel(key,fast,false,22),/settings-changed/)
+ await fixture.broker.setProvider(key,false,revision)
+ assert.deepEqual(profiles['openai-codex'].enabledFastModels,[fast])
+ assert.deepEqual(profiles['openai-codex'].disabledModels,[model.id])
+ assert.equal(fixture.stored.get(key),'preserved-token')
+ await fixture.broker.setProvider(key,true,revision)
+ await fixture.broker.setModel(key,fast,false,revision)
+ assert.deepEqual(profiles['openai-codex'].enabledFastModels,[])
  assert.deepEqual(profiles['openai-codex'].headers,{'X-Keep':'true'})
  assert.equal(profiles['openai-codex'].apiKeyEnv,'SAFE_KEY')
 })

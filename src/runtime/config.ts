@@ -39,6 +39,8 @@ import type {
   RouteCatalog,
 } from './catalog.ts'
 import { buildProvider, supportedProtocols } from './provider.ts'
+import { modelChoices } from './fast.ts'
+import type { ModelChoice } from './fast.ts'
 
 /** Default maximum idle interval while an adapter stream read is outstanding. */
 export const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 300_000
@@ -91,8 +93,8 @@ export interface PiAiProviderProfile {
   enabled?: boolean
   /** Model ids hidden from this provider's runtime catalog. New catalog entries remain available. */
   disabledModels?: string[]
-  /** Per-model opt-in to OpenAI Fast processing (higher API cost or subscription credit use). */
-  fastModels?: string[]
+  /** Fast choice IDs explicitly enabled in model selectors. Ordinary choices stay independent. */
+  enabledFastModels?: string[]
   /** Credential reference (environment-variable name) resolved per request through `ctx.credentials`. */
   apiKeyEnv?: string
   /** Name shown by configuration surfaces; defaults to the route key. */
@@ -219,6 +221,8 @@ export interface ResolvedPiAiProviderProfile
    * own, so a catalog capability must not appear here.
    */
   configuredMaxTokens: ReadonlyMap<string, number>
+  /** All choices, including disabled ones needed to edit settings. */
+  modelChoices: readonly ModelChoice[]
 }
 
 /** Plugin configuration: the provider routes this instance owns. */
@@ -330,7 +334,7 @@ const modelOverride: z<PiAiModelOverride> = z.object(modelFields)
 const profile = z.object({
   enabled: z.boolean().default(true),
   disabledModels: z.array(z.string()),
-  fastModels: z.array(z.string()),
+  enabledFastModels: z.array(z.string()),
   apiKeyEnv: z.string().role('credential-ref'),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
@@ -467,6 +471,7 @@ export function resolveProfiles(
     // always shown route keys, and a catalog route must not silently rename
     // itself on every configuration surface just because it gained a profile.
     const displayName = source.displayName ?? provider
+    let choices: readonly ModelChoice[] = []
     let catalog: RouteCatalog | undefined
     let piProvider: Provider | undefined
     let catalogError: string | undefined
@@ -483,12 +488,14 @@ export function resolveProfiles(
         defaultMaxTokens: source.defaultMaxTokens ?? DEFAULT_MAX_TOKENS,
       }, validation)
       catalogError = catalog.modelErrors.values().next().value
+      choices = modelChoices(provider, catalog.models, source)
+      const enabledIds = new Set(choices.filter(choice => choice.enabled).map(choice => choice.model.id))
       piProvider = buildProvider({
         provider,
         displayName,
         ...source.api === undefined ? {} : { api: source.api },
         ...source.baseURL === undefined ? {} : { baseURL: source.baseURL },
-        models: catalog.models.filter(model => !source.disabledModels?.includes(model.id)),
+        models: catalog.models.filter(model => enabledIds.has(model.id)),
         namesCredential: source.apiKeyEnv !== undefined,
       })
     } catch (error) {
@@ -509,6 +516,7 @@ export function resolveProfiles(
       ...rest.headers === undefined ? {} : { headers: { ...rest.headers } },
       ...rest.thinkingBudgets === undefined ? {} : { thinkingBudgets: { ...rest.thinkingBudgets } },
       configuredMaxTokens: catalog?.configuredMaxTokens ?? new Map(),
+      modelChoices: choices,
       modelErrors: catalog?.modelErrors ?? new Map(),
       ...piProvider === undefined ? {} : { piProvider },
       ...catalogError === undefined ? {} : { catalogError },

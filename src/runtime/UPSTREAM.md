@@ -11,7 +11,8 @@
 - OpenAI OAuthにインストールIDを渡し、`dsh-pi-login/installation`に保存。
 - Device Codeの有効期限通知をプラグインの待機制限に反映。
 - MuseのThinking effortは、インストール済みPi SDKのカタログをそのまま継承。独自のモデル名ハードコードは追加しない。
-- OpenAI/OpenAI Codexの対象GPTモデルにFast（`service_tier=priority`）をオプトインで追加。Pi SDK 1.1.0の`streamSimple()`はティア指定を引き継がないため、Fast時だけ`Models.stream()`と通常の共通オプションを利用。
-- Fastのモデル別ON/OFF、DSH Web UIとConnection経由の認証済み設定保存を追加。
+- OpenAI/OpenAI Codexの対応モデルを通常版とFast版の別項目として公開。モデルID・認証・能力は共通で、選択した項目に応じて`service_tier=default`／`priority`を送信。
+- Fast版のON/OFFを`enabledFastModels`で保存。設定画面と実行側の一覧は共通の選択処理から生成。
+- 履歴の選択IDとAPIモデルIDを分けて保存し、通常版とFast版を切り替えてもPiの推論署名を再利用。
 
-OAuthとトークン処理にはPi SDKを使います。DSとSDKの更新手順は[開発ガイド](../../docs/development.md)を参照してください。
+[Fastの実装と参照ソース](../../docs/fast.md)

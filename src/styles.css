@@ -26,6 +26,3 @@
 .dsh-pi-model-label { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .dsh-pi-model-id { font-size: 12px; }
 .dsh-pi-login [role='alert'] { overflow-wrap: anywhere; }
-
-.dsh-pi-model-actions { display: flex; gap: 12px; align-items: center; flex-shrink: 0; }
-.dsh-pi-fast-setting { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; }

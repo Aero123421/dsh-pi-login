@@ -129,3 +129,5 @@ try {
   }
   console.log(`Independent Pi SDK: ${directory.length} providers, SDK catalog, API-key login, device-code expiry relay, streamed response, model/provider toggles, preserved credentials and legacy settings passed`)
 } finally { await plugin.dispose(); await ctx.fiber.dispose(); await new Promise(resolve => server.close(resolve)) }
+
+await import('./fast-runtime-check.mjs')

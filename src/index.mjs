@@ -2,7 +2,7 @@ import { applyLoginUI } from './routes.mjs'
 import { apply as applyRuntime, Config } from './runtime/index.ts'
 import { resolveRouteModels } from './runtime/catalog.ts'
 import { DEFAULT_INPUT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './runtime/config.ts'
-import { supportsFastTier } from './runtime/fast.ts'
+import { modelChoices } from './runtime/fast.ts'
 export { Config, applyLoginUI }
 export { PiAiAdapter } from './runtime/adapter.ts'
 export { resolveProfiles } from './runtime/config.ts'
@@ -11,8 +11,7 @@ export const name = 'dsh-pi-login'
 export function apply(ctx, config) {
   applyRuntime(ctx, config)
   applyLoginUI(ctx, {
-    catalog: (provider, profile) => resolveRouteModels({ defaultInput: DEFAULT_INPUT, defaultContextWindow: DEFAULT_CONTEXT_WINDOW, defaultMaxTokens: DEFAULT_MAX_TOKENS, provider, ...profile }, 'deferred').models,
-    fastSupported: supportsFastTier,
+    catalog: (provider, profile) => modelChoices(provider, resolveRouteModels({ defaultInput: DEFAULT_INPUT, defaultContextWindow: DEFAULT_CONTEXT_WINDOW, defaultMaxTokens: DEFAULT_MAX_TOKENS, provider, ...profile }, 'deferred').models, profile),
   })
   let alive = true
   ctx.effect(() => () => { alive = false }, 'Pi: migration lifetime')
