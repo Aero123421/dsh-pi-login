@@ -91,6 +91,8 @@ export interface PiAiProviderProfile {
   enabled?: boolean
   /** Model ids hidden from this provider's runtime catalog. New catalog entries remain available. */
   disabledModels?: string[]
+  /** Per-model opt-in to OpenAI Fast processing (higher API cost or subscription credit use). */
+  fastModels?: string[]
   /** Credential reference (environment-variable name) resolved per request through `ctx.credentials`. */
   apiKeyEnv?: string
   /** Name shown by configuration surfaces; defaults to the route key. */
@@ -328,6 +330,7 @@ const modelOverride: z<PiAiModelOverride> = z.object(modelFields)
 const profile = z.object({
   enabled: z.boolean().default(true),
   disabledModels: z.array(z.string()),
+  fastModels: z.array(z.string()),
   apiKeyEnv: z.string().role('credential-ref'),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
