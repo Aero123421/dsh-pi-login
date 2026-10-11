@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-pi-login",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "DeepSeek Harness用のPiログインとモデル管理",
   "type": "module",
   "license": "MIT",
