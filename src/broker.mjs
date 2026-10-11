@@ -28,7 +28,7 @@ function publicNotice(notice) {
 
 /** Private tickets keep login prompts out of shared tab state. */
 export class PiLoginBroker {
-  constructor(authorization, credentials, settings, { timeoutMs = 600000, expiryGraceMs = 60000, retentionMs = 60000, catalog } = {}) {
+  constructor(authorization, credentials, settings, { timeoutMs = 600000, expiryGraceMs = 60000, retentionMs = 60000, catalog, fastSupported } = {}) {
     this.authorization = authorization
     this.credentials = credentials
     this.settings = settings
@@ -36,6 +36,7 @@ export class PiLoginBroker {
     this.expiryGraceMs = expiryGraceMs
     this.retentionMs = retentionMs
     this.catalog = catalog
+    this.fastSupported = fastSupported
     this.attempts = new Map()
     this.closed = false
   }
@@ -62,7 +63,11 @@ export class PiLoginBroker {
     const section = this.section()
     const profile = section?.value?.providers?.[provider] ?? {}
     return { revision: section?.revision, enabled: Object.hasOwn(section?.value?.providers ?? {}, provider) && profile.enabled !== false,
-      models: this.catalog(provider, profile).map(model => ({ id: model.id, name: model.name, enabled: !profile.disabledModels?.includes(model.id) })) }
+      models: this.catalog(provider, profile).map(model => ({
+        id: model.id, name: model.name, enabled: !profile.disabledModels?.includes(model.id),
+        fastAvailable: this.fastSupported?.(provider, model) === true,
+        fastEnabled: this.fastSupported?.(provider, model) === true && profile.fastModels?.includes(model.id) === true,
+      })) }
   }
 
   async setModel(key, model, enabled, revision) {
@@ -76,6 +81,22 @@ export class PiLoginBroker {
     const disabled = new Set(profile.disabledModels ?? [])
     enabled ? disabled.delete(model) : disabled.add(model)
     await this.settings.update(NS, { providers: { [provider]: { disabledModels: [...disabled] } } }, revision)
+    return { saved: true }
+  }
+
+  /** Per-model Fast preferences are explicit and independent of thinking effort. */
+  async setFast(key, model, enabled, revision) {
+    if (typeof enabled !== 'boolean' || !Number.isSafeInteger(revision)) throw new LoginError('invalid-request')
+    const current = this.models(key)
+    const candidate = current.models.find(entry => entry.id === model)
+    if (!candidate?.fastAvailable) throw new LoginError('invalid-request')
+    if (current.revision !== revision) throw new LoginError('settings-changed')
+    const provider = key.slice('llm-pi-ai/'.length)
+    const profile = this.section().value?.providers?.[provider]
+    if (!profile) throw new LoginError('not-enabled')
+    const selected = new Set(profile.fastModels ?? [])
+    enabled ? selected.add(model) : selected.delete(model)
+    await this.settings.update(NS, { providers: { [provider]: { fastModels: [...selected] } } }, revision)
     return { saved: true }
   }
 
@@ -253,6 +274,7 @@ export async function dispatch(broker, method, payload) {
     case 'enable': return broker.enable(payload.key)
     case 'models': return broker.models(payload.key)
     case 'set-model': return broker.setModel(payload.key, payload.model, payload.enabled, payload.revision)
+    case 'set-fast': return broker.setFast(payload.key, payload.model, payload.enabled, payload.revision)
     case 'set-provider': return broker.setProvider(payload.key, payload.enabled, payload.revision)
     case 'use-login': return broker.useLogin(payload.key)
     default: throw new LoginError('invalid-request')
