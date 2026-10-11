@@ -81,15 +81,81 @@ test('invalid selections and duplicate starts cannot hijack an attempt', async t
  fixture.broker.answer(ticket,id,'account-1'); await fixture.broker.attempt(ticket).done
 })
 
-test('timeout and disposal cancel attempts; provider errors never echo credentials', async()=>{
+test('timeout and disposal cancel attempts; provider errors never echo credentials', async t=>{
+ t.mock.timers.enable({apis:['setTimeout']})
  const fixture=setup(async session=>{await session.prompt({kind:'text',message:'Wait'})},{timeoutMs:20})
- const {ticket}=fixture.broker.start(key,'oauth'); await new Promise(resolve=>setTimeout(resolve,35))
+ const {ticket}=fixture.broker.start(key,'oauth'); await pause()
+ t.mock.timers.tick(20); await pause()
  assert.equal(fixture.broker.snapshot(ticket).status,'cancelled')
  await fixture.broker.dispose(); assert.equal(fixture.broker.attempts.size,0)
  const failing=setup(async()=>{throw new Error('access-token-secret')})
  const second=failing.broker.start(key,'oauth'); await pause()
  assert.deepEqual(failing.broker.snapshot(second.ticket),{status:'failed'})
  await failing.broker.dispose()
+})
+
+test('a device code can complete after ten minutes within the SDK lifetime', async t => {
+ t.mock.timers.enable({apis:['setTimeout']})
+ const fixture=setup(async session=>{
+  session.notify({message:'Enter code',code:'TEST-CODE',expiresInSeconds:15*60})
+  session.commit(await session.prompt({kind:'text',message:'Wait for approval'}))
+ })
+ t.after(()=>fixture.broker.dispose())
+ const {ticket}=fixture.broker.start(key,'oauth'); await pause()
+ t.mock.timers.tick(10*60*1000); await pause()
+ assert.equal(fixture.broker.snapshot(ticket).status,'running')
+ t.mock.timers.tick(4*60*1000+59*1000)
+ const {prompt}=fixture.broker.snapshot(ticket)
+ fixture.broker.answer(ticket,prompt.id,'approved-credential')
+ await fixture.broker.attempt(ticket).done
+ assert.equal(fixture.broker.snapshot(ticket).status,'authorized')
+ assert.equal(fixture.stored.get(key),'approved-credential')
+})
+
+test('a stalled device flow times out only after the SDK deadline and grace', async t => {
+ t.mock.timers.enable({apis:['setTimeout']})
+ const fixture=setup(async session=>{
+  session.notify({message:'Enter code',code:'PRIVATE-CODE',expiresInSeconds:15*60})
+  await session.prompt({kind:'text',message:'Wait'})
+ })
+ t.after(()=>fixture.broker.dispose())
+ const {ticket}=fixture.broker.start(key,'oauth'); await pause()
+ t.mock.timers.tick(15*60*1000); await pause()
+ assert.equal(fixture.broker.snapshot(ticket).status,'running')
+ t.mock.timers.tick(60*1000); await fixture.broker.attempt(ticket).done
+ assert.deepEqual(fixture.broker.snapshot(ticket),{status:'cancelled',reason:'timeout'})
+ assert.equal(fixture.stored.size,0)
+})
+
+test('SDK expiry and a user cancellation remain distinct without exposing errors', async t => {
+ const cancelled=setup(async session=>session.prompt({kind:'text',message:'Wait'}))
+ t.after(()=>cancelled.broker.dispose())
+ for(const message of ['Device flow timed out','Device flow timed out after one or more slow_down responses. Provider guidance.']) {
+  const expired=setup(async()=>{throw new Error(message)})
+  try {
+   const first=expired.broker.start(key,'oauth'); await expired.broker.attempt(first.ticket).done
+   assert.deepEqual(expired.broker.snapshot(first.ticket),{status:'failed',reason:'provider-expired'})
+  }finally{await expired.broker.dispose()}
+ }
+ const second=cancelled.broker.start(key,'oauth'); await pause()
+ await cancelled.broker.cancel(second.ticket)
+ assert.deepEqual(cancelled.broker.snapshot(second.ticket),{status:'cancelled'})
+})
+
+test('invalid provider expiry does not overflow or extend the fallback timer', async t => {
+ t.mock.timers.enable({apis:['setTimeout']})
+ for(const expiresInSeconds of ['900',Infinity,-1,Number.MAX_SAFE_INTEGER]) {
+  const fixture=setup(async session=>{
+   session.notify({message:'Wait',expiresInSeconds})
+   await session.prompt({kind:'text',message:'Wait'})
+  },{timeoutMs:100})
+  const {ticket}=fixture.broker.start(key,'oauth'); await pause()
+  t.mock.timers.tick(99)
+  assert.equal(fixture.broker.snapshot(ticket).status,'running')
+  t.mock.timers.tick(1); await fixture.broker.attempt(ticket).done
+  assert.deepEqual(fixture.broker.snapshot(ticket),{status:'cancelled',reason:'timeout'})
+  await fixture.broker.dispose()
+ }
 })
 
 test('unsafe provider URLs are stripped and account notices disappear on completion', async t=>{

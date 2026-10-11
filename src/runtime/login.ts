@@ -50,13 +50,16 @@ function relay(event: AuthEvent, session: AuthorizationSession): void {
         url: event.url,
       })
       return
-    case 'device_code':
-      session.notify({
+    case 'device_code': {
+      const notice = {
         message: 'Enter this code on the verification page to finish signing in.',
         url: event.verificationUri,
         code: event.userCode,
-      })
+        expiresInSeconds: event.expiresInSeconds,
+      }
+      session.notify(notice)
       return
+    }
     case 'progress':
       session.notify({ message: event.message })
       return

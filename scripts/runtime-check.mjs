@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
+import { mock } from 'node:test'
 import { parse } from 'yaml'
 import { getBuiltinModels, getBuiltinProviders } from '@earendil-works/pi-ai/providers/all'
+import { PiLoginBroker } from '../src/broker.mjs'
 const { Context, AuthorizationService, MemoryCredentials, HostConnectionService, PiPlugin, applyEntryPatches } = await import('../.cache/official-host.mjs')
 
 // Exercise the real composition patch: one active Pi implementation and an
@@ -96,5 +98,34 @@ try {
   assert.equal((await adapter.listModels('deepseek')).length, sdkModels.length)
   assert.ok(replacements >= 3)
   assert.deepEqual(legacy.deepseek, { baseURL, headers: { 'X-Deployment': 'preserved' }, modelOverrides: {} })
-  console.log(`Independent Pi SDK: ${directory.length} providers, SDK catalog, API-key login, streamed response, model/provider toggles, preserved credentials and legacy settings passed`)
+
+  // Use the SDK's Models.login and the registered adapter flow. Only the
+  // provider's network operation is replaced; expiry must cross Authorization.
+  const oauth = PiPlugin.resolveProfiles({openai:{}}, 'strict').get('openai').piProvider.auth.oauth
+  const originalLogin = oauth.login
+  const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings)
+  mock.timers.enable({apis:['setTimeout']})
+  try {
+    oauth.login = async interaction => {
+      interaction.notify({type:'device_code', verificationUri:'https://accounts.example/device', userCode:'RUNTIME-CODE', intervalSeconds:5, expiresInSeconds:900})
+      await interaction.prompt({type:'text', message:'Approve device'})
+      return {type:'oauth', access:'runtime-device-access', refresh:'runtime-device-refresh', expires:Date.now()+3600000}
+    }
+    const {ticket} = broker.start('llm-pi-ai/openai', 'oauth')
+    await pause(); await pause()
+    assert.equal(broker.snapshot(ticket).notice.code, 'RUNTIME-CODE')
+    assert.equal('expiresInSeconds' in broker.snapshot(ticket).notice, false)
+    mock.timers.tick(10*60*1000); await pause()
+    assert.equal(broker.snapshot(ticket).status, 'running')
+    mock.timers.tick(4*60*1000+59*1000)
+    broker.answer(ticket, broker.snapshot(ticket).prompt.id, 'approved')
+    await broker.attempt(ticket).done
+    assert.deepEqual(broker.snapshot(ticket), {status:'authorized'})
+    assert.equal((await ctx.credentials.readRecord('llm-pi-ai/openai')).kind, 'grant')
+  } finally {
+    oauth.login = originalLogin
+    await broker.dispose()
+    mock.timers.reset()
+  }
+  console.log(`Independent Pi SDK: ${directory.length} providers, SDK catalog, API-key login, device-code expiry relay, streamed response, model/provider toggles, preserved credentials and legacy settings passed`)
 } finally { await plugin.dispose(); await ctx.fiber.dispose(); await new Promise(resolve => server.close(resolve)) }

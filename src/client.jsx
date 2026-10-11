@@ -84,7 +84,7 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
         if (!alive) return
         setState(snapshot)
         if (snapshot.status === 'running') timer = setTimeout(poll, 800)
-        else { controller.tickets.delete(ticket); await controller.load() }
+        else { controller.tickets.delete(ticket); await controller.refresh() }
       } catch { if (alive) setError(true) }
     }
     void poll()
@@ -92,19 +92,20 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
   }, [ticket])
   const link = safeUrl(state.notice?.url)
   const complete = state.status !== 'running' || error
+  const terminalCopy = state.reason === 'provider-expired' ? 'providerExpired' : state.reason === 'timeout' ? 'timedOut' : state.status === 'cancelled' ? 'cancelled' : 'failed'
   async function enable(useLogin = false) {
     setEnabling(true); setEnableError(false)
-    try { await controller.call(useLogin ? 'use-login' : 'enable', { key: entry.key }); setEnabled(true); await controller.load() }
+    try { await controller.call(useLogin ? 'use-login' : 'enable', { key: entry.key }); setEnabled(true); await controller.refresh() }
     catch (error) { setEnableError(true); setKeyOverride(error.message.endsWith('/api-key-override')) } finally { setEnabling(false) }
   }
   return <Modal open onClose={onClose} title={entry.label} closeLabel={t('close')} className="dsh-pi-login"
     footer={<Button variant="outline" onClick={onClose}>{t(complete ? 'close' : 'cancel')}</Button>}>
-    {error || state.status === 'failed' ? <p role="alert">{t('failed')}</p> : null}
+    {error || state.status === 'failed' ? <p role="alert">{t(error ? 'failed' : terminalCopy)}</p> : null}
     {state.status === 'authorized' ? <><p role="status">{t('success')}</p><p className="dsh-pi-muted">{t('successDescription')}</p>
       {enabled ? <p role="status">{t('enabled')}</p> : <Button variant="primary" onClick={() => { void enable() }} disabled={enabling}>{t('enable')}</Button>}
       {enableError ? <p role="alert">{t(keyOverride ? 'keyOverride' : 'enableFailed')}</p> : null}
       {keyOverride && !enabled ? <Button variant="outline" onClick={() => { void enable(true) }} disabled={enabling}>{t('useLogin')}</Button> : null}</> : null}
-    {state.status === 'cancelled' ? <p>{t('expired')}</p> : null}
+    {state.status === 'cancelled' ? <p role={state.reason === 'timeout' ? 'alert' : 'status'}>{t(terminalCopy)}</p> : null}
     {!complete ? <>
       <p role="status">{state.notice?.message || t(link ? 'waiting' : 'busy')}</p>
       {link ? <a className="dsh-pi-link" href={link} target="_blank" rel="noopener noreferrer">{t('openBrowser')}</a> : null}
@@ -172,13 +173,13 @@ export function ConnectionUI({ controller, locale, provider }) {
     try {
       const snapshot = await controller.call('models', { key: entry.key })
       await controller.call('set-provider', { key: entry.key, enabled, revision: snapshot.revision })
-      await controller.load()
-    } catch { setError(true); await controller.load() } finally { setBusy(false) }
+      await controller.refresh()
+    } catch { setError(true); await controller.refresh() } finally { setBusy(false) }
   }
   if (provider && !entry && !state.error) return null
   return <section className={`dsh-pi-login ${provider ? 'dsh-pi-card' : 'dsh-pi-footer'}`}>
     {!provider ? <><h3>{t('title')}</h3><p className="dsh-pi-muted">{t('description')}</p></> : null}
-    {state.error ? <p role="alert">{t('loadFailed')} <Button size="sm" onClick={() => { void controller.load() }}>{t('retry')}</Button></p> : null}
+    {state.error ? <p role="alert">{t('loadFailed')} <Button size="sm" onClick={() => { void controller.refresh() }}>{t('retry')}</Button></p> : null}
     {state.status === 'ready' && !state.error && entries.length === 0 && !provider ? <p>{t('empty')}</p> : null}
     {entry ? <>
       <div className="dsh-pi-fields">
@@ -208,7 +209,7 @@ export function apply(ctx) {
     const style = document.createElement('style'); style.dataset.dshPiLogin = ''; style.textContent = controlsCss + css; document.head.append(style)
     return () => style.remove()
   }, 'dsh-pi-login: official controls')
-  ctx.on('connection/reset', () => { void controller.load() })
+  ctx.on('connection/reset', () => { void controller.refresh() })
   const inject = () => ({ controller, locale: ctx.locale })
   ctx.slots.inject('settings.models.footer', () => ctx.slots.register({ name: 'settings.models.footer', id: 'dsh-pi-login', order: 10, inject }, ConnectionUI))
   ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({ name: 'settings.models.provider-card', id: 'dsh-pi-login', key: 'dsh-pi-login', inject }, ConnectionUI))
