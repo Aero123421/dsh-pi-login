@@ -28,6 +28,12 @@ runtimeテストの設定保存先とLLM登録先はテスト用サービスで�
 
 GitHub Actionsにも同じチェックを設定しています（`.github/workflows/ci.yml`）。配布ファイル、チェックサム、スクリーンショットは`artifacts`に出力します。
 
+## GitHubからの配布
+
+`main`にはビルド済みの`dist/`を含めます。変更後に`npm run build`を実行し、更新した`dist/`も一緒にコミットしてください。CIで再ビルドし、コミット済みのファイルとの差分が残ると失敗します。インストール時に実行するビルド用スクリプトは追加しません。
+
+版を上げるときは`package.json`、`package-lock.json`、READMEのReleaseリンクを更新し、ビルドと検証を行います。GitHub Releasesにも`npm run pack:plugin`で作った配布ファイルと`SHA256SUMS`を置きます。
+
 ## 設定と認証
 
 プラグイン設定は`dsh-pi-login`、既存の認証情報は`llm-pi-ai/<provider>`に保存します。OpenAI OAuthのインストールIDは`dsh-pi-login/installation`に保存します。本体の標準フォームはこの設定名前空間に未対応なので、設定画面に追加した操作欄を使います。
