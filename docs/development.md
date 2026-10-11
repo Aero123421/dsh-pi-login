@@ -19,7 +19,7 @@ npm run pack:plugin
 
 | コマンド | 確認する内容 |
 | --- | --- |
-| `test` | ログインの入力・終了・有効期限、設定保存・再取得時の競合、日本語と英語の文言、配布用Client |
+| `test` | ログインの入力・終了・有効期限、設定保存・再取得時の競合、Meta Museの推論強度、GPT Fastオプション、日本語と英語の文言、配布用Client |
 | `test:compat` | 公式のCordis・Authorization・Credentials・Connectionによる認証保存と解除 |
 | `test:runtime` | 実SDKのモデル解決・認証保存・Device Codeの有効期限通知、ローカルサーバーへの生成、設定の取り込みとON/OFF |
 | `test:browser` | ログイン画面、終了理由、再接続中の再取得、認証・Originチェック、モデル選択、明暗テーマ、狭い画面、プラグイン解除 |
@@ -35,6 +35,13 @@ GitHub Actionsにも同じチェックを設定しています（`.github/workfl
 トークン更新はPi SDK、保存はDSのCredentialsサービスが担当します。ログインはAuthorization APIと認証済みConnectionを経由します。認証情報をlocalStorage・ログ・共有イベントには保存しません。認証URL・コード・入力待ちは操作ごとのチケットで扱い、キャンセルやプラグイン解除で破棄します。
 
 ログインの待機時間は通常10分です。Device CodeはSDK通知の有効期限にトークン交換用の1分を加え、通常の待機時間より長ければ延長します。SDK側の期限切れ、プラグイン側の待機時間超過、手動キャンセルは別の終了理由として表示します。
+
+## Muse / Fastの実運用確認
+
+- Metaで`muse-spark-1.3`を選び、Thinking effortに`Max`が表示され、実プロバイダーが`max`を受け付けることを確認する。Contributor版および1.2/1.1版には`Max`が表示されないことを確認する。
+- GPTの対象モデルでFastスイッチを入れ、同じThinking effortのまま`service_tier=priority`が送信されること、設定が再起動後も残ることを確認する。スイッチオフでは従来の`streamSimple()`経路を使う。
+- プラン・APIティアがFast非対応のとき、失敗を隠さず利用者へ示すことを確認する。Fastリクエストが実際に高速ティアで処理されたかは、レスポンスの`service_tier`および利用明細でも確認する。
+- ユーザー認証を使った実API E2Eは、モックテストから確認できない。通信コストと契約条件に注意する。
 
 ## Pi SDKの更新
 
