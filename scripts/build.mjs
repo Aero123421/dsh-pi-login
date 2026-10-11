@@ -22,7 +22,9 @@ const nativeComponents = {
   },
 }
 await build({ entryPoints: ['scripts/native-components.jsx'], bundle: true, platform: 'browser', format: 'cjs', write: false, jsx: 'automatic', external: ['react', 'react/jsx-runtime', 'react-dom'], plugins: [nativeComponents] })
-await writeFile('.cache/native-controls.css', [...componentCss.values()].join('\n'))
+// CSS order must not depend on parallel file reads completing first.
+const cssEntries = [...componentCss].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+await writeFile('.cache/native-controls.css', cssEntries.map(([, css]) => css).join('\n'))
 await mkdir('dist', { recursive: true })
 const manifest = JSON.parse(await readFile('package.json', 'utf8'))
 await build({ entryPoints: ['src/index.mjs'], outfile: 'dist/index.js', bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['@deepseek-ai/*', '@earendil-works/pi-ai', '@earendil-works/pi-ai/*'] })
