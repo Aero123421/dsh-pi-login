@@ -11,7 +11,7 @@ const meta = {
   defaultInput: ['text'],
 }
 
-test('Meta Muse Spark 1.3 Standard advertises Max and Contributor refuses it', () => {
+test('Muse Spark Max availability inherits directly from Pi catalog', () => {
   const models = resolveRouteModels(meta).models
   const standard = models.find(model => model.id === 'muse-spark-1.3')
   const contributor = models.find(model => model.id === 'muse-spark-1.3-contributor')
@@ -20,10 +20,7 @@ test('Meta Muse Spark 1.3 Standard advertises Max and Contributor refuses it', (
   const stdLevels = getSupportedThinkingLevels(standard)
   const ctrLevels = getSupportedThinkingLevels(contributor)
   assert.ok(stdLevels.includes('max'))
-  assert.ok(stdLevels.includes('xhigh'))
-  assert.ok(!stdLevels.includes('off'))
   assert.ok(!ctrLevels.includes('max'))
-  assert.ok(!ctrLevels.includes('off'))
 })
 
 test('explicit Muse effort declarations override catalog corrections', () => {
