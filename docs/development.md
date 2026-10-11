@@ -36,9 +36,9 @@ GitHub Actionsにも同じチェックを設定しています（`.github/workfl
 
 ログインの待機時間は通常10分です。Device CodeはSDK通知の有効期限にトークン交換用の1分を加え、通常の待機時間より長ければ延長します。SDK側の期限切れ、プラグイン側の待機時間超過、手動キャンセルは別の終了理由として表示します。
 
-## Muse / Fastの実運用確認
+## Thinking effort / Fastの実運用確認
 
-- Metaで`muse-spark-1.3`を選び、Thinking effortに`Max`が表示され、実プロバイダーが`max`を受け付けることを確認する。Contributor版および1.2/1.1版には`Max`が表示されないことを確認する。
+- Pi SDKのモデルカタログを変更せず、`muse-spark-1.3` Standardでは既存の`Max`が表示され、Contributorではカタログ通り表示されないことを確認する。実プロバイダーが送信値を受け付けるかは別途E2Eで検証する。
 - GPTの対象モデルでFastスイッチを入れ、同じThinking effortのまま`service_tier=priority`が送信されること、設定が再起動後も残ることを確認する。スイッチオフでは従来の`streamSimple()`経路を使う。
 - プラン・APIティアがFast非対応のとき、失敗を隠さず利用者へ示すことを確認する。Fastリクエストが実際に高速ティアで処理されたかは、レスポンスの`service_tier`および利用明細でも確認する。
 - ユーザー認証を使った実API E2Eは、モックテストから確認できない。通信コストと契約条件に注意する。
