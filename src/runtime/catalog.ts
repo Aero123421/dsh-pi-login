@@ -720,6 +720,23 @@ function resolveModelReasoning(
 ): ModelReasoning {
   const efforts = entry.reasoningEfforts
   if (efforts === undefined) {
+    // Meta's published capability matrix is more precise than older generated
+    // pi-ai model catalogs: Muse Spark 1.3 Standard supports Max; Contributor
+    // does not. Neither variant accepts Off. Explicit user declarations below
+    // still take precedence over these catalog corrections.
+    if (provider === 'meta' && base?.provider === 'meta'
+      && (entry.id === 'muse-spark-1.3' || entry.id === 'muse-spark-1.3-contributor')) {
+      const standard = entry.id === 'muse-spark-1.3'
+      return {
+        reasoning: true,
+        thinkingLevelMap: {
+          ...base.thinkingLevelMap,
+          off: null,
+          xhigh: 'xhigh',
+          max: standard ? 'max' : null,
+        },
+      }
+    }
     // Reasoning rides the installed entry or is absent: a bare capability flag
     // would make pi-ai advertise effort levels with no `thinkingLevelMap` to
     // spell them, and no listing endpoint reports a model's reasoning
