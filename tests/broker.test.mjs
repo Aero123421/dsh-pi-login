@@ -183,13 +183,41 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  apply({authorization:fixture.authorization,credentials:fixture.credentials,settings:fixture.settings,effect:body=>{effects.push(body())},connection:{fetch:{register:route=>routes.set(route.path,route)}}})
  t.after(async()=>{for(const effect of effects.reverse())await effect?.();await fixture.broker.dispose()})
  const route=routes.get('/api/dsh-pi-login/start')
- assert.equal(routes.size,10)
+ assert.equal(routes.size,11)
  const call=payload=>route.fetch(new Request('http://localhost/api/dsh-pi-login/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}))
  assert.equal((await call({})).status,400)
  const response=await call({type:'client-request',rpcId:'test-id',method:'dsh-pi-login/start',payload:{key:'other/credential',method:'oauth'}})
  assert.equal(response.headers.get('cache-control'),'no-store')
  assert.equal((await response.json()).result.error.code,'dsh-pi-login/invalid-request')
  await assert.rejects(()=>dispatch(fixture.broker,'answer',[]),/invalid-request/)
+})
+
+test('Fast opt-in is limited to eligible models and persists without losing provider settings', async t => {
+ const fixture=setup(async()=>{})
+ t.after(()=>fixture.broker.dispose())
+ let revision=22
+ const profiles={'openai-codex':{enabled:true,apiKeyEnv:'SAFE_KEY',headers:{'X-Keep':'true'},disabledModels:[]}}
+ fixture.settings.describe=()=>[{ns:'dsh-pi-login',value:{providers:profiles},revision}]
+ fixture.settings.update=async (ns,patch,expected)=>{
+   assert.equal(ns,'dsh-pi-login');assert.equal(expected,revision);revision++
+   for(const [id,change] of Object.entries(patch.providers)) profiles[id]={...profiles[id],...change}
+ }
+ fixture.broker.catalog=()=>[
+   {id:'gpt-6-sol',name:'GPT-6 Sol',api:'openai-codex-responses'},
+   {id:'meta-muse',name:'Other model',api:'openai-responses'},
+ ]
+ fixture.broker.fastSupported=(_provider, model)=>model.id==='gpt-6-sol'
+ assert.equal(fixture.broker.models(key).models[0].fastAvailable,true)
+ assert.equal(fixture.broker.models(key).models[1].fastAvailable,false)
+ await fixture.broker.setFast(key,'gpt-6-sol',true,revision)
+ assert.equal(fixture.broker.models(key).models[0].fastEnabled,true)
+ assert.deepEqual(profiles['openai-codex'].fastModels,['gpt-6-sol'])
+ await assert.rejects(fixture.broker.setFast(key,'meta-muse',true,revision),/invalid-request/)
+ await assert.rejects(fixture.broker.setFast(key,'gpt-6-sol',false,22),/settings-changed/)
+ await fixture.broker.setFast(key,'gpt-6-sol',false,revision)
+ assert.deepEqual(profiles['openai-codex'].fastModels,[])
+ assert.deepEqual(profiles['openai-codex'].headers,{'X-Keep':'true'})
+ assert.equal(profiles['openai-codex'].apiKeyEnv,'SAFE_KEY')
 })
 
 test('model and provider switches preserve settings and credentials and reject stale edits', async t => {
