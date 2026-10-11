@@ -12,10 +12,22 @@ export class LoginController {
   }
   load() {
     if (this.closed) return Promise.resolve()
-    if (this.pending) return this.pending
+    if (this.pending) return this.pending.promise
+    const request = { abort: new AbortController() }
+    request.promise = this.call('list', {}, request.abort.signal).then(entries => {
+      if (this.pending === request) this.publish({ status: 'ready', entries, error: false })
+    }, () => {
+      if (this.pending === request) this.publish({ ...this.state, status: 'ready', error: true })
+    }).finally(() => { if (this.pending === request) this.pending = undefined })
+    this.pending = request
     this.publish({ ...this.state, status: 'loading', error: false })
-    this.pending = this.call('list').then(entries => this.publish({ status: 'ready', entries, error: false }), () => this.publish({ ...this.state, status: 'ready', error: true })).finally(() => { this.pending = undefined })
-    return this.pending
+    return request.promise
+  }
+  refresh() {
+    const previous = this.pending
+    this.pending = undefined
+    previous?.abort.abort()
+    return this.load()
   }
   async start(key, method) {
     const result = await this.call('start', { key, method })
@@ -24,6 +36,6 @@ export class LoginController {
     this.tickets.add(result.ticket)
     return result.ticket
   }
-  async cancel(ticket) { this.tickets.delete(ticket); try { await this.call('cancel', { ticket }) } finally { await this.load() } }
-  dispose() { this.closed = true; this.listeners.clear(); for (const ticket of this.tickets) void this.call('cancel', { ticket }).catch(() => {}); this.tickets.clear() }
+  async cancel(ticket) { this.tickets.delete(ticket); try { await this.call('cancel', { ticket }) } finally { await this.refresh() } }
+  dispose() { this.closed = true; this.pending?.abort.abort(); this.pending = undefined; this.listeners.clear(); for (const ticket of this.tickets) void this.call('cancel', { ticket }).catch(() => {}); this.tickets.clear() }
 }

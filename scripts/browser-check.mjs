@@ -5,6 +5,11 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import { compileOfficial } from './upstream.mjs'
+async function within(promise) {
+ let timer
+ try {return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Delayed list fixture did not settle')),10000)})])}
+ finally {clearTimeout(timer)}
+}
 await mkdir('artifacts',{recursive:true})
 await compileOfficial('scripts/browser-fixture.jsx','.cache/browser-fixture.js','browser')
 const {Context,AuthorizationService,MemoryCredentials,HostConnectionService,BrowserAuth,PiPlugin:host}=await import(pathToFileURL(resolve('.cache/official-host.mjs')).href)
@@ -109,6 +114,50 @@ try {
  await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="このプロバイダーを使う: ChatGPT (Codex)"]')?.getAttribute('aria-checked')==='false')
  assert.equal((await ctx.credentials.readRecord(key)).kind,'grant')
  assert.deepEqual(providers['openai-codex'].disabledModels,['gpt-main'])
+
+ // Hold an old OFF response while a reset fetches the newly saved ON state.
+ const listPath='**/api/dsh-pi-login/list'
+ let capture, release, settle, listRequests=0
+ const captured=new Promise(resolve=>{capture=resolve})
+ const delayed=new Promise(resolve=>{release=resolve})
+ const settled=new Promise(resolve=>{settle=resolve})
+ const delayOldList=async route=>{
+  if(++listRequests!==1){await route.continue();return}
+  try {
+   const response=await route.fetch()
+   assert.equal((await response.json()).result.value[0].enabled,false)
+   capture()
+   await delayed
+   try {await route.fulfill({response})} catch { /* The reset aborts the stale browser request. */ }
+  }finally{settle()}
+ }
+ await page.route(listPath,delayOldList)
+ try {
+  await page.evaluate(()=>testRuntime.ctx.emit('connection/reset'))
+  await within(captured)
+  providers['openai-codex']={...providers['openai-codex'],enabled:true};revision++
+  await page.evaluate(()=>testRuntime.ctx.emit('connection/reset'))
+  await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="このプロバイダーを使う: ChatGPT (Codex)"]')?.getAttribute('aria-checked')==='true')
+  assert.equal(listRequests,2)
+  release();await within(settled)
+  assert.equal(await providerSwitch.getAttribute('aria-checked'),'true')
+ }finally{release();await page.unroute(listPath,delayOldList)}
+
+ // Render each terminal cause through the authenticated RPC response format.
+ for(const [snapshot,message] of [
+  [{status:'cancelled'},'ログインをキャンセルしました。もう一度ログインしてください。'],
+  [{status:'failed',reason:'provider-expired'},'認証コードの有効期限が切れました。もう一度ログインしてください。'],
+  [{status:'cancelled',reason:'timeout'},'ログインの待機時間を超えました。もう一度ログインしてください。'],
+ ]) {
+  const statePath='**/api/dsh-pi-login/state'
+  const terminalState=route=>route.fulfill({json:{type:'server-response',rpcId:route.request().postDataJSON().rpcId,result:{ok:true,value:snapshot}}})
+  await page.route(statePath,terminalState)
+  try {
+   await page.getByRole('button',{name:'再ログイン',exact:true}).first().click()
+   await page.getByText(message,{exact:true}).waitFor()
+   await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
+  }finally{await page.unroute(statePath,terminalState)}
+ }
  await page.setViewportSize({width:390,height:760})
  await page.screenshot({path:'artifacts/pi-login-mobile.png'})
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
@@ -117,5 +166,5 @@ try {
  await page.evaluate(()=>testRuntime.dispose())
  assert.equal(await page.locator('style[data-dsh-pi-login]').count(),0)
  assert.deepEqual(errors,[])
- console.log('Official Client slots / locale, authenticated transport, OAuth UI, cancellation, light/dark, narrow layout, and unload passed')
+ console.log('Official Client slots / locale, authenticated transport, OAuth UI, reset during pending load, terminal reasons, light/dark, narrow layout, and unload passed')
 }finally{await browser?.close();await plugin.dispose();await ctx.fiber.dispose();await new Promise(resolve=>server.close(resolve))}

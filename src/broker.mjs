@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 const KEY_PATTERN = /^llm-pi-ai\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const LIVE = 'running'
 const NS = 'dsh-pi-login'
+const MAX_TIMER_DELAY_MS = 2147483647
 
 export class LoginError extends Error {
   constructor(code) { super(code); this.code = code }
@@ -27,11 +28,12 @@ function publicNotice(notice) {
 
 /** Private tickets keep login prompts out of shared tab state. */
 export class PiLoginBroker {
-  constructor(authorization, credentials, settings, { timeoutMs = 600000, retentionMs = 60000, catalog } = {}) {
+  constructor(authorization, credentials, settings, { timeoutMs = 600000, expiryGraceMs = 60000, retentionMs = 60000, catalog } = {}) {
     this.authorization = authorization
     this.credentials = credentials
     this.settings = settings
     this.timeoutMs = timeoutMs
+    this.expiryGraceMs = expiryGraceMs
     this.retentionMs = retentionMs
     this.catalog = catalog
     this.attempts = new Map()
@@ -98,18 +100,19 @@ export class PiLoginBroker {
     const ticket = randomUUID()
     const attempt = { key, ticket, status: LIVE, controller: new AbortController(), prompt: undefined, notice: undefined }
     this.attempts.set(ticket, attempt)
-    attempt.timer = setTimeout(() => this.cancel(ticket), this.timeoutMs)
-    attempt.timer.unref?.()
+    this.armTimeout(attempt, this.timeoutMs)
     attempt.done = Promise.resolve().then(() => this.authorization.begin({
       key, method, signal: attempt.controller.signal,
       interaction: {
-        notify: notice => { if (attempt.status === LIVE) attempt.notice = publicNotice(notice) },
+        notify: notice => this.notify(attempt, notice),
         prompt: prompt => this.ask(attempt, prompt),
       },
     })).then(outcome => {
       attempt.status = outcome.status === 'authorized' ? 'authorized' : 'cancelled'
-    }, () => {
+      if (attempt.status === 'authorized') attempt.reason = undefined
+    }, error => {
       attempt.status = attempt.controller.signal.aborted ? 'cancelled' : 'failed'
+      if (!attempt.controller.signal.aborted && error instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error.message)) attempt.reason = 'provider-expired'
     }).finally(() => {
       clearTimeout(attempt.timer)
       this.clearPrompt(attempt, new LoginError('cancelled'))
@@ -119,6 +122,22 @@ export class PiLoginBroker {
       attempt.timer.unref?.()
     })
     return { ticket }
+  }
+
+  armTimeout(attempt, delayMs) {
+    clearTimeout(attempt.timer)
+    attempt.timer = setTimeout(() => { void this.cancel(attempt.ticket, 'timeout').catch(() => {}) }, delayMs)
+    attempt.timer.unref?.()
+  }
+
+  notify(attempt, notice) {
+    if (attempt.status !== LIVE || attempt.controller.signal.aborted || this.closed) return
+    attempt.notice = publicNotice(notice)
+    const expires = notice.expiresInSeconds
+    if (typeof expires !== 'number' || !Number.isFinite(expires) || expires <= 0) return
+    const delayMs = Math.max(this.timeoutMs, expires * 1000 + this.expiryGraceMs)
+    // The SDK starts its deadline when it issues the code; leave time for the final token exchange.
+    if (delayMs <= MAX_TIMER_DELAY_MS) this.armTimeout(attempt, delayMs)
   }
 
   attempt(ticket) {
@@ -131,6 +150,7 @@ export class PiLoginBroker {
     const attempt = this.attempt(ticket)
     return {
       status: attempt.status,
+      ...attempt.reason === undefined ? {} : { reason: attempt.reason },
       ...attempt.notice === undefined ? {} : { notice: attempt.notice },
       ...attempt.prompt === undefined ? {} : { prompt: attempt.prompt.view },
     }
@@ -172,10 +192,13 @@ export class PiLoginBroker {
     return { accepted: true }
   }
 
-  async cancel(ticket) {
+  async cancel(ticket, reason) {
     const attempt = this.attempt(ticket)
-    attempt.controller.abort()
-    this.clearPrompt(attempt, new LoginError('cancelled'))
+    if (attempt.status === LIVE && !attempt.controller.signal.aborted) {
+      attempt.reason = reason
+      attempt.controller.abort()
+      this.clearPrompt(attempt, new LoginError('cancelled'))
+    }
     await attempt.done
     return { status: attempt.status }
   }

@@ -9,5 +9,6 @@
 - `enabled`と`disabledModels`でプロバイダー・モデルを切り替え、設定変更時にモデル一覧を更新。
 - `legacyImported`で既存設定の初回取り込みを記録。
 - OpenAI OAuthにインストールIDを渡し、`dsh-pi-login/installation`に保存。
+- Device Codeの有効期限通知をプラグインの待機制限に反映。
 
 OAuthとトークン処理にはPi SDKを使います。DSとSDKの更新手順は[開発ガイド](../../docs/development.md)を参照してください。

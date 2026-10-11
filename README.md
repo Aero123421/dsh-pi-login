@@ -9,15 +9,15 @@ Pi対応プロバイダーのログインとモデル選択をDeepSeek Harness�
 サイドバーの「Plugins → Add plugin」を開き、次のURLを入力します。
 
 ```text
-https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.0/local-dsh-pi-login-0.2.0.tgz
+https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.1/local-dsh-pi-login-0.2.1.tgz
 ```
 
-「Install」→「Enable now」を押し、アプリを再起動します。[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.2.0)はGitHub Releasesにあります。
+「Install」→「Enable now」を押し、アプリを再起動します。[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.2.1)はGitHub Releasesにあります。
 
 WebプロファイルではCLIからも追加できます。
 
 ```sh
-dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.0/local-dsh-pi-login-0.2.0.tgz
+dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.1/local-dsh-pi-login-0.2.1.tgz
 ```
 
 ## 使い方
