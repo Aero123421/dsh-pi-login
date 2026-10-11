@@ -23,6 +23,8 @@ export interface PiAiReplayResponse {
   provider: string
   /** Requested model identity, matching the durable assistant source. */
   model: string
+  /** Native request model for selectable variants; absent in ordinary saved turns. */
+  wireModel?: string
   /** Provider-reported model; replay retains the requested model for signature matching. */
   responseModel?: string
   responseId?: string
@@ -78,6 +80,7 @@ export function toPiReplayState(message: AssistantMessage, requestedModel = mess
     api: message.api,
     provider: message.provider,
     model: requestedModel,
+    ...requestedModel === message.model ? {} : { wireModel: message.model },
     ...message.responseModel === undefined ? {} : { responseModel: message.responseModel },
     ...message.responseId === undefined ? {} : { responseId: message.responseId },
     ...message.providerThinkingLevel === undefined ? {} : { providerThinkingLevel: message.providerThinkingLevel },
@@ -125,6 +128,7 @@ function readReplayState(value: unknown): PiAiReplayState {
   if (!['stop', 'length', 'toolUse', 'error', 'aborted'].includes(String(response['stopReason']))) {
     return invalidReplay('unknown stopReason')
   }
+  if (response['wireModel'] !== undefined && (typeof response['wireModel'] !== 'string' || response['wireModel'].length === 0)) return invalidReplay('wireModel must be a non-empty string')
   if (response['responseModel'] !== undefined && typeof response['responseModel'] !== 'string') return invalidReplay('responseModel must be a string')
   if (response['responseId'] !== undefined && typeof response['responseId'] !== 'string') return invalidReplay('responseId must be a string')
   if (response['providerThinkingLevel'] !== undefined && typeof response['providerThinkingLevel'] !== 'string') return invalidReplay('providerThinkingLevel must be a string')
@@ -218,7 +222,7 @@ function replayedAssistant(message: HarnessAssistantMessage, source: ModelMessag
     content,
     api: state.response.api,
     provider: state.response.provider,
-    model: state.response.model,
+    model: state.response.wireModel ?? state.response.model,
     ...state.response.responseModel === undefined ? {} : { responseModel: state.response.responseModel },
     ...state.response.responseId === undefined ? {} : { responseId: state.response.responseId },
     ...state.response.providerThinkingLevel === undefined ? {} : { providerThinkingLevel: state.response.providerThinkingLevel },

@@ -2,6 +2,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { PiLoginBroker, dispatch } from '../src/broker.mjs'
 import { applyLoginUI as apply } from '../src/routes.mjs'
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
 
 const key = 'llm-pi-ai/openai-codex'
 const pause = () => new Promise(resolve => setImmediate(resolve))
@@ -190,6 +192,37 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  assert.equal(response.headers.get('cache-control'),'no-store')
  assert.equal((await response.json()).result.error.code,'dsh-pi-login/invalid-request')
  await assert.rejects(()=>dispatch(fixture.broker,'answer',[]),/invalid-request/)
+})
+
+test('Fast model selection is independent, preserves credentials, and rejects stale writes', async t => {
+ const fixture=setup(async()=>{})
+ t.after(()=>fixture.broker.dispose())
+ fixture.stored.set(key,'preserved-token')
+ let revision=22
+ const profiles={'openai-codex':{enabled:true,apiKeyEnv:'SAFE_KEY',headers:{'X-Keep':'true'},disabledModels:[]}}
+ fixture.settings.describe=()=>[{ns:'dsh-pi-login',value:{providers:profiles},revision}]
+ fixture.settings.update=async (ns,patch,expected)=>{
+   assert.equal(ns,'dsh-pi-login');assert.equal(expected,revision);revision++
+   for(const [id,change] of Object.entries(patch.providers)) profiles[id]={...profiles[id],...change}
+ }
+ const model=getBuiltinModels('openai-codex').find(model=>model.id==='gpt-6.1-sol')
+ const fast=fastModelId(model.id)
+ fixture.broker.catalog=(provider,profile)=>modelChoices(provider,[model],profile)
+ assert.deepEqual(fixture.broker.models(key).models.map(model=>model.enabled),[true,false])
+ await fixture.broker.setModel(key,fast,true,revision)
+ await fixture.broker.setModel(key,model.id,false,revision)
+ assert.deepEqual(fixture.broker.models(key).models.map(model=>model.enabled),[false,true])
+ await assert.rejects(fixture.broker.setModel(key,'unknown::fast',true,revision),/invalid-request/)
+ await assert.rejects(fixture.broker.setModel(key,fast,false,22),/settings-changed/)
+ await fixture.broker.setProvider(key,false,revision)
+ assert.deepEqual(profiles['openai-codex'].enabledFastModels,[fast])
+ assert.deepEqual(profiles['openai-codex'].disabledModels,[model.id])
+ assert.equal(fixture.stored.get(key),'preserved-token')
+ await fixture.broker.setProvider(key,true,revision)
+ await fixture.broker.setModel(key,fast,false,revision)
+ assert.deepEqual(profiles['openai-codex'].enabledFastModels,[])
+ assert.deepEqual(profiles['openai-codex'].headers,{'X-Keep':'true'})
+ assert.equal(profiles['openai-codex'].apiKeyEnv,'SAFE_KEY')
 })
 
 test('model and provider switches preserve settings and credentials and reject stale edits', async t => {

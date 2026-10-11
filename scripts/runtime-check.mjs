@@ -99,6 +99,30 @@ try {
   assert.ok(replacements >= 3)
   assert.deepEqual(legacy.deepseek, { baseURL, headers: { 'X-Deployment': 'preserved' }, modelOverrides: {} })
 
+  // Both choices share one SDK model, but changes to the selectable catalog
+  // must still notify Host consumers through adapter registration.
+  const model = 'gpt-6.1-sol', fast = `${model}::fast`
+  for (const provider of ['openai', 'openai-codex']) {
+    await ctx.settings.update('dsh-pi-login', { providers: { [provider]: { enabled: true, models: [{ id: model }] } } }, revision)
+    assert.deepEqual((await adapter.listModels(provider)).map(choice => choice.id), [model])
+    for (const [changes, expected] of [
+      [{ enabledFastModels: [fast] }, [model, fast]],
+      [{ disabledModels: [model] }, [fast]],
+      [{ disabledModels: [] }, [model, fast]],
+      [{ enabledFastModels: [] }, [model]],
+    ]) {
+      const before = replacements
+      await ctx.settings.update('dsh-pi-login', { providers: { [provider]: changes } }, revision)
+      assert.equal(replacements, before + 1, `${provider}: model choice changes must update registration`)
+      assert.deepEqual((await adapter.listModels(provider)).map(choice => choice.id), expected)
+      assert.deepEqual(active, ['deepseek', provider])
+      const profile = PiPlugin.resolveProfiles({ [provider]: config.providers.get()[provider] }, 'strict').get(provider)
+      assert.deepEqual(profile.piProvider.getModels().map(entry => entry.id), [model])
+    }
+    await ctx.settings.update('dsh-pi-login', { providers: { [provider]: { enabled: false } } }, revision)
+    assert.deepEqual(active, ['deepseek'])
+  }
+
   // Use the SDK's Models.login and the registered adapter flow. Only the
   // provider's network operation is replaced; expiry must cross Authorization.
   const oauth = PiPlugin.resolveProfiles({openai:{}}, 'strict').get('openai').piProvider.auth.oauth
@@ -127,5 +151,7 @@ try {
     await broker.dispose()
     mock.timers.reset()
   }
-  console.log(`Independent Pi SDK: ${directory.length} providers, SDK catalog, API-key login, device-code expiry relay, streamed response, model/provider toggles, preserved credentials and legacy settings passed`)
+  console.log(`Independent Pi SDK: ${directory.length} providers, SDK catalog, API-key login, device-code expiry relay, streamed response, model/provider toggles, Fast catalog notifications, preserved credentials and legacy settings passed`)
 } finally { await plugin.dispose(); await ctx.fiber.dispose(); await new Promise(resolve => server.close(resolve)) }
+
+await import('./fast-runtime-check.mjs')

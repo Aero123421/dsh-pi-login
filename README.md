@@ -9,15 +9,15 @@ Pi対応プロバイダーのログインとモデル選択をDeepSeek Harness�
 サイドバーの「Plugins → Add plugin」を開き、次のURLを入力します。
 
 ```text
-https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.1/local-dsh-pi-login-0.2.1.tgz
+https://github.com/Aero123421/dsh-pi-login/releases/download/v0.3.0/local-dsh-pi-login-0.3.0.tgz
 ```
 
-「Install」→「Enable now」を押し、アプリを再起動します。[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.2.1)はGitHub Releasesにあります。
+「Install」→「Enable now」を押し、アプリを再起動します。[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.3.0)はGitHub Releasesにあります。
 
 WebプロファイルではCLIからも追加できます。
 
 ```sh
-dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases/download/v0.2.1/local-dsh-pi-login-0.2.1.tgz
+dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases/download/v0.3.0/local-dsh-pi-login-0.3.0.tgz
 ```
 
 ## 使い方
@@ -27,6 +27,16 @@ dsh plugin --profile web add https://github.com/Aero123421/dsh-pi-login/releases
 プロバイダーが有効なとき、オンにしたモデルをチャットやエージェントで使えます。モデルをオフにすると一覧と実行対象から外れます。プロバイダーをオフにしても認証情報とモデルの選択は残ります。
 
 `apiKeyEnv`で指定したAPIキーはログイン認証より優先されます。切り替えるには、認証後に表示される「保存済みの認証を使う」を選びます。
+
+## Fast
+
+対応モデルは、通常版とFast版を別々に選べます。例：`GPT-6.1 Sol`、`GPT-6.1 Sol Fast`。Fast版は最初はオフです。「モデルを選ぶ」でオンにすると、チャットやエージェントのモデル一覧に追加されます。通常版をオフにしてFast版だけを使うこともできます。
+
+認証情報とモデルの能力は共通です。Thinking effortは両方で選べます。Fast版を選んだ呼び出しにFastを指定し、通常版には標準処理を指定します。
+
+Fastは通常より高いAPI料金・ChatGPTクレジット消費が発生します。利用可否はモデルと契約によります。Fastが拒否された場合はエラーを表示するので、通常版を選び直してください。接続先が標準処理に振り分ける場合もあります。[OpenAI Fast mode](https://developers.openai.com/api/docs/guides/fast-mode)
+
+対応モデルと実装は[Fastの開発資料](docs/fast.md)を参照してください。
 
 ## 既存の設定
 

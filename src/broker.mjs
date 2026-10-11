@@ -62,20 +62,26 @@ export class PiLoginBroker {
     const section = this.section()
     const profile = section?.value?.providers?.[provider] ?? {}
     return { revision: section?.revision, enabled: Object.hasOwn(section?.value?.providers ?? {}, provider) && profile.enabled !== false,
-      models: this.catalog(provider, profile).map(model => ({ id: model.id, name: model.name, enabled: !profile.disabledModels?.includes(model.id) })) }
+      models: this.catalog(provider, profile).map(model => ({
+        id: model.id, name: model.name, enabled: model.enabled ?? !profile.disabledModels?.includes(model.id),
+        fast: model.serviceTier === 'priority',
+      })) }
   }
 
   async setModel(key, model, enabled, revision) {
     if (typeof enabled !== 'boolean' || !Number.isSafeInteger(revision)) throw new LoginError('invalid-request')
     const current = this.models(key)
-    if (!current.models.some(entry => entry.id === model)) throw new LoginError('invalid-request')
+    const choice = current.models.find(entry => entry.id === model)
+    if (!choice) throw new LoginError('invalid-request')
     if (current.revision !== revision) throw new LoginError('settings-changed')
     const provider = key.slice('llm-pi-ai/'.length)
     const profile = this.section().value?.providers?.[provider]
     if (!profile) throw new LoginError('not-enabled')
-    const disabled = new Set(profile.disabledModels ?? [])
-    enabled ? disabled.delete(model) : disabled.add(model)
-    await this.settings.update(NS, { providers: { [provider]: { disabledModels: [...disabled] } } }, revision)
+    const field = choice.fast ? 'enabledFastModels' : 'disabledModels'
+    const selected = new Set(profile[field] ?? [])
+    if (choice.fast ? enabled : !enabled) selected.add(model)
+    else selected.delete(model)
+    await this.settings.update(NS, { providers: { [provider]: { [field]: [...selected] } } }, revision)
     return { saved: true }
   }
 

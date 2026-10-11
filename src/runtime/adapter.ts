@@ -49,6 +49,8 @@ import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
 import { conversationUpdates, createModels, getSupportedThinkingLevels } from './models.ts'
+import { streamWithTier } from './fast.ts'
+import type { ModelChoice } from './fast.ts'
 import { toStreamChunks } from './stream.ts'
 
 /**
@@ -249,12 +251,12 @@ export class PiAiAdapter extends LlmAdapter {
   }
 
   /** The configured descriptor for one exact route/model pair within one snapshot. */
-  private modelOf(snapshot: PiAiSnapshot, provider: string, model: string): Model<Api> {
+  private modelOf(snapshot: PiAiSnapshot, provider: string, model: string): ModelChoice {
     const profile = this.profileOf(snapshot, provider)
     const failure = profile.modelErrors.get(model)
       ?? (profile.piProvider === undefined ? profile.catalogError : undefined)
     if (failure !== undefined) throw new LlmError(failure, 'INVALID_CONFIG')
-    const resolved = snapshot.models.getModel(provider, model)
+    const resolved = profile.modelChoices.find(choice => choice.id === model && choice.enabled)
     if (resolved === undefined) {
       throw new LlmError(`pi-ai provider "${provider}" has no configured model "${model}"`, 'UNKNOWN_MODEL')
     }
@@ -275,12 +277,10 @@ export class PiAiAdapter extends LlmAdapter {
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     return Promise.resolve().then(() => {
       const snapshot = this.current()
-      this.profileOf(snapshot, provider)
-      return snapshot.models.getModels(provider).map(model => ({
-        provider,
-        id: model.id,
-        name: model.name,
-        inputModalities: [...model.input],
+      const profile = this.profileOf(snapshot, provider)
+      if (profile.piProvider === undefined) return []
+      return profile.modelChoices.filter(choice => choice.enabled).map(choice => ({
+        provider, id: choice.id, name: choice.name, inputModalities: [...choice.model.input],
       }))
     })
   }
@@ -298,15 +298,16 @@ export class PiAiAdapter extends LlmAdapter {
 
   private modelInfo(snapshot: PiAiSnapshot, provider: string, model: string): LlmResolvedModelInfo {
     const profile = this.profileOf(snapshot, provider)
-    const resolvedModel = this.modelOf(snapshot, provider, model)
+    const choice = this.modelOf(snapshot, provider, model)
+    const resolvedModel = choice.model
     const defaultLevel = describableReasoningLevel(resolvedModel, profile.reasoning)
     // Only a cap the deployment configured is a request default; the
     // catalog's `maxTokens` sizes the model and stops there.
-    const configuredMaxTokens = profile.configuredMaxTokens.get(model)
+    const configuredMaxTokens = profile.configuredMaxTokens.get(resolvedModel.id)
     return {
       provider,
       id: model,
-      name: resolvedModel.name,
+      name: choice.name,
       inputModalities: [...resolvedModel.input],
       context: { contextWindow: resolvedModel.contextWindow },
       ...configuredMaxTokens === undefined ? {} : { defaultMaxTokens: configuredMaxTokens },
@@ -340,7 +341,8 @@ export class PiAiAdapter extends LlmAdapter {
     // mid-request builds a separate snapshot, so this request finishes under
     // the one it started with and the next call picks up the new one.
     const profile = this.profileOf(snapshot, options.provider)
-    const model = this.modelOf(snapshot, options.provider, options.model)
+    const choice = this.modelOf(snapshot, options.provider, options.model)
+    const model = choice.model
     const updates = conversationUpdates(model)
     // pi-ai collapses Anthropic tool updates without an initially active declaration.
     const tools = options.tools ?? []
@@ -387,7 +389,7 @@ export class PiAiAdapter extends LlmAdapter {
             maxBytes: profile.requestImageMaxBytes,
           },
         }, onReplayDegrade)
-      const events = snapshot.models.streamSimple(model, context, {
+      const streamOptions: SimpleStreamOptions = {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
@@ -396,8 +398,11 @@ export class PiAiAdapter extends LlmAdapter {
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
         headers: requestHeaders(profile.headers),
-      })
-      const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]()
+      }
+      const events = choice.serviceTier !== undefined
+        ? streamWithTier(snapshot.models, model, context, streamOptions, choice.serviceTier)
+        : snapshot.models.streamSimple(model, context, streamOptions)
+      const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model)[Symbol.asyncIterator]()
       let exhausted = false
       try {
         while (true) {

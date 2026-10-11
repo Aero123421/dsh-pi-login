@@ -1,6 +1,7 @@
 export const en = {
   useLogin: 'Use saved credentials', keyOverride: 'The configured API-key reference takes priority.',
   models: 'Models', manageModels: 'Choose models', useProvider: 'Use this provider', searchModels: 'Search models',
+  fastWarning: 'Fast mode uses paid priority processing or additional subscription credits. Availability depends on your account and model.',
   modelEnabled: 'Use model', loading: 'Loading…', modelsFailed: 'Could not load the models.', saveFailed: 'Could not save settings. Try again.',
   modelsHint: 'When the provider is on, selected models are available to chats and agents.', noResults: 'No matching models.',
   disabledHint: 'Turning this off keeps your credentials and model choices.', activateFirst: 'Enable the provider before choosing models.',
@@ -21,6 +22,7 @@ export const en = {
 export const ja = {
   useLogin: '保存済みの認証を使う', keyOverride: '設定済みのAPIキー参照が優先されます。',
   models: 'モデル', manageModels: 'モデルを選ぶ', useProvider: 'このプロバイダーを使う', searchModels: 'モデルを検索',
+  fastWarning: 'Fastモードは通常より高い料金・クレジット消費が発生します。利用可否はモデルと契約によります。',
   modelEnabled: 'モデルを使う', loading: '読み込み中…', modelsFailed: 'モデルを読み込めませんでした。', saveFailed: '設定を保存できませんでした。再試行してください。',
   modelsHint: 'プロバイダーが有効なとき、選んだモデルをチャットやエージェントで使えます。', noResults: '一致するモデルがありません。',
   disabledHint: 'オフにしても認証情報とモデルの選択は保存されます。', activateFirst: 'プロバイダーを有効にしてからモデルを選んでください。',

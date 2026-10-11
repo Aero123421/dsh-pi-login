@@ -145,6 +145,7 @@ function ModelsDialog({ entry, controller, t, onClose }) {
     {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
     {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
     {snapshot && !entry.managed ? <p className="dsh-pi-muted">{t('activateFirst')}</p> : null}
+    {snapshot?.models.some(model => model.fast) ? <p className="dsh-pi-muted">{t('fastWarning')}</p> : null}
     <div className="dsh-pi-model-list">
       {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
         <div className="dsh-pi-model-label"><span>{model.name}</span><span className="dsh-pi-model-id">{model.id}</span></div>

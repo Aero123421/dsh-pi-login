@@ -50,7 +50,8 @@ export const inject = ['llm']
 const NS = 'dsh-pi-login'
 
 /**
- * The registry captures these per route; a change here must re-register.
+ * Route metadata and selectable models; replacing registration also publishes
+ * the catalog change to Host consumers.
  * Sorted by provider so a settings document that merely reorders its keys is
  * not mistaken for a route change.
  */
@@ -63,7 +64,9 @@ function registrationFacts(profiles: ReadonlyMap<string, ResolvedPiAiProviderPro
       provider,
       displayName: profile.displayName,
       retryPolicy: profile.retryPolicy,
-      models: profile.piProvider?.getModels().map(model => ({ id: model.id, name: model.name })),
+      models: profile.piProvider === undefined ? undefined : profile.modelChoices
+        .filter(choice => choice.enabled)
+        .map(choice => ({ id: choice.id, name: choice.name })),
     }))
     .sort((left, right) => left.provider.localeCompare(right.provider))
 }
@@ -241,8 +244,8 @@ export function apply(ctx: Context, config: Config): void {
   const ensureRegistrationFacts = (): void => {
     const facts = registrationFacts(profiles())
     if (deepEqualJson(facts, registeredFacts)) return
-    // The registry captures the route set and each route's retry policy at
-    // registration, so a change to either must re-register. The swap is
+    // The registry captures route metadata, and catalog consumers refresh on
+    // replacement, so changes to either must re-register. The swap is
     // atomic (same adapter instance, validated before anything moves): a
     // conflicting route leaves the previous routes serving requests, and
     // `registeredFacts` only advances once the registry actually holds the
