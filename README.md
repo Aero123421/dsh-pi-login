@@ -17,7 +17,7 @@ github:Aero123421/dsh-pi-login
 WebプロファイルではCLIからも追加できます。
 
 ```sh
-dsh plugin --profile web add github:Aero123421/dsh-pi-login
+dsh plugin --profile web add -w github:Aero123421/dsh-pi-login
 ```
 
 ## 使い方

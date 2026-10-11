@@ -144,287 +144,6 @@ var b1=Object.defineProperty;var ue=Object.getOwnPropertyDescriptor;var ge=Objec
   color: var(--dsw-alias-label-dimmed);
 }
 
-/* Full-viewport layer (figma Mask + Dialog 451:18655): mask + centered card.
-   24px of air on every side; the top/bottom widen to the frame's published
-   overlay inset so a tall card stays clear of it.
-   Cards size against this padding box: consumers cap growth with
-   \`max-height: 100%\`, never their own viewport calc. */
-.dshpi_b97756f9_root {
-  pointer-events: auto;
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: max(24px, var(--dsh-frame-overlay-top, 24px)) 24px;
-}
-
-/* Only paint excludes the native caption; the root still blocks background clicks. */
-.dshpi_b97756f9_mask {
-  position: absolute;
-  inset: var(--dsh-frame-chrome-top, 0px) 0 0;
-  backdrop-filter: var(--dsw-mask-blur);
-}
-
-.dshpi_b97756f9_mask::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: var(--dsw-alias-bg-mask-1);
-  animation: modalEnter var(--ds-transition-duration) var(--ds-ease-in-out);
-}
-
-/* Dialogs use the prominent elevation on the secondary layer. */
-.dshpi_b97756f9_dialog {
-  box-sizing: border-box;
-  position: relative;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-  width: min(380px, 100%);
-  padding: 0 0 24px;
-  overflow: hidden;
-  border: 0;
-  border-radius: var(--dsw-radius-panel);
-  background: var(--dsw-alias-bg-layer-2);
-  box-shadow: var(--dsw-elevation-prominent);
-  animation: modalEnter var(--ds-transition-duration) var(--ds-ease-in-out);
-}
-
-@keyframes modalEnter {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dshpi_b97756f9_mask::after, .dshpi_b97756f9_dialog { animation: none; }
-}
-
-.dshpi_b97756f9_dialog:focus {
-  outline: none;
-}
-
-.dshpi_b97756f9_content {
-  display: flex;
-  flex-direction: column;
-  width: 100%;
-}
-
-/* Header row (figma Title row): pad l24/t22/r14/b12, SPACE_BETWEEN \u2014
- * title left, close button right. */
-.dshpi_b97756f9_header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 22px 14px 12px 24px;
-}
-
-.dshpi_b97756f9_title {
-  margin: 0;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 500; /* figma wt510, rendered 500 */
-  color: var(--dsw-alias-label-primary);
-}
-
-.dshpi_b97756f9_close {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  border-radius: var(--dsw-radius-sm);
-  background: transparent;
-  cursor: pointer;
-  color: var(--dsw-alias-label-secondary);
-}
-
-.dshpi_b97756f9_close:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-/* Description and body share the 332px content column (24px side pads). */
-.dshpi_b97756f9_description {
-  margin: 0;
-  padding: 0 24px;
-  font-size: 14px;
-  line-height: 22px;
-  font-weight: 400;
-  color: var(--dsw-alias-label-primary);
-}
-
-.dshpi_b97756f9_body {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  margin-top: 20px;
-  padding: 0 24px;
-}
-
-.dshpi_b97756f9_footer {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 0 24px;
-}
-
-/* The on/off appearance keys off aria-checked rather than a parallel class, so
- * the visual state cannot disagree with the state assistive technology reads.
- *
- * The capsule track and circular thumb opt out of the global superellipse. */
-.dshpi_7ae83aee_switch {
-  box-sizing: border-box;
-  position: relative;
-  flex: 0 0 auto;
-  width: 36px;
-  height: 20px;
-  padding: 2px;
-  border: 0;
-  border-radius: 999px;
-  corner-shape: round;
-  background: var(--dsw-alias-border-l3);
-  cursor: pointer;
-}
-
-.dshpi_7ae83aee_switch[aria-checked='true'] {
-  background: var(--dsw-alias-brand-primary);
-}
-
-.dshpi_7ae83aee_switch:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
-.dshpi_7ae83aee_switch:focus-visible {
-  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 2px;
-}
-
-.dshpi_7ae83aee_thumb {
-  display: block;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  corner-shape: round;
-  background: var(--dsw-alias-label-primary-foreground);
-  transition: transform 120ms ease;
-}
-
-.dshpi_7ae83aee_switch[aria-checked='false'] .dshpi_7ae83aee_thumb {
-  background: var(--dsw-alias-switch-thumb);
-}
-
-.dshpi_7ae83aee_switch[aria-checked='true'] .dshpi_7ae83aee_thumb {
-  transform: translateX(16px);
-}
-
-/* Solid states keep the 10px layout slot but paint one 6px currentColor core. */
-.dshpi_34138a6f_dot {
-  position: relative;
-  display: inline-block;
-  flex: none;
-}
-
-.dshpi_34138a6f_dot::after {
-  content: '';
-  position: absolute;
-  inset: 20%;
-  border-radius: 50%;
-  corner-shape: round;
-  background: currentColor;
-}
-
-.dshpi_34138a6f_dot[data-state='done'] {
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.dshpi_34138a6f_dot[data-state='warning'] {
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-.dshpi_34138a6f_dot[data-state='error'] {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-/* Idle is the absence of activity and uses the theme's neutral state step. */
-.dshpi_34138a6f_dot[data-state='idle'] {
-  color: var(--dsw-alias-state-idle-primary);
-}
-
-/* Ongoing is the sole non-dot state: a quiet full ring sits behind a centered
- * breathing arc while the complete glyph rotates continuously. Both animations
- * share one 1.5s period so pinning their start times aligns them together. */
-.dshpi_34138a6f_spinner {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.dshpi_34138a6f_spinnerMotion {
-  transform-origin: center;
-  animation: dsh-state-dot-spin 1.5s linear infinite;
-}
-
-.dshpi_34138a6f_spinnerTrack,
-.dshpi_34138a6f_spinnerArc {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-}
-
-.dshpi_34138a6f_spinnerTrack {
-  opacity: 0.25;
-}
-
-.dshpi_34138a6f_spinnerArc {
-  stroke-dasharray: 12 150;
-  animation: dsh-state-dot-dash 1.5s ease-in-out infinite;
-}
-
-@keyframes dsh-state-dot-spin {
-  to { transform: rotate(360deg); }
-}
-
-@keyframes dsh-state-dot-dash {
-  0% {
-    stroke-dasharray: 12 150;
-    stroke-dashoffset: 0;
-  }
-
-  50% {
-    stroke-dasharray: 24 150;
-    stroke-dashoffset: -6;
-  }
-
-  100% {
-    stroke-dasharray: 12 150;
-    stroke-dashoffset: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .dshpi_34138a6f_spinnerMotion,
-  .dshpi_34138a6f_spinnerArc {
-    animation: none;
-  }
-
-  .dshpi_34138a6f_spinnerArc {
-    stroke-dasharray: 18 150;
-    stroke-dashoffset: -3;
-  }
-}
-
-.dshpi_34138a6f_step { display: inline-flex; flex: none; align-items: center; justify-content: center; box-sizing: border-box; border-radius: 50%; corner-shape: round; border: 1.5px solid var(--dsw-alias-label-tertiary); color: var(--dsw-alias-label-primary-foreground); }
-.dshpi_34138a6f_step[data-state='done'] { border-color: var(--dsw-alias-state-success-primary); background: var(--dsw-alias-state-success-primary); }
-.dshpi_34138a6f_step[data-state='error'] { border-color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-state-error-primary); }
-.dshpi_34138a6f_step[data-state='warning'] { border-color: var(--dsw-alias-state-warn-primary); }
-
 .dshpi_1911279a_root {
   position: relative;
   display: inline-flex;
@@ -711,40 +430,6 @@ var b1=Object.defineProperty;var ue=Object.getOwnPropertyDescriptor;var ge=Objec
   width: 10px;
 }
 
-.dshpi_042ff8c4_keys {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 3px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.dshpi_042ff8c4_key {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font: inherit;
-}
-
-.dshpi_042ff8c4_tooltip { color: inherit; font-size: 11px; line-height: 14px; gap: 2px; }
-.dshpi_042ff8c4_tooltip .dshpi_042ff8c4_key {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 2px;
-  border-radius: 4px;
-  border: 0;
-  background: var(--dsw-alias-tooltip-key-bg);
-}
-
-.dshpi_042ff8c4_separator { font: inherit; }
-
-.dshpi_042ff8c4_joined { box-sizing: border-box; height: 16px; padding: 0 4px; border-radius: 4px; background: var(--dsw-alias-tooltip-key-bg); }
-.dshpi_042ff8c4_joined .dshpi_042ff8c4_key { min-width: 0; height: auto; padding: 0; border: 0; background: transparent; }
-
 .dshpi_a00a35bd_surface,
 .dshpi_a00a35bd_backing {
   border-radius: var(--dsw-radius-lg);
@@ -793,6 +478,321 @@ html[data-platform='darwin'] .dshpi_a00a35bd_backing {
   z-index: -1;
   background: var(--dsw-alias-bg-base);
   pointer-events: none;
+}
+
+/* Full-viewport layer (figma Mask + Dialog 451:18655): mask + centered card.
+   24px of air on every side; the top/bottom widen to the frame's published
+   overlay inset so a tall card stays clear of it.
+   Cards size against this padding box: consumers cap growth with
+   \`max-height: 100%\`, never their own viewport calc. */
+.dshpi_b97756f9_root {
+  pointer-events: auto;
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, var(--dsh-frame-overlay-top, 24px)) 24px;
+}
+
+/* Only paint excludes the native caption; the root still blocks background clicks. */
+.dshpi_b97756f9_mask {
+  position: absolute;
+  inset: var(--dsh-frame-chrome-top, 0px) 0 0;
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.dshpi_b97756f9_mask::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1);
+  animation: modalEnter var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+/* Dialogs use the prominent elevation on the secondary layer. */
+.dshpi_b97756f9_dialog {
+  box-sizing: border-box;
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  width: min(380px, 100%);
+  padding: 0 0 24px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--dsw-radius-panel);
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
+  animation: modalEnter var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+@keyframes modalEnter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dshpi_b97756f9_mask::after, .dshpi_b97756f9_dialog { animation: none; }
+}
+
+.dshpi_b97756f9_dialog:focus {
+  outline: none;
+}
+
+.dshpi_b97756f9_content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* Header row (figma Title row): pad l24/t22/r14/b12, SPACE_BETWEEN \u2014
+ * title left, close button right. */
+.dshpi_b97756f9_header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 22px 14px 12px 24px;
+}
+
+.dshpi_b97756f9_title {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500; /* figma wt510, rendered 500 */
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshpi_b97756f9_close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshpi_b97756f9_close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Description and body share the 332px content column (24px side pads). */
+.dshpi_b97756f9_description {
+  margin: 0;
+  padding: 0 24px;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshpi_b97756f9_body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-top: 20px;
+  padding: 0 24px;
+}
+
+.dshpi_b97756f9_footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 0 24px;
+}
+
+.dshpi_042ff8c4_keys {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.dshpi_042ff8c4_key {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: inherit;
+}
+
+.dshpi_042ff8c4_tooltip { color: inherit; font-size: 11px; line-height: 14px; gap: 2px; }
+.dshpi_042ff8c4_tooltip .dshpi_042ff8c4_key {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 2px;
+  border-radius: 4px;
+  border: 0;
+  background: var(--dsw-alias-tooltip-key-bg);
+}
+
+.dshpi_042ff8c4_separator { font: inherit; }
+
+.dshpi_042ff8c4_joined { box-sizing: border-box; height: 16px; padding: 0 4px; border-radius: 4px; background: var(--dsw-alias-tooltip-key-bg); }
+.dshpi_042ff8c4_joined .dshpi_042ff8c4_key { min-width: 0; height: auto; padding: 0; border: 0; background: transparent; }
+
+/* Solid states keep the 10px layout slot but paint one 6px currentColor core. */
+.dshpi_34138a6f_dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.dshpi_34138a6f_dot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  corner-shape: round;
+  background: currentColor;
+}
+
+.dshpi_34138a6f_dot[data-state='done'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dshpi_34138a6f_dot[data-state='warning'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dshpi_34138a6f_dot[data-state='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* Idle is the absence of activity and uses the theme's neutral state step. */
+.dshpi_34138a6f_dot[data-state='idle'] {
+  color: var(--dsw-alias-state-idle-primary);
+}
+
+/* Ongoing is the sole non-dot state: a quiet full ring sits behind a centered
+ * breathing arc while the complete glyph rotates continuously. Both animations
+ * share one 1.5s period so pinning their start times aligns them together. */
+.dshpi_34138a6f_spinner {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dshpi_34138a6f_spinnerMotion {
+  transform-origin: center;
+  animation: dsh-state-dot-spin 1.5s linear infinite;
+}
+
+.dshpi_34138a6f_spinnerTrack,
+.dshpi_34138a6f_spinnerArc {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.dshpi_34138a6f_spinnerTrack {
+  opacity: 0.25;
+}
+
+.dshpi_34138a6f_spinnerArc {
+  stroke-dasharray: 12 150;
+  animation: dsh-state-dot-dash 1.5s ease-in-out infinite;
+}
+
+@keyframes dsh-state-dot-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes dsh-state-dot-dash {
+  0% {
+    stroke-dasharray: 12 150;
+    stroke-dashoffset: 0;
+  }
+
+  50% {
+    stroke-dasharray: 24 150;
+    stroke-dashoffset: -6;
+  }
+
+  100% {
+    stroke-dasharray: 12 150;
+    stroke-dashoffset: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dshpi_34138a6f_spinnerMotion,
+  .dshpi_34138a6f_spinnerArc {
+    animation: none;
+  }
+
+  .dshpi_34138a6f_spinnerArc {
+    stroke-dasharray: 18 150;
+    stroke-dashoffset: -3;
+  }
+}
+
+.dshpi_34138a6f_step { display: inline-flex; flex: none; align-items: center; justify-content: center; box-sizing: border-box; border-radius: 50%; corner-shape: round; border: 1.5px solid var(--dsw-alias-label-tertiary); color: var(--dsw-alias-label-primary-foreground); }
+.dshpi_34138a6f_step[data-state='done'] { border-color: var(--dsw-alias-state-success-primary); background: var(--dsw-alias-state-success-primary); }
+.dshpi_34138a6f_step[data-state='error'] { border-color: var(--dsw-alias-state-error-primary); background: var(--dsw-alias-state-error-primary); }
+.dshpi_34138a6f_step[data-state='warning'] { border-color: var(--dsw-alias-state-warn-primary); }
+
+/* The on/off appearance keys off aria-checked rather than a parallel class, so
+ * the visual state cannot disagree with the state assistive technology reads.
+ *
+ * The capsule track and circular thumb opt out of the global superellipse. */
+.dshpi_7ae83aee_switch {
+  box-sizing: border-box;
+  position: relative;
+  flex: 0 0 auto;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  corner-shape: round;
+  background: var(--dsw-alias-border-l3);
+  cursor: pointer;
+}
+
+.dshpi_7ae83aee_switch[aria-checked='true'] {
+  background: var(--dsw-alias-brand-primary);
+}
+
+.dshpi_7ae83aee_switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.dshpi_7ae83aee_switch:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.dshpi_7ae83aee_thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: var(--dsw-alias-label-primary-foreground);
+  transition: transform 120ms ease;
+}
+
+.dshpi_7ae83aee_switch[aria-checked='false'] .dshpi_7ae83aee_thumb {
+  background: var(--dsw-alias-switch-thumb);
+}
+
+.dshpi_7ae83aee_switch[aria-checked='true'] .dshpi_7ae83aee_thumb {
+  transform: translateX(16px);
 }
 `;var s=require("react/jsx-runtime"),ce="dsh.piLogin",Ne=["slots","locale","connection"];function Ae(e){return(0,d.useSyncExternalStore)(t=>e.subscribe(t),()=>e.getSnapshot().revision),e.bind(ce)}function Re(e){try{let t=new URL(e);if(t.protocol==="https:"||t.protocol==="http:"&&["localhost","127.0.0.1","[::1]"].includes(t.hostname))return t.href}catch{}}function R1({label:e,value:t,options:o,onChange:r,disabled:n}){let[a,c]=(0,d.useState)(!1),u=(0,d.useId)();return(0,s.jsxs)("div",{className:"dsh-pi-choice",children:[(0,s.jsx)("span",{id:u,className:"dsh-pi-caption",children:e}),(0,s.jsx)(N1,{open:a,onClose:()=>c(!1),portal:!0,selectedId:t,items:o,onSelect:l=>{r(l),c(!1)},anchor:(0,s.jsxs)(B,{variant:"outline",disabled:n,"aria-labelledby":u,"aria-haspopup":"menu","aria-expanded":a,onClick:()=>c(!a),className:"dsh-pi-choice-button",children:[(0,s.jsx)("span",{children:o.find(l=>l.id===t)?.label}),(0,s.jsx)(L1,{size:14})]})})]})}function Ee({prompt:e,ticket:t,controller:o,t:r,onFailure:n}){let[a,c]=(0,d.useState)(""),[u,l]=(0,d.useState)(!1),k=(0,d.useId)();async function v(b){b.preventDefault();let C=a;c(""),l(!0);try{await o.call("answer",{ticket:t,id:e.id,value:C})}catch{n()}finally{l(!1)}}return(0,s.jsxs)("form",{onSubmit:v,className:"dsh-pi-prompt",children:[e.kind==="select"?(0,s.jsx)(R1,{label:e.message||r("selection"),value:a,options:e.options,onChange:c,disabled:u}):(0,s.jsxs)(s.Fragment,{children:[(0,s.jsx)("label",{htmlFor:k,children:e.message||r(e.kind==="secret"?"secret":"answer")}),(0,s.jsx)(h1,{id:k,"data-modal-autofocus":!0,type:e.kind==="secret"?"password":"text",autoComplete:"off",spellCheck:!1,value:a,placeholder:e.placeholder,onChange:b=>c(b.target.value)})]}),(0,s.jsx)("div",{className:"dsh-pi-actions",children:(0,s.jsx)(B,{type:"submit",variant:"primary",disabled:u||e.kind==="select"&&!a,children:r("submit")})})]})}function Be({entry:e,method:t,controller:o,t:r,onClose:n}){let a=(0,d.useRef)(),[c,u]=(0,d.useState)(),[l,k]=(0,d.useState)({status:"running"}),[v,b]=(0,d.useState)(!1),[C,x]=(0,d.useState)(!1),[W,m]=(0,d.useState)(!1),[H,A]=(0,d.useState)(!1),[p,Q]=(0,d.useState)(!1),[V,w]=(0,d.useState)(!1);(0,d.useEffect)(()=>{let R=!0;return o.start(e.key,t).then(Z=>{a.current=Z,R?u(Z):o.cancel(Z).catch(()=>{})},()=>{R&&b(!0)}),()=>{R=!1,a.current&&o.cancel(a.current).catch(()=>{})}},[]),(0,d.useEffect)(()=>{if(!c)return;let R=!0,Z,a1=new AbortController;async function D(){try{let l1=await o.call("state",{ticket:c},a1.signal);if(!R)return;k(l1),l1.status==="running"?Z=setTimeout(D,800):(o.tickets.delete(c),await o.refresh())}catch{R&&b(!0)}}return D(),()=>{R=!1,a1.abort(),clearTimeout(Z)}},[c]);let S=Re(l.notice?.url),J=l.status!=="running"||v,X=l.reason==="provider-expired"?"providerExpired":l.reason==="timeout"?"timedOut":l.status==="cancelled"?"cancelled":"failed";async function z(R=!1){x(!0),A(!1);try{await o.call(R?"use-login":"enable",{key:e.key}),m(!0),await o.refresh()}catch(Z){A(!0),Q(Z.message.endsWith("/api-key-override"))}finally{x(!1)}}return(0,s.jsxs)(k1,{open:!0,onClose:n,title:e.label,closeLabel:r("close"),className:"dsh-pi-login",footer:(0,s.jsx)(B,{variant:"outline",onClick:n,children:r(J?"close":"cancel")}),children:[v||l.status==="failed"?(0,s.jsx)("p",{role:"alert",children:r(v?"failed":X)}):null,l.status==="authorized"?(0,s.jsxs)(s.Fragment,{children:[(0,s.jsx)("p",{role:"status",children:r("success")}),(0,s.jsx)("p",{className:"dsh-pi-muted",children:r("successDescription")}),W?(0,s.jsx)("p",{role:"status",children:r("enabled")}):(0,s.jsx)(B,{variant:"primary",onClick:()=>{z()},disabled:C,children:r("enable")}),H?(0,s.jsx)("p",{role:"alert",children:r(p?"keyOverride":"enableFailed")}):null,p&&!W?(0,s.jsx)(B,{variant:"outline",onClick:()=>{z(!0)},disabled:C,children:r("useLogin")}):null]}):null,l.status==="cancelled"?(0,s.jsx)("p",{role:l.reason==="timeout"?"alert":"status",children:r(X)}):null,J?null:(0,s.jsxs)(s.Fragment,{children:[(0,s.jsx)("p",{role:"status",children:l.notice?.message||r(S?"waiting":"busy")}),S?(0,s.jsx)("a",{className:"dsh-pi-link",href:S,target:"_blank",rel:"noopener noreferrer",children:r("openBrowser")}):null,l.notice?.code?(0,s.jsxs)("div",{className:"dsh-pi-verification",children:[(0,s.jsx)("span",{className:"dsh-pi-muted",children:r("code")}),(0,s.jsxs)("div",{className:"dsh-pi-verification-row",children:[(0,s.jsx)("code",{children:l.notice.code}),(0,s.jsx)(B,{size:"sm",variant:"outline",onClick:async()=>{try{await navigator.clipboard.writeText(l.notice.code),w(!0)}catch{w(!1)}},children:r(V?"copied":"copy")})]})]}):null,l.prompt?(0,s.jsx)(Ee,{prompt:l.prompt,ticket:c,controller:o,t:r,onFailure:()=>b(!0)},l.prompt.id):null]})]})}function Ve({entry:e,controller:t,t:o,onClose:r}){let[n,a]=(0,d.useState)(),[c,u]=(0,d.useState)(""),[l,k]=(0,d.useState)(!1),[v,b]=(0,d.useState)(!1);(0,d.useEffect)(()=>{let m=new AbortController;return t.call("models",{key:e.key},m.signal).then(a,()=>{m.signal.aborted||b(!0)}),()=>m.abort()},[e.key]);async function C(m,H){k(!0),b(!1);try{await t.call("set-model",{key:e.key,model:m,enabled:H,revision:n.revision}),a(await t.call("models",{key:e.key}))}catch{b(!0);try{a(await t.call("models",{key:e.key}))}catch{}}finally{k(!1)}}let x=c.trim().toLowerCase(),W=n?.models.filter(m=>`${m.id} ${m.name}`.toLowerCase().includes(x));return(0,s.jsxs)(k1,{open:!0,title:`${e.label} \xB7 ${o("models")}`,description:o("modelsHint"),closeLabel:o("close"),onClose:r,className:"dsh-pi-login dsh-pi-models-dialog",footer:(0,s.jsx)(B,{variant:"outline",onClick:r,children:o("close")}),children:[(0,s.jsx)(h1,{icon:(0,s.jsx)(_1,{size:16}),"aria-label":o("searchModels"),placeholder:o("searchModels"),"data-modal-autofocus":!0,value:c,onChange:m=>u(m.target.value)}),v?(0,s.jsx)("p",{role:"alert",children:o(n?"saveFailed":"modelsFailed")}):null,!n&&!v?(0,s.jsx)("p",{role:"status",children:o("loading")}):null,n&&!e.managed?(0,s.jsx)("p",{className:"dsh-pi-muted",children:o("activateFirst")}):null,n?.models.some(m=>m.fast)?(0,s.jsx)("p",{className:"dsh-pi-muted",children:o("fastWarning")}):null,(0,s.jsxs)("div",{className:"dsh-pi-model-list",children:[W?.map(m=>(0,s.jsxs)("div",{className:"dsh-pi-model-row",children:[(0,s.jsxs)("div",{className:"dsh-pi-model-label",children:[(0,s.jsx)("span",{children:m.name}),(0,s.jsx)("span",{className:"dsh-pi-model-id",children:m.id})]}),(0,s.jsx)(u1,{label:`${o("modelEnabled")}: ${m.name}`,checked:m.enabled,disabled:l||!e.writable||!e.managed,onChange:H=>{C(m.id,H)}})]},m.id)),W?.length===0?(0,s.jsx)("p",{className:"dsh-pi-muted",children:o("noResults")}):null]})]})}function E1({controller:e,locale:t,provider:o}){let r=(0,d.useSyncExternalStore)(e.subscribe,e.getSnapshot),n=Ae(t),[a,c]=(0,d.useState)("llm-pi-ai/openai"),[u,l]=(0,d.useState)("oauth"),[k,v]=(0,d.useState)(),[b,C]=(0,d.useState)(!1),[x,W]=(0,d.useState)(!1),[m,H]=(0,d.useState)(!1);(0,d.useEffect)(()=>{e.load()},[e]);let A=o?r.entries.filter(w=>w.provider===o.provider):r.entries,p=A.find(w=>w.key===a)||A[0],Q=p?.methods.find(w=>w.id===u)||p?.methods[0];async function V(w){W(!0),H(!1);try{let S=await e.call("models",{key:p.key});await e.call("set-provider",{key:p.key,enabled:w,revision:S.revision}),await e.refresh()}catch{H(!0),await e.refresh()}finally{W(!1)}}return o&&!p&&!r.error?null:(0,s.jsxs)("section",{className:`dsh-pi-login ${o?"dsh-pi-card":"dsh-pi-footer"}`,children:[o?null:(0,s.jsxs)(s.Fragment,{children:[(0,s.jsx)("h3",{children:n("title")}),(0,s.jsx)("p",{className:"dsh-pi-muted",children:n("description")})]}),r.error?(0,s.jsxs)("p",{role:"alert",children:[n("loadFailed")," ",(0,s.jsx)(B,{size:"sm",onClick:()=>{e.refresh()},children:n("retry")})]}):null,r.status==="ready"&&!r.error&&A.length===0&&!o?(0,s.jsx)("p",{children:n("empty")}):null,p?(0,s.jsxs)(s.Fragment,{children:[(0,s.jsxs)("div",{className:"dsh-pi-fields",children:[o?null:(0,s.jsx)(R1,{label:n("provider"),value:p.key,options:A.map(w=>({id:w.key,label:w.label})),onChange:c,disabled:x}),p.methods.length>1?(0,s.jsx)(R1,{label:n("method"),value:Q.id,options:p.methods.map(w=>({id:w.id,label:w.id==="oauth"?n("oauth"):w.id==="api-key"?n("apiKey"):w.label})),onChange:l,disabled:x}):null]}),(0,s.jsxs)("div",{className:"dsh-pi-account-row",children:[(0,s.jsxs)("span",{className:"dsh-pi-status",children:[(0,s.jsx)(A1,{state:p.inFlight?"ongoing":p.configured?"done":"pending",size:10}),n(p.inFlight?"busy":p.configured?"connected":"notConnected")]}),(0,s.jsx)(B,{variant:p.configured?"outline":"primary",size:"sm",disabled:p.inFlight||!p.writable||!Q,onClick:()=>v({entry:p,method:Q.id}),children:n(p.configured?"signInAgain":"signIn")})]}),(0,s.jsxs)("div",{className:"dsh-pi-provider-row",children:[(0,s.jsxs)("div",{children:[(0,s.jsx)("span",{children:n("useProvider")}),(0,s.jsx)("p",{className:"dsh-pi-muted",children:n("disabledHint")})]}),(0,s.jsx)(u1,{label:`${n("useProvider")}: ${p.label}`,checked:p.enabled,disabled:x||!p.writable||!p.configured&&!p.managed,onChange:w=>{V(w)}})]}),(0,s.jsx)(B,{variant:"outline",size:"sm",disabled:x,onClick:()=>C(!0),children:n("manageModels")}),m?(0,s.jsx)("p",{role:"alert",children:n("saveFailed")}):null,p.writable?null:(0,s.jsx)("p",{className:"dsh-pi-muted",children:n("readOnly")})]}):null,k?(0,s.jsx)(Be,{...k,controller:e,t:n,onClose:()=>v(void 0)}):null,b&&p?(0,s.jsx)(Ve,{entry:p,controller:e,t:n,onClose:()=>C(!1)}):null]})}function Se(e){let t=new v1(e.connection);e.effect(()=>()=>t.dispose(),"dsh-pi-login: UI requests"),e.effect(()=>e.locale.register(ce,{en:ie,ja:ae}),"dsh-pi-login: copy"),e.effect(()=>{let r=document.createElement("style");return r.dataset.dshPiLogin="",r.textContent=de+le,document.head.append(r),()=>r.remove()},"dsh-pi-login: official controls"),e.on("connection/reset",()=>{t.refresh()});let o=()=>({controller:t,locale:e.locale});e.slots.inject("settings.models.footer",()=>e.slots.register({name:"settings.models.footer",id:"dsh-pi-login",order:10,inject:o},E1)),e.slots.inject("settings.models.provider-card",()=>e.slots.register({name:"settings.models.provider-card",id:"dsh-pi-login",key:"dsh-pi-login",inject:o},E1))}
 
