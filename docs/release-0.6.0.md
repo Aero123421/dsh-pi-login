@@ -6,7 +6,7 @@
 - 呼び出しは選んだ接続のnative SDK provider・認証・endpointへ対応付けます。認証切れ・429・削除時に別アカウントへ自動で切り替えません。遅いOAuth refreshが新しいログインを上書きせず、履歴のopaque状態は接続・認証世代・endpoint・protocolを確認して再利用します。FastとThinkingの既存動作を維持します。
 - 既存設定はプロファイルごとに一度だけ原子的に移行します。旧route、モデル/Fast/Thinking、元のCredentialsレコードを保持し、通常の保存済みOAuth・APIキーでは再ログイン不要です。旧設定に直接記載したヘッダーや、検証に通らない独自routeには修復が必要です。失敗時は旧設定と認証を残します。旧版への復帰にはプロファイルとCredentialsのバックアップを使用してください。
 - Account Usageを生成のtoken/costとは別に表示します。応答にある期間・利用枠だけを扱い、Host取得時刻と提供元観測時刻、未対応、認証切れ、429、古い情報、不明、無制限を区別します。接続・認証世代・principalごとに取得を分離し、同時取得・期限・Retry-After・abortを管理します。内部HTTP APIのため提供元の変更で取得できなくなる場合があります。
-- Meta Model API（Pi経由）のMuse Wonderと、独立したMeta Muse CodeのMSPを区別します。PiのFull候補は実際のアカウントAPI応答と明示した選択が必要です。モデル選択やThinking変更で取得済み契約を失う不具合を修正しました。Muse Codeは固定した公式SDKとHostの公式CLIを使う接続別ログイン、Wonder1／Fullの選択、初期オフのContributor modeを追加します。明示したデータ利用同意を必須にし、公式settings schemaと書き込み・読み戻しを確認します。専用MSP sessionの開始・turn・cancel・履歴・resumeを実装しますが、DSHの通常のLLM routeには登録せず、tool bridgeと実CLI生成は未検証です。
+- Meta Model API（Pi経由）のMuse Wonderと、独立したMeta Muse CodeのMSPを区別します。PiのFull候補は実際のアカウントAPI応答と明示した選択が必要です。モデル選択やThinking変更で取得済み契約を失う不具合を修正しました。Muse Codeは固定した公式SDKとHostの公式CLIを使う接続別ログインと、Wonder1、Wonder1 Contributor、Wonder Full、Wonder Full Contributorのモデル選択を追加します。選択を実モデルIDとContributorのboolean設定へ対応付け、公式settings schemaと書き込み・読み戻しを確認します。専用MSP sessionの開始・turn・cancel・履歴・resumeを実装しますが、DSHの通常のLLM routeには登録せず、tool bridgeと実CLI生成は未検証です。
 
 新しいendpointにはHostの`trustedEndpointOrigins`への明示が必要です。URLにキーを埋め込めず、秘密ヘッダーはCredentials参照で解決します。キー・トークン・メール・生の利用状況応答をClientや公開イベントに返しません。システムプロンプトと既存のプラグイン更新先は維持します。
 

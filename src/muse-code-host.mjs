@@ -5,7 +5,6 @@ import { MuseCodeError } from './muse-code.mjs'
 import { normalizeMuseCodeCatalog, normalizeMuseCodeUsage } from './muse-code-observations.mjs'
 
 export const MUSE_CODE_CONTRIBUTOR_TERMS = 'https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode'
-export const MUSE_CODE_CONSENT_VERSION = '2026-10-13'
 export const MUSE_CODE_MODELS = Object.freeze(['muse-wonder-1.0', 'muse-wonder-full-1.0'])
 const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -17,6 +16,23 @@ const fail = code => { throw new MuseCodeError(code) }
 const dataSignature = connection => JSON.stringify([connection.profileKey, connection.integrationId,
   connection.serviceId, connection.connectionId, connection.credentialRecordId, connection.credentialGeneration])
 const leaseSignature = connection => JSON.stringify([dataSignature(connection), connection.generation, connection.museCode])
+
+/** Picker ids are local; each choice retains the exact advertised native id. */
+export function museCodeModelChoices(catalog, contributor = false) {
+  return MUSE_CODE_MODELS.flatMap(modelId => {
+    const model = catalog.models.find(row => row.modelId === modelId)
+    if (!model) return []
+    const name = modelId === 'muse-wonder-1.0' ? 'Wonder1' : 'Wonder Full'
+    return [false, true].map(mode => ({
+      ...model, id: `${modelId}${mode ? '::contributor' : ''}`, modelId,
+      name: `${name}${mode ? ' Contributor' : ''}`,
+      label: `${name}${mode ? ' Contributor' : ''}`,
+      contributor: mode, runnable: false, sessionSupported: true,
+      isActive: model.isActive && mode === contributor,
+      isDefault: model.isDefault && mode === contributor,
+    }))
+  })
+}
 
 export function museCodeCredentialKey(connection) {
   if (!ID.test(connection?.credentialRecordId)) fail('muse-code-connection-changed')
@@ -199,12 +215,10 @@ export class MuseCodeHostManager {
         mode = record.payload.mode ?? mode
       } else if (!login) fail('muse-code-login-required')
       // Connection settings are the transactionally saved user selection.
-      // A failed settings CAS must not leave a new consent mode active merely
+      // A failed settings CAS must not leave a different model mode active merely
       // because an ephemeral feature probe succeeded before the metadata write.
       if (connection.museCode) mode = {
         enabled: connection.museCode.contributorMode === true,
-        ...connection.museCode.contributorConsentAt && Number.isFinite(Date.parse(connection.museCode.contributorConsentAt))
-          ? { consentVersion: MUSE_CODE_CONSENT_VERSION } : {},
       }
       await writeFile(join(config, 'settings.json'), JSON.stringify({ schema_version: 1 }), { mode: 0o600 })
       const opening = Promise.resolve().then(() => this.openHost({ home, dataRoot,
@@ -226,17 +240,16 @@ export class MuseCodeHostManager {
       const keys = Object.keys(schema.keys).filter(key => modeKey(key) && typeof values.values[key] === 'boolean')
       if (keys.length !== 1) fail('muse-code-mode-unavailable')
       const keyPath = keys[0]
-      const applyMode = async (enabled, consent = false) => {
-        if (enabled && consent !== true) fail('muse-code-consent-required')
+      const applyMode = async enabled => {
         const written = await request('settings/writeValue', { keyPath, value: enabled })
         if (written?.keyPath !== keyPath || written.effectiveValue !== enabled) fail('muse-code-mode-unavailable')
         const read = await request('settings/read')
         if (read?.values?.[keyPath] !== enabled) fail('muse-code-mode-unavailable')
-        return { keyPath, enabled, ...enabled ? { consentVersion: MUSE_CODE_CONSENT_VERSION, termsUrl: MUSE_CODE_CONTRIBUTOR_TERMS } : {} }
+        return { keyPath, enabled }
       }
-      // Muse subscriptions default on; force off until explicit consent has
-      // been stored for THIS connection. Login never emits a model request.
-      mode = await applyMode(mode.enabled === true, mode.enabled === true && mode.consentVersion === MUSE_CODE_CONSENT_VERSION)
+      // Apply the saved model choice instead of inheriting the CLI's default.
+      // Login itself never emits a model request.
+      mode = await applyMode(login ? false : mode.enabled === true)
       const account = publicAccount(await request('account/read'))
       if (!login && account.state !== 'accountLogin') fail('muse-code-login-required')
       return { host, home, config, dataRoot, signal: combined, request, close, applyMode, mode, account }
@@ -318,28 +331,16 @@ export class MuseCodeHostManager {
       if (outcome !== 'granted') fail('muse-code-login-failed')
       const account = publicAccount(await handle.request('account/read'))
       if (account.state !== 'accountLogin') fail('muse-code-login-failed')
-      // Reassert Standard after login: the CLI's subscriber default cannot
-      // silently override the app's explicit data-use selection.
-      handle.mode = await handle.applyMode(false)
+      // Reassert the saved model choice after the CLI's subscriber default.
+      handle.mode = await handle.applyMode(connection.museCode?.contributorMode === true)
       await this.commit(connection, handle)
-      return { authorized: true, account, contributor: false, executionKind: 'agent-session', liveVerified: false }
+      return { authorized: true, account, contributor: handle.mode.enabled, executionKind: 'agent-session', liveVerified: false }
     } catch (error) {
       // A cancelled/missing peer cannot hold credential cleanup indefinitely.
       try { await bounded(() => handle.host.request('account/loginCancel'), undefined, 1000) } catch {}
       if (error instanceof MuseCodeError) throw error
       fail('muse-code-login-failed')
     } finally { unwatch?.(); await handle.close() }
-  }
-
-  async setContributor(connection, enabled, consent, { signal } = {}) {
-    if (typeof enabled !== 'boolean') fail('muse-code-mode-unavailable')
-    if (enabled && consent !== true) fail('muse-code-consent-required')
-    const handle = await this.open(connection, { signal, exclusive: true })
-    try {
-      const mode = await handle.applyMode(enabled, consent)
-      await this.commit(connection, handle, mode)
-      return { saved: true, contributor: enabled, termsUrl: MUSE_CODE_CONTRIBUTOR_TERMS, consentVersion: enabled ? MUSE_CODE_CONSENT_VERSION : undefined }
-    } finally { await handle.close() }
   }
 
   async read(connection, { signal, includeModels = true, includeUsage = true } = {}) {
@@ -354,7 +355,9 @@ export class MuseCodeHostManager {
       committed = true
       return { account: handle.account, contributor: handle.mode.enabled, executionKind: 'agent-session', liveVerified: false,
         ...includeModels ? models.status === 'fulfilled'
-          ? { models: models.value.models.map(model => ({ ...model, runnable: false, sessionSupported: MUSE_CODE_MODELS.includes(model.modelId) })) }
+          ? { models: museCodeModelChoices(models.value, handle.mode.enabled),
+            diagnostics: models.value.models.filter(model => !MUSE_CODE_MODELS.includes(model.modelId))
+              .map(model => ({ ...model, runnable: false, sessionSupported: false })) }
           : { models: [], modelsError: models.reason instanceof MuseCodeError ? models.reason.code : 'muse-code-observation-failed' } : {},
         ...includeUsage ? usage.status === 'fulfilled' ? { usage: usage.value }
           : { usage: { integrationId: 'meta-muse-code', serviceId: 'muse-code', connectionId: connection.connectionId,
@@ -386,15 +389,13 @@ export class MuseCodeHostManager {
   async configure(connection, patch, { signal } = {}) {
     if (patch.modelId !== undefined && !MUSE_CODE_MODELS.includes(patch.modelId)) fail('muse-code-model-unavailable')
     if (patch.contributorMode !== undefined && typeof patch.contributorMode !== 'boolean') fail('muse-code-mode-unavailable')
-    if (patch.contributorMode === true && patch.contributorConsent !== true) fail('muse-code-consent-required')
     const handle = await this.open(connection, { signal, exclusive: true })
     try {
-      const next = { contributorMode: handle.mode.enabled, ...connection.museCode }
+      const next = { contributorMode: connection.museCode?.contributorMode ?? handle.mode.enabled,
+        ...connection.museCode?.modelId ? { modelId: connection.museCode.modelId } : {} }
       if (patch.contributorMode !== undefined) {
-        await handle.applyMode(patch.contributorMode, patch.contributorConsent)
+        await handle.applyMode(patch.contributorMode)
         next.contributorMode = patch.contributorMode
-        if (patch.contributorMode) next.contributorConsentAt = new Date(this.now()).toISOString()
-        else delete next.contributorConsentAt
       }
       const requested = patch.modelId ?? next.modelId
       if (requested !== undefined) {

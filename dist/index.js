@@ -3847,7 +3847,6 @@ var ERRORS = Object.freeze({
   "muse-code-protocol-unsupported": "This Muse Code CLI does not provide the required account and settings protocol. Update the official CLI.",
   "muse-code-login-required": "Sign in to this Muse Code connection first.",
   "muse-code-login-failed": "Muse Code sign-in did not complete.",
-  "muse-code-consent-required": "Explicit consent to the Muse Code Contributor data-use terms is required.",
   "muse-code-mode-unavailable": "This account or Muse Code host cannot apply the requested Contributor setting.",
   "muse-code-connection-changed": "This Muse Code connection or host profile changed during the operation.",
   "muse-code-connection-disabled": "Enable this Muse Code connection before starting a new agent turn.",
@@ -4929,8 +4928,7 @@ var IntegrationRegistry = class {
       ...service.executionKind ? { executionKind: service.executionKind } : {},
       ...service.termsUrl || service.sourceTermsUrl ? { termsUrl: service.termsUrl ?? service.sourceTermsUrl } : {},
       ...service.executionKind ? { llmCompatible: service.llmCompatible === true } : {},
-      ...service.requiresHostCli ? { requiresHostCli: true } : {},
-      ...service.modes ? { modes: service.modes.map(({ id, label: label4 }) => ({ id, label: label4 })) } : {}
+      ...service.requiresHostCli ? { requiresHostCli: true } : {}
     })));
   }
   service(integrationId, serviceId) {
@@ -5228,10 +5226,10 @@ var ConnectionManager = class {
     const section = this.writable(revision);
     const connection = this.lookup(connectionId2);
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new ConnectionError("invalid-request");
-    const allowed = /* @__PURE__ */ new Set(["displayName", "enabled", "apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod", "contributorMode", "contributorConsent", "modelId"]);
+    const allowed = /* @__PURE__ */ new Set(["displayName", "enabled", "apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod", "contributorMode", "modelId"]);
     if (Object.keys(patch).some((key) => !allowed.has(key))) throw new ConnectionError("invalid-request");
     if (connection.integrationId !== "pi" && ["apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod"].some((key) => patch[key] !== void 0)) throw new ConnectionError("owner-managed");
-    if (connection.integrationId === "pi" && ["contributorMode", "contributorConsent", "modelId"].some((key) => patch[key] !== void 0)) throw new ConnectionError("unsupported");
+    if (connection.integrationId === "pi" && ["contributorMode", "modelId"].some((key) => patch[key] !== void 0)) throw new ConnectionError("unsupported");
     if (patch.displayName !== void 0) connection.displayName = text(patch.displayName);
     if (patch.enabled !== void 0) {
       if (typeof patch.enabled !== "boolean") throw new ConnectionError("invalid-request");
@@ -5255,7 +5253,7 @@ var ConnectionManager = class {
     const oldRecordId = connection.credentialRecordId;
     let newRecordId;
     try {
-      if (connection.integrationId !== "pi" && ["contributorMode", "contributorConsent", "modelId"].some((key) => patch[key] !== void 0)) {
+      if (connection.integrationId !== "pi" && ["contributorMode", "modelId"].some((key) => patch[key] !== void 0)) {
         const owner = this.registry.owner(connection.integrationId);
         const changes = await owner.configureConnection(connection, patch, this.binding(connection));
         if (!this.isCurrent(this.binding(connection))) throw new ConnectionError("connection-changed");
@@ -5309,7 +5307,6 @@ var ConnectionManager = class {
     delete copy.legacyRoute;
     delete copy.profile.apiKeyEnv;
     delete copy.profile.headers;
-    if (copy.museCode) copy.museCode = { contributorMode: false };
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token2);
     return { saved: true, connectionId: id };
   }
@@ -6424,7 +6421,7 @@ var Config = z.object({
     integrationLabel: z.string(),
     serviceLabel: z.string(),
     profile,
-    museCode: z.object({ contributorMode: z.boolean(), contributorConsentAt: z.string(), modelId: z.string() })
+    museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() })
   })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile()
 });
@@ -8743,7 +8740,6 @@ function normalizeMuseCodeCatalog(result) {
 
 // src/muse-code-host.mjs
 var MUSE_CODE_CONTRIBUTOR_TERMS = "https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode";
-var MUSE_CODE_CONSENT_VERSION = "2026-10-13";
 var MUSE_CODE_MODELS = Object.freeze(["muse-wonder-1.0", "muse-wonder-full-1.0"]);
 var ID2 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 var object3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -8763,6 +8759,25 @@ var dataSignature = (connection) => JSON.stringify([
   connection.credentialGeneration
 ]);
 var leaseSignature = (connection) => JSON.stringify([dataSignature(connection), connection.generation, connection.museCode]);
+function museCodeModelChoices(catalog, contributor = false) {
+  return MUSE_CODE_MODELS.flatMap((modelId) => {
+    const model = catalog.models.find((row) => row.modelId === modelId);
+    if (!model) return [];
+    const name2 = modelId === "muse-wonder-1.0" ? "Wonder1" : "Wonder Full";
+    return [false, true].map((mode) => ({
+      ...model,
+      id: `${modelId}${mode ? "::contributor" : ""}`,
+      modelId,
+      name: `${name2}${mode ? " Contributor" : ""}`,
+      label: `${name2}${mode ? " Contributor" : ""}`,
+      contributor: mode,
+      runnable: false,
+      sessionSupported: true,
+      isActive: model.isActive && mode === contributor,
+      isDefault: model.isDefault && mode === contributor
+    }));
+  });
+}
 function museCodeCredentialKey(connection) {
   if (!ID2.test(connection?.credentialRecordId)) fail("muse-code-connection-changed");
   return `dsh-muse-code/${connection.credentialRecordId}`;
@@ -8983,8 +8998,7 @@ var MuseCodeHostManager = class {
           mode = record.payload.mode ?? mode;
         } else if (!login) fail("muse-code-login-required");
         if (connection.museCode) mode = {
-          enabled: connection.museCode.contributorMode === true,
-          ...connection.museCode.contributorConsentAt && Number.isFinite(Date.parse(connection.museCode.contributorConsentAt)) ? { consentVersion: MUSE_CODE_CONSENT_VERSION } : {}
+          enabled: connection.museCode.contributorMode === true
         };
         await writeFile2(join2(config, "settings.json"), JSON.stringify({ schema_version: 1 }), { mode: 384 });
         const opening = Promise.resolve().then(() => this.openHost({
@@ -9012,15 +9026,14 @@ var MuseCodeHostManager = class {
         const keys = Object.keys(schema.keys).filter((key) => modeKey(key) && typeof values.values[key] === "boolean");
         if (keys.length !== 1) fail("muse-code-mode-unavailable");
         const keyPath = keys[0];
-        const applyMode = async (enabled, consent = false) => {
-          if (enabled && consent !== true) fail("muse-code-consent-required");
+        const applyMode = async (enabled) => {
           const written = await request("settings/writeValue", { keyPath, value: enabled });
           if (written?.keyPath !== keyPath || written.effectiveValue !== enabled) fail("muse-code-mode-unavailable");
           const read = await request("settings/read");
           if (read?.values?.[keyPath] !== enabled) fail("muse-code-mode-unavailable");
-          return { keyPath, enabled, ...enabled ? { consentVersion: MUSE_CODE_CONSENT_VERSION, termsUrl: MUSE_CODE_CONTRIBUTOR_TERMS } : {} };
+          return { keyPath, enabled };
         };
-        mode = await applyMode(mode.enabled === true, mode.enabled === true && mode.consentVersion === MUSE_CODE_CONSENT_VERSION);
+        mode = await applyMode(login ? false : mode.enabled === true);
         const account = publicAccount(await request("account/read"));
         if (!login && account.state !== "accountLogin") fail("muse-code-login-required");
         return { host, home, config, dataRoot, signal: combined, request, close, applyMode, mode, account };
@@ -9106,9 +9119,9 @@ var MuseCodeHostManager = class {
       if (outcome !== "granted") fail("muse-code-login-failed");
       const account = publicAccount(await handle.request("account/read"));
       if (account.state !== "accountLogin") fail("muse-code-login-failed");
-      handle.mode = await handle.applyMode(false);
+      handle.mode = await handle.applyMode(connection.museCode?.contributorMode === true);
       await this.commit(connection, handle);
-      return { authorized: true, account, contributor: false, executionKind: "agent-session", liveVerified: false };
+      return { authorized: true, account, contributor: handle.mode.enabled, executionKind: "agent-session", liveVerified: false };
     } catch (error) {
       try {
         await bounded(() => handle.host.request("account/loginCancel"), void 0, 1e3);
@@ -9118,18 +9131,6 @@ var MuseCodeHostManager = class {
       fail("muse-code-login-failed");
     } finally {
       unwatch?.();
-      await handle.close();
-    }
-  }
-  async setContributor(connection, enabled, consent, { signal } = {}) {
-    if (typeof enabled !== "boolean") fail("muse-code-mode-unavailable");
-    if (enabled && consent !== true) fail("muse-code-consent-required");
-    const handle = await this.open(connection, { signal, exclusive: true });
-    try {
-      const mode = await handle.applyMode(enabled, consent);
-      await this.commit(connection, handle, mode);
-      return { saved: true, contributor: enabled, termsUrl: MUSE_CODE_CONTRIBUTOR_TERMS, consentVersion: enabled ? MUSE_CODE_CONSENT_VERSION : void 0 };
-    } finally {
       await handle.close();
     }
   }
@@ -9148,7 +9149,10 @@ var MuseCodeHostManager = class {
         contributor: handle.mode.enabled,
         executionKind: "agent-session",
         liveVerified: false,
-        ...includeModels ? models.status === "fulfilled" ? { models: models.value.models.map((model) => ({ ...model, runnable: false, sessionSupported: MUSE_CODE_MODELS.includes(model.modelId) })) } : { models: [], modelsError: models.reason instanceof MuseCodeError ? models.reason.code : "muse-code-observation-failed" } : {},
+        ...includeModels ? models.status === "fulfilled" ? {
+          models: museCodeModelChoices(models.value, handle.mode.enabled),
+          diagnostics: models.value.models.filter((model) => !MUSE_CODE_MODELS.includes(model.modelId)).map((model) => ({ ...model, runnable: false, sessionSupported: false }))
+        } : { models: [], modelsError: models.reason instanceof MuseCodeError ? models.reason.code : "muse-code-observation-failed" } : {},
         ...includeUsage ? usage.status === "fulfilled" ? { usage: usage.value } : {
           usage: {
             integrationId: "meta-muse-code",
@@ -9180,15 +9184,15 @@ var MuseCodeHostManager = class {
   async configure(connection, patch, { signal } = {}) {
     if (patch.modelId !== void 0 && !MUSE_CODE_MODELS.includes(patch.modelId)) fail("muse-code-model-unavailable");
     if (patch.contributorMode !== void 0 && typeof patch.contributorMode !== "boolean") fail("muse-code-mode-unavailable");
-    if (patch.contributorMode === true && patch.contributorConsent !== true) fail("muse-code-consent-required");
     const handle = await this.open(connection, { signal, exclusive: true });
     try {
-      const next = { contributorMode: handle.mode.enabled, ...connection.museCode };
+      const next = {
+        contributorMode: connection.museCode?.contributorMode ?? handle.mode.enabled,
+        ...connection.museCode?.modelId ? { modelId: connection.museCode.modelId } : {}
+      };
       if (patch.contributorMode !== void 0) {
-        await handle.applyMode(patch.contributorMode, patch.contributorConsent);
+        await handle.applyMode(patch.contributorMode);
         next.contributorMode = patch.contributorMode;
-        if (patch.contributorMode) next.contributorConsentAt = new Date(this.now()).toISOString();
-        else delete next.contributorConsentAt;
       }
       const requested = patch.modelId ?? next.modelId;
       if (requested !== void 0) {
@@ -9411,11 +9415,7 @@ function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, onLogin
       llmCompatible: false,
       requiresHostCli: true,
       liveVerified: false,
-      sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS,
-      modes: [
-        { id: "standard", label: "Standard", requiresConsent: false },
-        { id: "contributor", label: "Contributor", requiresConsent: true }
-      ]
+      sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS
     }],
     listConnections: () => Object.entries(connections.raw()).filter(([, connection]) => connection.integrationId === MUSE_CODE_INTEGRATION_ID).map(([connectionId2, connection]) => ({ connectionId: connectionId2, serviceId: connection.serviceId, routeId: connection.routeId })),
     credentialKey: museCodeCredentialKey,
@@ -9436,9 +9436,8 @@ function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, onLogin
       };
     },
     async publicConnection(connection) {
-      const record = await ctx.credentials.readRecord(museCodeCredentialKey(connection));
       return {
-        contributor: record?.kind === "grant" && record.payload?.mode?.enabled === true,
+        contributor: connection.museCode?.contributorMode === true,
         sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS,
         executionKind: "agent-session",
         llmCompatible: false,
@@ -9470,7 +9469,6 @@ function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, onLogin
     readUsage: (connection, options) => manager.readUsage(bind(connection), options),
     startAgentSession: (connection, options) => manager.startAgentSession(bind(connection), options),
     resumeAgentSession: (connection, options) => manager.resumeAgentSession(bind(connection), options),
-    setContributor: (connection, enabled, consent, options) => manager.setContributor(bind(connection), enabled, consent, options),
     configureConnection: (_connection, patch, binding) => manager.configure(binding, patch),
     async deleteCredentials(connection) {
       await manager.closeConnection(connection.connectionId);

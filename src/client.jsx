@@ -194,53 +194,49 @@ function connectionError(error) {
   return 'saveFailed'
 }
 
-function MuseModelsDialog({ entry, service, controller, t, onClose }) {
+function museModelName(entry, t) {
+  const id = entry.museCode?.modelId
+  const name = id === 'muse-wonder-1.0' ? t('museWonderOne') : id === 'muse-wonder-full-1.0' ? t('museWonderFull') : id
+  return name ? `${name}${entry.museCode?.contributorMode === true ? ' Contributor' : ''}` : undefined
+}
+
+function MuseModelsDialog({ entry, controller, t, onClose }) {
   const [snapshot, setSnapshot] = useState()
-  const [selected, setSelected] = useState(entry.museCode?.modelId ?? '')
-  const [contributor, setContributor] = useState(entry.museCode?.contributorMode === true)
-  const [consent, setConsent] = useState(false)
+  const [selected, setSelected] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState(false)
-  const consentId = useId()
-  const currentMode = useRef(entry.museCode?.contributorMode === true)
   const request = useRef()
   useEffect(() => {
     const abort = new AbortController(); request.current = abort
     void controller.mutation('models', { connectionId: entry.connectionId }, abort.signal).then(result => {
       if (abort.signal.aborted) return
       setSnapshot(result)
-      if (typeof result.contributor === 'boolean') { setContributor(result.contributor); currentMode.current = result.contributor }
-      setSelected(entry.museCode?.modelId ?? result.selectedModelId ?? result.models?.find(model => model.selected)?.id ?? '')
+      const model = result.models?.find(model => model.selected) ?? result.models?.find(model => model.modelId === entry.museCode?.modelId && model.contributor === (entry.museCode?.contributorMode === true))
+      setSelected(model?.id ?? '')
     }, error => { if (!abort.signal.aborted) setError(connectionError(error)) })
     return () => { abort.abort() }
   }, [entry.connectionId])
-  const models = (snapshot?.models ?? []).filter(model => model.sessionSupported === true).map(model => ({ ...model, id: model.id ?? model.modelId, name: model.name ?? model.label ?? model.displayLabel ?? model.modelId }))
-  const termsUrl = safeUrl(service?.termsUrl ?? service?.sourceTermsUrl ?? 'https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode')
+  const models = (snapshot?.models ?? []).filter(model => model.sessionSupported === true)
+  const selectedModel = models.find(model => model.id === selected)
   async function save() {
+    if (!selectedModel) return
     setBusy(true); setError(''); setSaved(false)
     try {
       await controller.mutation('connection-update', { connectionId: entry.connectionId, revision: snapshot.revision ?? entry.revision,
-        patch: { ...(selected ? { modelId: selected } : {}), contributorMode: contributor, ...(contributor ? { contributorConsent: consent || currentMode.current } : {}) } }, request.current.signal)
-      await controller.refresh(); currentMode.current = contributor; setConsent(false); setSaved(true)
+        patch: { modelId: selectedModel.modelId, contributorMode: selectedModel.contributor === true } }, request.current.signal)
+      await controller.refresh(); setSaved(true)
       setSnapshot({ ...snapshot, revision: controller.getSnapshot().revision })
     } catch (error) { if (!request.current.signal.aborted) setError(connectionError(error)) }
     finally { if (!request.current.signal.aborted) setBusy(false) }
   }
   return <Modal open title={`${entry.displayName} · ${t('museModels')}`} description={t('museSessionHint')} closeLabel={t('close')} onClose={onClose} className="dsh-pi-login dsh-pi-connection-dialog" contentClassName="dsh-pi-modal-content"
-    footer={<><Button variant="outline" onClick={onClose}>{t('close')}</Button><Button variant="primary" onClick={() => { void save() }} disabled={busy || !entry.writable || !entry.configured || !snapshot || models.length === 0 || !selected || contributor && !currentMode.current && !consent}>{t(busy ? 'loading' : 'save')}</Button></>}>
+    footer={<><Button variant="outline" onClick={onClose}>{t('close')}</Button><Button variant="primary" onClick={() => { void save() }} disabled={busy || !entry.writable || !entry.configured || !snapshot || !selectedModel}>{t(busy ? 'loading' : 'save')}</Button></>}>
     {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
     {error ? <p role="alert">{t(error)}</p> : null}
-    {saved ? <p role="status">{t('museModeSaved')}</p> : null}
-    {contributor !== currentMode.current ? <p role="status" className="dsh-pi-muted">{t('museModePending')}</p> : null}
-    {models.length ? <Choice label={t('museModels')} value={selected} options={models.map(model => ({ id: model.id, label: `${model.name} · ${entry.displayName}` }))} disabled={busy || !entry.configured || !entry.writable} onChange={value => { setSelected(value); setSaved(false) }} /> : snapshot ? <p className="dsh-pi-muted">{t('museCatalogDiagnostic')}</p> : null}
-    {models.find(model => model.id === selected)?.entitlement === 'unverified' ? <p className="dsh-pi-muted">{t('museEntitlementUnverified')}</p> : null}
-    {snapshot ? <><div className="dsh-pi-provider-row"><div><span>{t('museContributor')}</span><p className="dsh-pi-muted">{t(contributor ? 'museContributorEnabled' : 'museStandard')}</p></div>
-      <Switch label={t('museContributor')} checked={contributor} disabled={busy || !entry.configured || !entry.writable || !models.length} onChange={value => { setContributor(value); setConsent(false); setSaved(false) }} /></div>
-      <p className="dsh-pi-muted">{t('museContributorExplanation')}</p>
-      {termsUrl ? <a className="dsh-pi-link" href={termsUrl} target="_blank" rel="noopener noreferrer">{t('museTerms')}</a> : null}
-      {contributor && !currentMode.current ? <label className="dsh-pi-consent" htmlFor={consentId}><input id={consentId} type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} /><span>{t('museConsent')}</span></label> : null}
-    </> : null}
+    {saved ? <p role="status">{t('museModelSaved')}</p> : null}
+    {models.length ? <Choice label={t('museModels')} value={selected} options={models.map(model => ({ id: model.id, label: `${model.name ?? model.label} · ${entry.displayName}` }))} disabled={busy || !entry.configured || !entry.writable} onChange={value => { setSelected(value); setSaved(false) }} /> : snapshot ? <p className="dsh-pi-muted">{t('museCatalogDiagnostic')}</p> : null}
+    {selectedModel?.entitlement === 'unverified' ? <p className="dsh-pi-muted">{t('museEntitlementUnverified')}</p> : null}
   </Modal>
 }
 
@@ -437,7 +433,7 @@ export function ConnectionUI({ controller, updates, locale }) {
           <div className="dsh-pi-row-label"><span>{entry.displayName}</span><div className="dsh-pi-row-meta"><span>{t(entry.authMethod === 'owner-managed' ? 'ownerManaged' : entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')}</span>
             {entry.authStatus === 'owner-managed' ? <span>{t(`directory_${entry.directoryState ?? 'unavailable'}`)} · {entry.source ?? t('sourceUnknown')}</span> : <span className="dsh-pi-status"><StateDot state={entry.inFlight || entry.authStatus === 'updating' ? 'ongoing' : entry.configured ? 'done' : 'pending'} size={8} />{t(entry.inFlight || entry.authStatus === 'updating' ? 'busy' : entry.authStatus === 'unavailable' ? 'authUnavailable' : entry.authStatus === 'expired' ? 'authExpired' : entry.authStatus === 'verified' ? 'authVerified' : entry.configured ? 'connected' : 'notConnected')}</span>}
             {entry.enabled ? <span>{t(entry.executionKind === 'agent-session' ? 'agentSessionEnabled' : 'availableModels')}</span> : null}
-            {entry.integrationId === 'meta-muse-code' ? <span>{t(entry.museCode?.contributorMode ? 'museContributor' : 'museStandardShort')}</span> : null}</div></div>
+            {entry.integrationId === 'meta-muse-code' && museModelName(entry, t) ? <span>{museModelName(entry, t)}</span> : null}</div></div>
           <div className="dsh-pi-row-actions">{tab === 'usage' ? entry.capabilities?.usage !== false ? <Button variant="outline" aria-label={`${t('usageTab')}: ${entry.displayName}`} onClick={() => setOpened({ kind: 'usage', entry })}>{t('usageTab')}</Button> : <span className="dsh-pi-muted">{t('usage_unsupported')}</span> : <>
             {entry.capabilities?.models !== false ? <Button variant="outline" aria-label={`${t('manageModels')}: ${entry.displayName}`} onClick={() => setOpened({ kind: 'models', entry })}>{t('manageModels')}</Button> : null}
             {entry.capabilities?.settings !== false ? <Button aria-label={`${t('connectionSettings')}: ${entry.displayName}`} onClick={() => { setNotice(false); setOpened({ kind: 'settings', entry }) }}>{t('connectionSettings')}</Button> : entry.settingsUrl && safeUrl(entry.settingsUrl) ? <a className="dsh-pi-link" href={safeUrl(entry.settingsUrl)} target="_blank" rel="noopener noreferrer">{t('externalSettings')}</a> : null}
@@ -448,7 +444,7 @@ export function ConnectionUI({ controller, updates, locale }) {
     </div>
     {updates ? <UpdateUI controller={updates} t={t} /> : null}
     {opened?.kind === 'login' ? <LoginDialog {...opened} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
-    {opened?.kind === 'models' ? opened.entry.integrationId === 'meta-muse-code' ? <MuseModelsDialog entry={opened.entry} service={state.services.find(service => service.integrationId === opened.entry.integrationId && service.serviceId === opened.entry.serviceId)} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : <ModelsDialog entry={opened.entry} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
+    {opened?.kind === 'models' ? opened.entry.integrationId === 'meta-muse-code' ? <MuseModelsDialog entry={opened.entry} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : <ModelsDialog entry={opened.entry} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
     {opened?.kind === 'settings' ? <ConnectionDialog entry={opened.entry} state={state} controller={controller} t={t} onClose={() => setOpened(undefined)} onLogin={onLogin} onSaved={onSaved} /> : null}
     {opened?.kind === 'usage' ? <Modal open title={`${opened.entry.displayName} · ${t('usageTab')}`} closeLabel={t('close')} onClose={() => setOpened(undefined)} className="dsh-pi-login dsh-pi-connection-dialog" contentClassName="dsh-pi-modal-content" footer={<Button variant="outline" onClick={() => setOpened(undefined)}>{t('close')}</Button>}><UsagePanel entry={opened.entry} controller={controller} t={t} /></Modal> : null}
   </section>

@@ -170,21 +170,32 @@ test('official host-owned device OAuth commits only to independent Host Credenti
   assert.ok(!f.requests.some(request => request.method === 'turn/start'))
 })
 
-test('Contributor consent is explicit, bound to the connection, and independent of both Wonder model ids', async t => {
+test('four model choices preserve native base ids and select Contributor without a separate switch or consent API', async t => {
   const f = await fixture(t)
-  await f.manager.login(binding())
-  await assert.rejects(f.manager.setContributor(binding(), true, false), code('muse-code-consent-required'))
-  const changed = await f.manager.setContributor(binding(), true, true)
-  assert.equal(changed.contributor, true)
-  const view = await f.manager.read(binding())
+  const connection = { ...binding(), museCode: { modelId: 'muse-wonder-1.0', contributorMode: false } }
+  await f.manager.login(connection)
+  const rows = (await f.manager.readModels(connection)).models
+  assert.deepEqual(rows.map(row => row.id), ['muse-wonder-1.0', 'muse-wonder-1.0::contributor', 'muse-wonder-full-1.0', 'muse-wonder-full-1.0::contributor'])
+  assert.deepEqual(rows.map(row => row.name), ['Wonder1', 'Wonder1 Contributor', 'Wonder Full', 'Wonder Full Contributor'])
+  assert.deepEqual(rows.map(row => row.modelId), ['muse-wonder-1.0', 'muse-wonder-1.0', 'muse-wonder-full-1.0', 'muse-wonder-full-1.0'])
+  assert.deepEqual(rows.map(row => row.contributor), [false, true, false, true])
+  assert.equal(f.manager.setContributor, undefined)
+  const choice = rows[3]
+  const changed = await f.manager.configure(connection, { modelId: choice.modelId, contributorMode: choice.contributor })
+  assert.deepEqual(changed, { museCode: { modelId: 'muse-wonder-full-1.0', contributorMode: true } })
+  // Persistent choice only takes effect when root's settings CAS succeeds.
+  assert.equal(f.records.get('dsh-muse-code/c-a').payload.mode.enabled, false)
+  Object.assign(connection, changed)
+  const view = await f.manager.read(connection)
   assert.equal(view.contributor, true)
-  assert.deepEqual(view.models.map(model => model.modelId), ['muse-wonder-1.0', 'muse-wonder-full-1.0'])
+  assert.equal(view.models.length, 4)
   assert.ok(view.models.every(model => model.runnable === false && model.sessionSupported === true && model.entitlement === 'unverified'))
   assert.equal(view.usage.sourceObservedAt, new Date(1_700_000_000_000).toISOString())
   assert.doesNotMatch(JSON.stringify(view), /identity-|api_key|user_email|must-not-return/)
   assert.ok(f.requests.filter(request => request.method === 'settings/writeValue').every(request => request.params.keyPath === 'fixture.contributor_mode'))
-  await f.manager.setContributor(binding(), false, false)
-  assert.equal(f.records.get('dsh-muse-code/c-a').payload.mode.enabled, false)
+  Object.assign(connection, await f.manager.configure(connection, { modelId: rows[0].modelId, contributorMode: rows[0].contributor }))
+  assert.equal((await f.manager.readModels(connection)).contributor, false)
+  assert.doesNotMatch(JSON.stringify(f.records.get('dsh-muse-code/c-a').payload), /consent|Consent|timestamp|termsUrl/)
 })
 
 test('an unknown Contributor key or host refusal cannot silently enable a mode', async t => {
@@ -194,8 +205,60 @@ test('an unknown Contributor key or host refusal cannot silently enable a mode',
   assert.ok(unknown.hosts[0].closed)
   const refused = await fixture(t, { refuseContributor: true })
   await refused.manager.login(binding())
-  await assert.rejects(refused.manager.setContributor(binding(), true, true), code('muse-code-mode-unavailable'))
+  await assert.rejects(refused.manager.configure(binding(), { modelId: 'muse-wonder-1.0', contributorMode: true }), code('muse-code-mode-unavailable'))
   assert.equal(refused.records.get('dsh-muse-code/c-a').payload.mode.enabled, false)
+})
+
+test('missing Full and unknown native catalog rows cannot create local Full choices or alter the native catalog', async t => {
+  const rawModels = { providerId: 'meta', profileId: null, source: 'providerCatalog', models: [
+    { providerId: 'meta', profileId: null, modelId: 'muse-wonder-1.0', displayLabel: 'Native Wonder',
+      contextLimit: 1048576, outputLimit: null, variants: ['minimal', 'max'], isActive: false, isDefault: true },
+    { providerId: 'meta', profileId: null, modelId: 'fixture-unsupported', displayLabel: 'Native Other',
+      contextLimit: null, outputLimit: null, isActive: false, isDefault: false },
+  ] }
+  const native = structuredClone(rawModels)
+  const f = await fixture(t, { rawModels }), connection = binding()
+  await f.manager.login(connection)
+  const value = await f.manager.readModels(connection)
+  assert.deepEqual(value.models.map(model => model.id), ['muse-wonder-1.0', 'muse-wonder-1.0::contributor'])
+  assert.deepEqual(value.models.map(model => model.modelId), ['muse-wonder-1.0', 'muse-wonder-1.0'])
+  assert.equal(value.diagnostics.length, 1)
+  assert.equal(value.diagnostics[0].sessionSupported, false)
+  assert.deepEqual(rawModels, native)
+  await assert.rejects(f.manager.configure(connection, { modelId: 'muse-wonder-full-1.0', contributorMode: true }), code('muse-code-model-unavailable'))
+  await assert.rejects(f.manager.configure(connection, { modelId: 'muse-wonder-1.0::contributor', contributorMode: true }), code('muse-code-model-unavailable'))
+})
+
+test('saved Contributor model selection survives restart and re-login without consent metadata or hidden Standard reset', async t => {
+  const f = await fixture(t)
+  const connection = { ...binding(), museCode: { modelId: 'muse-wonder-1.0', contributorMode: false } }
+  await f.manager.login(connection)
+  Object.assign(connection, await f.manager.configure(connection, { modelId: 'muse-wonder-full-1.0', contributorMode: true }))
+  // The setting is authoritative even when a read has not copied its new
+  // mode into the opaque credential snapshot before the host restarts.
+  assert.equal(f.records.get(museCodeCredentialKey(connection)).payload.mode.enabled, false)
+  await f.manager.dispose()
+  const restarted = new MuseCodeHostManager({ credentials: f.credentials, privateRoot: f.privateRoot,
+    openHost: f.manager.openHost, isCurrent: () => true, environment: {} })
+  t.after(() => restarted.dispose())
+  const current = { ...connection, generation: 99 }
+  const models = await restarted.readModels(current)
+  assert.equal(models.contributor, true)
+  assert.deepEqual(current.museCode, { modelId: 'muse-wonder-full-1.0', contributorMode: true })
+  const relogin = await restarted.login(current)
+  assert.equal(relogin.contributor, true)
+  assert.equal(f.records.get(museCodeCredentialKey(current)).payload.mode.enabled, true)
+  assert.doesNotMatch(JSON.stringify(f.records.get(museCodeCredentialKey(current)).payload), /consent|Consent|timestamp|termsUrl/)
+  const agent = await restarted.startAgentSession(current, { workspaceRoot: f.privateRoot })
+  assert.equal(agent.state().modelId, 'muse-wonder-full-1.0')
+  assert.equal(agent.state().contributor, true)
+  const events = []
+  for await (const event of agent.send('Full Contributor after restart')) events.push(event)
+  assert.equal(events.at(-1).terminal, 'completed')
+  const start = f.requests.filter(call => call.method === 'session/start').at(-1)
+  assert.equal(start.params.modelId, 'muse-wonder-full-1.0')
+  assert.equal(start.contributor, true)
+  await agent.close()
 })
 
 test('two simultaneous Muse account logins have separate homes, data, scopes and credentials', async t => {
@@ -243,16 +306,18 @@ test('keychain pointers, non-OAuth records, foreign endpoints and wrong integrat
   assert.equal(museCodeCredentialKey(binding()), 'dsh-muse-code/c-a')
 })
 
-test('both Wonder 1 and Wonder Full use the same explicitly consented Contributor dimension over native agent sessions', async t => {
+test('both Contributor choices, Standard, and Full Contributor apply the selected mode to native session streams', async t => {
   const f = await fixture(t)
   const connection = { ...binding(), museCode: { modelId: 'muse-wonder-1.0', contributorMode: false } }
   await f.manager.login(connection)
-  const changes = await f.manager.configure(connection, { contributorMode: true, contributorConsent: true, modelId: 'muse-wonder-full-1.0' })
-  Object.assign(connection, changes) // Root persists this only after settings CAS.
-  assert.equal(f.records.get(museCodeCredentialKey(connection)).payload.mode.enabled, false)
-  for (const modelId of ['muse-wonder-1.0', 'muse-wonder-full-1.0']) {
-    const agent = await f.manager.startAgentSession(connection, { modelId, workspaceRoot: f.privateRoot })
-    assert.equal(agent.state().contributor, true)
+  const rows = (await f.manager.readModels(connection)).models
+  const selections = [rows[1], rows[3], rows[0], rows[3]]
+  for (const row of selections) {
+    const changes = await f.manager.configure(connection, { modelId: row.modelId, contributorMode: row.contributor })
+    Object.assign(connection, changes) // Root persists this only after settings CAS.
+    const modelId = row.modelId
+    const agent = await f.manager.startAgentSession(connection, { workspaceRoot: f.privateRoot })
+    assert.equal(agent.state().contributor, row.contributor)
     assert.equal(agent.state().modelId, modelId)
     assert.equal(agent.state().llmCompatible, false)
     const events = []
@@ -268,8 +333,9 @@ test('both Wonder 1 and Wonder Full use the same explicitly consented Contributo
     await assert.rejects(async () => { for await (const event of agent.send('No DSH tools', { tools: [] })) void event }, code('muse-code-llm-unsupported'))
     await agent.close()
   }
-  assert.ok(f.requests.filter(call => call.method === 'turn/start').every(call => call.contributor === true))
-  assert.deepEqual(f.requests.filter(call => call.method === 'session/start').map(call => call.params.modelId), ['muse-wonder-1.0', 'muse-wonder-full-1.0'])
+  assert.deepEqual(f.requests.filter(call => call.method === 'turn/start').map(call => call.contributor), [true, true, false, true])
+  assert.deepEqual(f.requests.filter(call => call.method === 'session/start').map(call => call.params.modelId), ['muse-wonder-1.0', 'muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-wonder-full-1.0'])
+  assert.ok(f.requests.filter(call => call.method === 'session/start').every(call => !call.params.modelId.includes('::contributor')))
   assert.ok(!f.requests.some(call => Object.hasOwn(call.params ?? {}, 'apiKey')))
 })
 
@@ -310,10 +376,10 @@ test('Usage 429 and malformed observations cannot block independent model reads 
     const f = await fixture(t, options), connection = binding()
     await f.manager.login(connection)
     const models = await f.manager.readModels(connection)
-    assert.equal(models.models.length, 2)
+    assert.equal(models.models.length, 4)
     assert.ok(!f.requests.some(call => call.method === 'usage/read'))
     const both = await f.manager.read(connection)
-    assert.equal(both.models.length, 2)
+    assert.equal(both.models.length, 4)
     assert.equal(both.usage.status, 'error')
     assert.deepEqual(both.usage.windows, [])
     assert.ok(both.usageError)
@@ -342,7 +408,7 @@ test('malformed catalog cannot block independent Account Usage or fabricate sele
 test('disabled Muse connections retain login/read access, stop new turns, and preserve a turn already in flight', async t => {
   const f = await fixture(t), connection = { ...binding(), enabled: false }
   await f.manager.login(connection)
-  assert.equal((await f.manager.readModels(connection)).models.length, 2)
+  assert.equal((await f.manager.readModels(connection)).models.length, 4)
   await assert.rejects(f.manager.startAgentSession(connection, { modelId: 'muse-wonder-1.0', workspaceRoot: f.privateRoot }), code('muse-code-connection-disabled'))
   let enabled = true
   f.manager.canExecute = () => enabled
@@ -377,7 +443,7 @@ test('ten concurrent native model and Usage readers share one Muse process and o
   release()
   const values = await Promise.all(tasks)
   assert.ok(values.filter((_, index) => index % 2).every(value => value.status === 'available'))
-  assert.ok(values.filter((_, index) => !(index % 2)).every(value => value.models.length === 2))
+  assert.ok(values.filter((_, index) => !(index % 2)).every(value => value.models.length === 4))
   assert.ok(f.hosts.at(-1).closed)
   await assert.rejects(access(f.hosts.at(-1).spec.home))
 })
@@ -396,7 +462,7 @@ test('one read consumer can abort without closing another consumer or its shared
   await assert.rejects(first, code('muse-code-connection-changed'))
   assert.equal(f.hosts.at(-1).closed, false)
   release()
-  assert.equal((await second).models.length, 2)
+  assert.equal((await second).models.length, 4)
   assert.equal(f.hosts.at(-1).closed, true)
 })
 
@@ -410,10 +476,10 @@ test('Usage reads on a native agent reuse its host, tolerate failures, and canno
   assert.equal((await f.manager.readUsage(connection)).status, 'available')
   failUsage = true
   await assert.rejects(f.manager.readUsage(connection))
-  assert.equal((await f.manager.readModels(connection)).models.length, 2)
+  assert.equal((await f.manager.readModels(connection)).models.length, 4)
   assert.equal(f.hosts.length, hosts)
   assert.equal(f.hosts.at(-1).closed, false)
-  await assert.rejects(f.manager.configure(connection, { contributorMode: true, contributorConsent: true }), code('muse-code-busy'))
+  await assert.rejects(f.manager.configure(connection, { contributorMode: true }), code('muse-code-busy'))
   const events = []
   for await (const event of agent.send('Independent agent turn')) events.push(event)
   assert.equal(events.at(-1).terminal, 'completed')

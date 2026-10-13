@@ -270,7 +270,7 @@ export interface Connection {
   integrationLabel?: string
   serviceLabel?: string
   profile: PiAiProviderProfile
-  museCode?: { contributorMode?: boolean, contributorConsentAt?: string, modelId?: string }
+  museCode?: { contributorMode?: boolean, modelId?: string }
 }
 
 /** Plain options accepted by the provider resolver. */
@@ -411,7 +411,7 @@ export const Config = z.object({
     headerRefs: z.dict(z.string().role('credential-ref')),
     enabled: z.boolean().default(true), legacyRoute: z.boolean(),
     integrationLabel: z.string(), serviceLabel: z.string(), profile,
-    museCode: z.object({ contributorMode: z.boolean(), contributorConsentAt: z.string(), modelId: z.string() }),
+    museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
   })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile(),
 })

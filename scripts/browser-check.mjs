@@ -8,7 +8,7 @@ import { compileOfficial } from './upstream.mjs'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
 
-const artifactDir = process.env.DSH_TEST_ARTIFACT_DIR ?? 'work/ui-after'
+const artifactDir = process.env.DSH_TEST_ARTIFACT_DIR ?? 'work/contributor-model-review'
 const artifact = name => join(artifactDir, name)
 await mkdir(artifactDir, { recursive: true })
 await compileOfficial('scripts/browser-fixture.jsx', '.cache/browser-fixture.js', 'browser')
@@ -147,6 +147,7 @@ const handler = ctx.connection.createSharedFetchHandler('/api')
 const files = new Map([
  ['/fixture.js', resolve('.cache/browser-fixture.js')], ['/login.js', resolve('dist/client.js')],
  ['/base.css', resolve('.cache/upstream/packages/client/ui-theme/src/styles/base.css')], ['/tokens.css', resolve('.cache/upstream/packages/client/ui-theme/src/styles/design-platform.css')],
+ ['/effects.css', resolve('.cache/upstream/packages/client/ui-theme/src/styles/gradient-shadow-text.css')],
 ])
 const server = createServer(async (req, res) => {
  try {
@@ -161,7 +162,7 @@ const server = createServer(async (req, res) => {
   }
   if (files.has(url.pathname)) { res.setHeader('content-type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await readFile(files.get(url.pathname))); return }
   if (!auth.authorizeIndex(req, res)) return
-  res.setHeader('content-type', 'text/html'); res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi login test fixture</title><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/base.css"><style>body{margin:0;background:var(--dsw-alias-bg-layer-1)}</style></head><body><div id="app"></div><script src="/fixture.js"></script><script src="/login.js"></script><script>mountPlugins()</script></body></html>')
+  res.setHeader('content-type', 'text/html'); res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi login test fixture</title><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/base.css"><link rel="stylesheet" href="/effects.css"><style>body{margin:0;background:var(--dsw-alias-bg-layer-1)}</style></head><body><div id="app"></div><script src="/fixture.js"></script><script src="/login.js"></script><script>mountPlugins()</script></body></html>')
  } catch { res.writeHead(500); res.end('test fixture failed') }
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -309,44 +310,65 @@ try {
  await page.keyboard.press('Escape')
  assert.equal((await ctx.credentials.describeRecord('dsh-muse-code/c-muse-code')).configured, true)
  assert.equal((await ctx.credentials.describeRecord('llm-pi-ai/c-muse-code')).configured, false)
+ const variants = [
+  { name: 'Wonder1', modelId: 'muse-wonder-1.0', contributor: false },
+  { name: 'Wonder1 Contributor', modelId: 'muse-wonder-1.0', contributor: true },
+  { name: 'Wonder Full', modelId: 'muse-wonder-full-1.0', contributor: false },
+  { name: 'Wonder Full Contributor', modelId: 'muse-wonder-full-1.0', contributor: true },
+ ]
+ const updatePayloads = []
+ const captureMuseSelection = async route => {
+  const payload = route.request().postDataJSON().payload
+  if (payload.connectionId === 'c-muse-code' && payload.patch.modelId) updatePayloads.push(payload.patch)
+  await route.continue()
+ }
+ await page.route('**/api/dsh-pi-login/connection-update', captureMuseSelection)
+ for (const variant of variants) {
+  await modelsButton('Muse Code個人').click()
+  const modelChoice = page.getByRole('button', { name: 'Muse Codeのモデル', exact: true })
+  await modelChoice.waitFor()
+  await page.getByText('一覧にあるモデルです。この契約での生成権限は未確認です。', { exact: true }).waitFor()
+  assert.equal(await page.getByRole('switch').count(), 0)
+  assert.equal(await page.getByRole('checkbox').count(), 0)
+  assert.equal(await page.getByRole('link', { name: /Contributor/ }).count(), 0)
+  await modelChoice.click()
+  assert.equal(await page.getByRole('menuitem').count(), 4)
+  for (const choice of variants) await page.getByRole('menuitem', { name: `${choice.name} · Muse Code個人`, exact: true }).waitFor()
+  await page.getByRole('menuitem', { name: `${variant.name} · Muse Code個人`, exact: true }).click()
+  assert.equal(await page.getByRole('button', { name: '保存', exact: true }).isDisabled(), false)
+  await page.getByRole('button', { name: '保存', exact: true }).click()
+  await page.getByText('Muse Codeのモデルを保存しました。', { exact: true }).waitFor()
+  assert.equal(settingsValue.connections['c-muse-code'].museCode.modelId, variant.modelId)
+  assert.equal(settingsValue.connections['c-muse-code'].museCode.contributorMode, variant.contributor)
+  assert.deepEqual(updatePayloads.at(-1), { modelId: variant.modelId, contributorMode: variant.contributor })
+  await page.keyboard.press('Escape')
+  await modelsButton('Muse Code個人').click()
+  await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).waitFor()
+  assert.equal(await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).innerText(), `${variant.name} · Muse Code個人`)
+  await page.keyboard.press('Escape')
+  await page.locator('.dsh-pi-connection-row').filter({ has: page.getByText('Muse Code個人', { exact: true }) }).getByText(variant.name, { exact: true }).waitFor()
+ }
+ await page.unroute('**/api/dsh-pi-login/connection-update', captureMuseSelection)
  await modelsButton('Muse Code個人').click()
- await page.getByRole('button', { name: 'Muse Codeのモデル・モード', exact: true }).waitFor()
- await page.getByText('一覧にあるモデルです。この契約での生成権限は未確認です。', { exact: true }).waitFor()
- assert.equal(await page.getByRole('switch', { name: /^モデルを使う:/ }).count(), 0)
- await page.getByRole('button', { name: 'Muse Codeのモデル・モード', exact: true }).click()
- await page.getByRole('menuitem', { name: 'Muse Wonder Full · Muse Code個人', exact: true }).click()
- const contributorSwitch = page.getByRole('switch', { name: 'Contributorモード', exact: true })
- assert.equal(await contributorSwitch.getAttribute('aria-checked'), 'false')
- await contributorSwitch.click()
- assert.equal(await page.getByRole('button', { name: '保存', exact: true }).isDisabled(), true)
- await page.setViewportSize({ width: 390, height: 760 })
- const museDialog = await page.getByRole('dialog').boundingBox()
- assert.ok(museDialog.y >= 24 && museDialog.y + museDialog.height <= 736)
- const museSave = await page.getByRole('button', { name: '保存', exact: true }).boundingBox()
- assert.ok(museSave.y >= 0 && museSave.y + museSave.height <= 760)
- await page.screenshot({ path: artifact('muse-consent-required-mobile.png') })
- await page.getByRole('checkbox', { name: '利用条件を確認し、この接続でContributorのデータ利用に明示的に同意します。', exact: true }).check()
- assert.equal(await page.getByRole('link', { name: 'Meta Contributorの利用条件を読む', exact: true }).getAttribute('href'), 'https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode')
- await page.getByRole('button', { name: '保存', exact: true }).click()
- await page.getByText('ホストでMuse Codeのモデル・モード設定を確認しました。', { exact: true }).waitFor()
- assert.equal(settingsValue.connections['c-muse-code'].museCode.modelId, 'muse-wonder-full-1.0')
- assert.equal(settingsValue.connections['c-muse-code'].museCode.contributorMode, true)
+ await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).waitFor()
  for (const width of [390, 768, 1440]) {
   await page.setViewportSize({ width, height: 900 })
   for (const theme of ['light', 'dark']) {
    await page.evaluate(dark => document.body.toggleAttribute('data-ds-dark-theme', dark), theme === 'dark')
-   await page.screenshot({ path: artifact(`muse-contributor-${width}-${theme}.png`), fullPage: true })
+   await page.screenshot({ path: artifact(`muse-models-${width}-${theme}.png`), fullPage: false })
   }
  }
- await page.getByRole('button', { name: 'Muse Codeのモデル・モード', exact: true }).click()
- await page.getByRole('menuitem', { name: 'Muse Wonder1 · Muse Code個人', exact: true }).click()
- await page.getByRole('button', { name: '保存', exact: true }).click()
- await page.getByText('ホストでMuse Codeのモデル・モード設定を確認しました。', { exact: true }).waitFor()
- assert.equal(settingsValue.connections['c-muse-code'].museCode.modelId, 'muse-wonder-1.0')
- assert.equal(settingsValue.connections['c-muse-code'].museCode.contributorMode, true)
+ await page.setViewportSize({ width: 390, height: 760 })
+ const museDialog = await page.getByRole('dialog').boundingBox()
+ assert.ok(museDialog.y >= 24 && museDialog.y + museDialog.height <= 736)
+ await page.screenshot({ path: artifact('muse-models-mobile.png') })
+ await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'Wonder Full Contributor · Muse Code個人', exact: true }).waitFor()
+ await page.screenshot({ path: artifact('muse-model-choices-mobile.png') })
+ await page.keyboard.press('Escape')
  assert.ok(museRequests.some(request => request.method === 'settings/writeValue' && request.params.value === true))
  assert.ok(!museRequests.some(request => request.method === 'turn/start'))
- assert.ok(!museRequests.some(request => request.method === 'usage/read'), 'Muse model and mode settings must not fetch usage')
+ assert.ok(!museRequests.some(request => request.method === 'usage/read'), 'Muse model settings must not fetch usage')
  assert.doesNotMatch(await page.locator('body').innerText(), /private-muse-|private@fixture\.test/)
  await page.keyboard.press('Escape')
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))

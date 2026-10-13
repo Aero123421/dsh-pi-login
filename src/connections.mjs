@@ -207,10 +207,10 @@ export class ConnectionManager {
     const section = this.writable(revision)
     const connection = this.lookup(connectionId)
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ConnectionError('invalid-request')
-    const allowed = new Set(['displayName', 'enabled', 'apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod', 'contributorMode', 'contributorConsent', 'modelId'])
+    const allowed = new Set(['displayName', 'enabled', 'apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod', 'contributorMode', 'modelId'])
     if (Object.keys(patch).some(key => !allowed.has(key))) throw new ConnectionError('invalid-request')
     if (connection.integrationId !== 'pi' && ['apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod'].some(key => patch[key] !== undefined)) throw new ConnectionError('owner-managed')
-    if (connection.integrationId === 'pi' && ['contributorMode', 'contributorConsent', 'modelId'].some(key => patch[key] !== undefined)) throw new ConnectionError('unsupported')
+    if (connection.integrationId === 'pi' && ['contributorMode', 'modelId'].some(key => patch[key] !== undefined)) throw new ConnectionError('unsupported')
     if (patch.displayName !== undefined) connection.displayName = text(patch.displayName)
     if (patch.enabled !== undefined) {
       if (typeof patch.enabled !== 'boolean') throw new ConnectionError('invalid-request')
@@ -233,7 +233,7 @@ export class ConnectionManager {
     const oldRecordId = connection.credentialRecordId
     let newRecordId
     try {
-      if (connection.integrationId !== 'pi' && ['contributorMode', 'contributorConsent', 'modelId'].some(key => patch[key] !== undefined)) {
+      if (connection.integrationId !== 'pi' && ['contributorMode', 'modelId'].some(key => patch[key] !== undefined)) {
         const owner = this.registry.owner(connection.integrationId)
         const changes = await owner.configureConnection(connection, patch, this.binding(connection))
         if (!this.isCurrent(this.binding(connection))) throw new ConnectionError('connection-changed')
@@ -272,7 +272,6 @@ export class ConnectionManager {
       displayName: text(displayName ?? `${original.displayName} (copy)`), enabled: false }
     delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute
     delete copy.profile.apiKeyEnv; delete copy.profile.headers
-    if (copy.museCode) copy.museCode = { contributorMode: false }
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token)
     return { saved: true, connectionId: id }
   }

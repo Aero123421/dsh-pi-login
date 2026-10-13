@@ -72,6 +72,3 @@
   .dsh-pi-login *, .dsh-pi-login *::before { transition: none !important; animation: none !important; }
 }
 .dsh-pi-login input::placeholder { color: var(--dsw-alias-label-secondary); opacity: 1; }
-.dsh-pi-consent { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; }
-.dsh-pi-consent input { flex: 0 0 auto; width: 20px; margin: 0; }
-.dsh-pi-consent span { padding-top: 10px; }

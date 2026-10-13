@@ -37,7 +37,6 @@ const ERRORS = Object.freeze({
   'muse-code-protocol-unsupported': 'This Muse Code CLI does not provide the required account and settings protocol. Update the official CLI.',
   'muse-code-login-required': 'Sign in to this Muse Code connection first.',
   'muse-code-login-failed': 'Muse Code sign-in did not complete.',
-  'muse-code-consent-required': 'Explicit consent to the Muse Code Contributor data-use terms is required.',
   'muse-code-mode-unavailable': 'This account or Muse Code host cannot apply the requested Contributor setting.',
   'muse-code-connection-changed': 'This Muse Code connection or host profile changed during the operation.',
   'muse-code-connection-disabled': 'Enable this Muse Code connection before starting a new agent turn.',

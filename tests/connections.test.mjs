@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { ConnectionManager, validateEndpoint } from '../src/connections.mjs'
 import { IntegrationRegistry } from '../src/registry.mjs'
+import { createMuseCodeOwner } from '../src/muse-code-owner.mjs'
 
 function fixture(value = {}, initialRecords = {}) {
   let revision = 0, current = { connections: {}, providers: {}, connectionMigrationVersion: 0, trustedEndpointOrigins: [], ...structuredClone(value) }
@@ -202,6 +203,29 @@ test('same-provider clone keeps models and gets a disabled route with no copied 
   await f.manager.delete(cloneId, f.revision)
   assert.equal(f.records.size, 1)
   assert.equal(Object.keys(f.value.connections).length, 1)
+})
+
+test('cloning Muse model settings retains the selected Contributor model without duplicating its login', async () => {
+  const selection = { modelId: 'muse-wonder-full-1.0', contributorMode: true }
+  const f = fixture({ connections: { 'c-muse': {
+    integrationId: 'meta-muse-code', serviceId: 'muse-code', routeId: 'muse-c-muse',
+    displayName: 'Muse', authMethod: 'oauth', credentialRecordId: 'c-muse',
+    credentialGeneration: 0, enabled: true, profile: {}, museCode: selection,
+  } } }, { 'dsh-muse-code/c-muse': { kind: 'grant', payload: { format: 'fixture' } } })
+  const owner = createMuseCodeOwner({ ctx: { credentials: f.credentials }, connections: f.manager,
+    privateRoot: '/fixture/not-started', openHost: () => { throw new Error('Cloning must not start Muse') } })
+  f.registry.register(owner)
+  try {
+    const { connectionId } = await f.manager.clone('c-muse', 'Muse copy', f.revision)
+    const copy = f.value.connections[connectionId]
+    assert.deepEqual(copy.museCode, selection)
+    assert.equal(copy.enabled, false)
+    assert.equal((await f.manager.list()).connections.find(row => row.connectionId === connectionId).configured, false)
+    assert.equal(f.records.size, 1)
+    await f.manager.delete(connectionId, f.revision)
+    assert.deepEqual(f.value.connections['c-muse'].museCode, selection)
+    assert.equal(f.records.has('dsh-muse-code/c-muse'), true)
+  } finally { await owner.dispose() }
 })
 
 test('login generation and profile change reject stale auth and RPC identities', async () => {

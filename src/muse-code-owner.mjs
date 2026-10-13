@@ -20,8 +20,6 @@ export function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, 
       executionKind: 'agent-session', llmCompatible: false,
       requiresHostCli: true, liveVerified: false,
       sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS,
-      modes: [{ id: 'standard', label: 'Standard', requiresConsent: false },
-        { id: 'contributor', label: 'Contributor', requiresConsent: true }],
     }],
     listConnections: () => Object.entries(connections.raw()).filter(([, connection]) => connection.integrationId === MUSE_CODE_INTEGRATION_ID)
       .map(([connectionId, connection]) => ({ connectionId, serviceId: connection.serviceId, routeId: connection.routeId })),
@@ -37,8 +35,7 @@ export function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, 
         liveVerified: false, requiresHostCli: true }
     },
     async publicConnection(connection) {
-      const record = await ctx.credentials.readRecord(museCodeCredentialKey(connection))
-      return { contributor: record?.kind === 'grant' && record.payload?.mode?.enabled === true,
+      return { contributor: connection.museCode?.contributorMode === true,
         sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS, executionKind: 'agent-session', llmCompatible: false,
         liveVerified: false, requiresHostCli: true }
     },
@@ -61,7 +58,6 @@ export function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, 
     readUsage: (connection, options) => manager.readUsage(bind(connection), options),
     startAgentSession: (connection, options) => manager.startAgentSession(bind(connection), options),
     resumeAgentSession: (connection, options) => manager.resumeAgentSession(bind(connection), options),
-    setContributor: (connection, enabled, consent, options) => manager.setContributor(bind(connection), enabled, consent, options),
     configureConnection: (_connection, patch, binding) => manager.configure(binding, patch),
     async deleteCredentials(connection) {
       await manager.closeConnection(connection.connectionId)

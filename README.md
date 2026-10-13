@@ -70,7 +70,7 @@ managerがない、profileが読み取り専用、導入元が開発用ディレ
 
 Meta Muse Codeでは、接続追加で「Meta Muse Code → Muse Code → OAuth」を選び、接続設定からログインします。Hostに公式`muse` CLIとアカウント・設定管理に対応するMSPが必要です。SDK `@muse-code/sdk` `1.4.7`はプラグインに固定しています。CLIがない・protocolが対応していない場合は、その理由を表示します。
 
-「Muse Codeのモデル・モード」で、Hostの一覧に返るWonder1（`muse-wonder-1.0`）またはWonder Full（`muse-wonder-full-1.0`）を選びます。Contributorはモデル選択とは別の接続設定です。初期状態はオフで、[MetaのContributor利用条件](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode)を開いて明示的に同意してから有効にします。Metaが入力・コード・ファイル・文脈・応答を学習に利用する場合があるため、個人情報・機密情報を送る接続では同意の内容を確認してください。保存時に公式Hostへの書き込みと読み戻しを照合します。
+「モデルを管理」で、Wonder1、Wonder1 Contributor、Wonder Full、Wonder Full Contributorの4つから選びます。Hostの一覧に返るモデルごとに通常版とContributor版を表示します。選んだ項目に合わせて、実モデルIDとContributor設定をまとめて保存し、公式Hostへの書き込みと読み戻しを照合します。[モデル選択とSDKへの対応](docs/models.md#muse-codeのログインとcontributor)
 
 Muse Codeは独立したエージェントセッションです。これらのモデルはDSHの通常のチャットモデル一覧には追加しません。専用セッションAPIの開始・turn・cancel・履歴再取得・resumeを実装していますが、DSHの通常LLMとのtool実行橋渡しと実CLIでの生成は未検証です。CLIの一時認証領域をプロファイル・接続・認証世代で分け、保存先は接続専用のHost Credentialsです。実アカウントのログイン、Wonder1／Fullの生成、Contributor枠・課金は未検証です。
 

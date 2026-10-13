@@ -55,7 +55,6 @@ export class IntegrationRegistry {
       ...service.termsUrl || service.sourceTermsUrl ? { termsUrl: service.termsUrl ?? service.sourceTermsUrl } : {},
       ...service.executionKind ? { llmCompatible: service.llmCompatible === true } : {},
       ...service.requiresHostCli ? { requiresHostCli: true } : {},
-      ...service.modes ? { modes: service.modes.map(({ id, label }) => ({ id, label })) } : {},
     })))
   }
   service(integrationId, serviceId) {

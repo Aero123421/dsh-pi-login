@@ -165,7 +165,7 @@ Object.assign(en, {
   endpointUntrusted: 'This endpoint is not trusted by the host. Add it to the host allowlist before saving.',
   serviceUnavailable: 'This integration does not provide a supported model connection in this DSH version.',
   cloneHint: 'The copy starts disabled and has no credentials. Configure its account separately.',
-  contributorConfirm: 'I have reviewed Meta’s Contributor data-use terms for this model.',
+
 })
 Object.assign(ja, {
   title: 'AI接続・利用状況', description: 'アカウントごとに接続とモデルを管理します。利用状況は必要なときに開けます。',
@@ -191,33 +191,30 @@ Object.assign(ja, {
   endpointUntrusted: 'この接続先はホストで許可されていません。ホストの許可リストに追加してから保存してください。',
   serviceUnavailable: 'このDSH版では、この連携のモデル接続を利用できません。',
   cloneHint: '複製した接続は無効・認証なしで作成します。アカウントは別に設定してください。',
-  contributorConfirm: 'このモデルのMeta Contributorデータ利用条件を確認しました。',
+
 })
 
 Object.assign(en, {
   hours: 'hours', days: 'days', minutes: 'minutes', accountQuota: 'Account quota', unit_tokens: 'tokens', unit_USD: 'USD',
   ownerManaged: 'Managed by integration', directory_live: 'Available', directory_declared: 'Declared', directory_unavailable: 'Unavailable', sourceUnknown: 'Owner unknown',
-  'serviceUnavailable_muse-code-bridge-unverified': 'Muse Code runs independent agent sessions. Authentication, account isolation and Contributor consent are not supported by this build. It is separate from the Meta Model API through Pi.',
+  'serviceUnavailable_muse-code-bridge-unverified': 'Muse Code requires the official CLI and a supported agent session connection in this environment. It is separate from the Meta Model API through Pi.',
 })
 Object.assign(ja, {
   hours: '時間', days: '日', minutes: '分', accountQuota: 'アカウントの利用枠', unit_tokens: 'トークン', unit_USD: 'USD',
   ownerManaged: '連携元で管理', directory_live: '利用可能', directory_declared: '設定あり', directory_unavailable: '利用不可', sourceUnknown: '管理元不明',
-  'serviceUnavailable_muse-code-bridge-unverified': 'Muse Codeは独立したエージェント実行です。この版では認証・アカウント分離・Contributorの同意に対応していません。Pi経由のMeta Model APIとは別の連携です。',
+  'serviceUnavailable_muse-code-bridge-unverified': 'Muse Codeには公式CLIと、この環境で対応するエージェント接続が必要です。Pi経由のMeta Model APIとは別の連携です。',
 })
 
 Object.assign(en, {
-  museModels: 'Muse Code model & mode', museSessionHint: 'Muse Code runs independent agent sessions. These models are separate from Pi’s Meta Model API and are not added to the standard DSH model list.',
+  museModels: 'Muse Code model', museSessionHint: 'Muse Code runs independent agent sessions. These models are separate from Pi’s Meta Model API and are not added to the standard DSH model list.',
   museCatalogDiagnostic: 'The host supplied a diagnostic catalog without a supported session model. Model availability does not confirm your account entitlement.',
-  museContributor: 'Contributor mode', museStandard: 'Standard mode. Contributor data-use consent is off.', museStandardShort: 'Standard',
-  museContributorEnabled: 'Contributor mode applies to eligible Muse Code models, including Wonder1 and Wonder Full. It is separate from model selection.',
-  museContributorExplanation: 'Meta may use your prompts, code, files, context and model responses to train future models. Do not submit personal or confidential information in Contributor mode.',
-  museTerms: 'Read Meta Contributor terms', museConsent: 'I have read these terms and explicitly consent to Contributor data use for this connection.',
-  museModeSaved: 'The host confirmed the Muse Code model and mode.', agentSessionEnabled: 'Agent connection enabled',
+
+  agentSessionEnabled: 'Agent connection enabled',
   'error_muse-code-cli-required': 'Install the official Muse Code CLI and supported MSP SDK on the host, then retry.',
   'error_muse-code-protocol-unsupported': 'This Muse Code CLI does not support account or settings management. Update the official CLI.',
   'error_muse-code-login-required': 'Sign in to this Muse Code connection first.', 'error_muse-code-login-failed': 'Muse Code sign-in did not complete. Retry from this connection’s settings.',
-  'error_muse-code-consent-required': 'Review the Contributor terms and explicitly consent before enabling it.',
-  'error_muse-code-mode-unavailable': 'This account or CLI could not apply Contributor mode. The mode was not changed.',
+
+  'error_muse-code-mode-unavailable': 'This account or CLI could not apply the selected model.',
   'error_muse-code-connection-changed': 'The Muse Code connection changed. Close this panel and open it again.',
   'error_muse-code-busy': 'Muse Code is already performing an operation. Retry after it finishes.',
   'error_muse-code-model-unavailable': 'This model was not advertised by the current Muse Code host. Reload the panel.',
@@ -226,18 +223,15 @@ Object.assign(en, {
   'error_muse-code-session-failed': 'The Muse Code agent session failed. Check this connection and retry.',
 })
 Object.assign(ja, {
-  museModels: 'Muse Codeのモデル・モード', museSessionHint: 'Muse Codeは独立したエージェント実行です。Pi経由のMeta Model APIとは別で、DSHの通常のモデル一覧には追加しません。',
+  museModels: 'Muse Codeのモデル', museSessionHint: 'Muse Codeは独立したエージェント実行です。Pi経由のMeta Model APIとは別で、DSHの通常のモデル一覧には追加しません。',
   museCatalogDiagnostic: 'このホストの一覧は確認用で、対応するエージェントモデルがありません。モデル一覧の取得だけでは契約による利用可否は確認できません。',
-  museContributor: 'Contributorモード', museStandard: 'Standardモードです。Contributorのデータ利用同意はオフです。', museStandardShort: 'Standard',
-  museContributorEnabled: 'ContributorはWonder1・Wonder Fullを含む対応モデルに適用します。モデル選択とは別の設定です。',
-  museContributorExplanation: 'Metaは入力・コード・ファイル・文脈・モデル応答を将来のモデルの学習に利用する場合があります。Contributorでは個人情報や機密情報を送信しないでください。',
-  museTerms: 'Meta Contributorの利用条件を読む', museConsent: '利用条件を確認し、この接続でContributorのデータ利用に明示的に同意します。',
-  museModeSaved: 'ホストでMuse Codeのモデル・モード設定を確認しました。', agentSessionEnabled: 'エージェント接続有効',
+
+  agentSessionEnabled: 'エージェント接続有効',
   'error_muse-code-cli-required': 'ホストに公式Muse Code CLIと対応するMSP SDKを導入してから再試行してください。',
   'error_muse-code-protocol-unsupported': 'このMuse Code CLIはアカウント・設定管理に対応していません。公式CLIを更新してください。',
   'error_muse-code-login-required': '先にこのMuse Code接続にログインしてください。', 'error_muse-code-login-failed': 'Muse Codeのログインが完了しませんでした。この接続の設定から再試行してください。',
-  'error_muse-code-consent-required': 'Contributorの利用条件を確認し、明示的に同意してから有効にしてください。',
-  'error_muse-code-mode-unavailable': 'このアカウントまたはCLIでContributor設定を適用できませんでした。モードは変更していません。',
+
+  'error_muse-code-mode-unavailable': 'このアカウントまたはCLIで選んだモデルを適用できませんでした。',
   'error_muse-code-connection-changed': 'Muse Code接続が変わりました。この画面を閉じて開き直してください。',
   'error_muse-code-busy': 'Muse Codeの処理中です。完了してから再試行してください。',
   'error_muse-code-model-unavailable': '現在のMuse Codeホストにこのモデルがありません。画面を開き直してください。',
@@ -253,7 +247,8 @@ Object.assign(en, { 'usageScope_muse-code-subscription-weekly': 'Weekly quota', 
 Object.assign(ja, { 'usageScope_muse-code-subscription-weekly': '週間の利用枠', 'error_muse-code-observation-invalid': 'Muse Codeの応答を確認できませんでした。公式CLIを更新し、画面を開き直してください。' })
 Object.assign(en, { useProvider: 'Use this connection', enable: 'Enable connection', enabled: 'Connection enabled.', activateFirst: 'Enable this connection before choosing models.', modelsHint: 'When this connection is enabled, its selected models are available to chats and agents.' })
 Object.assign(ja, { useProvider: 'この接続を使う', enable: '接続を有効にする', enabled: '接続を有効にしました。', activateFirst: '接続を有効にしてからモデルを選んでください。', modelsHint: 'この接続が有効なとき、選んだモデルをチャットやエージェントで使えます。' })
-Object.assign(en, { museModePending: 'The mode changes when you save. It has not been applied yet.' })
-Object.assign(ja, { museModePending: 'モードは保存すると切り替わります。まだ適用していません。' })
 Object.assign(en, { museEntitlementUnverified: 'This model appears in the catalog. Generation entitlement for this subscription has not been verified.' })
 Object.assign(ja, { museEntitlementUnverified: '一覧にあるモデルです。この契約での生成権限は未確認です。' })
+
+Object.assign(en, { museModelSaved: 'Muse Code model saved.', museWonderOne: 'Wonder1', museWonderFull: 'Wonder Full' })
+Object.assign(ja, { museModelSaved: 'Muse Codeのモデルを保存しました。', museWonderOne: 'Wonder1', museWonderFull: 'Wonder Full' })
