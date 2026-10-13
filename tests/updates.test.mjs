@@ -30,7 +30,7 @@ async function fixture(t, overrides = {}) {
   t.after(() => rm(directory, { recursive: true, force: true }))
   const calls = []
   const bundle = { name: PACKAGE, installed: true, enabled: false, version: '0.5.0', source: `github:${REPOSITORY}` }
-  const manager = { listBundles: async () => [bundle], waitForInstall: async () => null, installBundle: async (...args) => { calls.push(args); return { changed: true, application: 'restart-required', stage: 'install', target: PACKAGE, bundle: PACKAGE, version } } }
+  const manager = { listBundles: async () => [bundle], waitForInstall: async () => null, installBundle: async (...args) => { calls.push(args); bundle.version = version; return { changed: true, application: 'restart-required', stage: 'install', target: PACKAGE, bundle: PACKAGE, version } } }
   const updater = new PluginUpdates({ manager: () => manager, profileDir: directory, runtimeVersion: async () => '0.2.1-alpha.2', fetcher, version: '0.5.0', ...overrides })
   t.after(() => updater.dispose())
   return { updater, manager, bundle, calls, directory }
@@ -71,9 +71,10 @@ test('bounded retrieval refuses hostile redirects, streaming oversize and networ
 })
 test('manager results distinguish application, failure, cancellation, override and unknown', () => {
   const result = { bundle: PACKAGE, version, application: 'applied', changed: true }
-  assert.equal(resultState(result, version, version), 'applied')
-  assert.equal(resultState(result, version, '0.5.0'), 'unknown')
-  for (const application of ['failed', 'cancelled', 'overridden', 'restart-required']) assert.equal(resultState({ ...result, application }, version, version), application)
+  const installed = { name: PACKAGE, installed: true, version }
+  assert.equal(resultState(result, version, version, installed), 'applied')
+  assert.equal(resultState(result, version, '0.5.0', installed), 'unknown')
+  for (const application of ['failed', 'cancelled', 'overridden', 'restart-required']) assert.equal(resultState({ ...result, application }, version, version, installed), application)
   assert.equal(resultState({ ...result, packageResult: { exitCode: 0, timedOut: true } }, version, version), 'failed')
   assert.equal(resultState(null, version, version), 'unknown')
 })
@@ -81,14 +82,15 @@ test('single pinned install preserves disabled selection; journal supports recon
   const { updater, manager, calls, directory, bundle } = await fixture(t)
   const checked = await updater.check(), requestId = randomUUID()
   assert.equal(checked.status, 'available')
-  await updater.begin(checked.candidate.id, requestId)
-  await updater.begin(checked.candidate.id, requestId)
+  await updater.begin(checked.candidate.id, requestId, updater.base().profileKey)
+  await updater.begin(checked.candidate.id, requestId, updater.base().profileKey)
   await settle(updater)
   assert.equal(calls.length, 1)
   assert.equal(calls[0][0], `github:${REPOSITORY}#${tag}`)
   assert.deepEqual(calls[0][1], { enabled: false, requestId, saveExact: true })
   assert.equal((await updater.reconcile(requestId)).status, 'restart-required')
   const restarted = new PluginUpdates({ manager: () => manager, profileDir: directory, version, runtimeVersion: async () => '0.2.1-alpha.2' })
+  bundle.version = '0.5.0'
   assert.equal((await restarted.reconcile(requestId)).status, 'unknown')
   bundle.version = version
   assert.equal((await restarted.reconcile(requestId)).status, 'applied')
@@ -103,14 +105,14 @@ test('missing manager/read-only/source reject before networking; login or save b
   assert.equal((await missing.updater.status()).reason, 'manager-unavailable')
   const busy = await fixture(t, { isBusy: () => true })
   await busy.updater.check()
-  await assert.rejects(busy.updater.begin('7', randomUUID()), /busy/)
+  await assert.rejects(busy.updater.begin('7', randomUUID(), busy.updater.base().profileKey), /busy/)
 })
 test('checksum or manifest mismatch prevents manager call; tgz stages a persistent verified file', async t => {
   const bad = await fixture(t, { fetcher: async url => String(url).endsWith('SHA256SUMS') ? new Response(`${'0'.repeat(64)}  ${filename}`) : fetcher(url) })
-  await bad.updater.check(); const id = randomUUID(); await bad.updater.begin('7', id); await settle(bad.updater)
+  await bad.updater.check(); const id = randomUUID(); await bad.updater.begin('7', id, bad.updater.base().profileKey); await settle(bad.updater)
   assert.equal(bad.calls.length, 0); assert.equal((await bad.updater.reconcile(id)).reason, 'checksum')
   const good = await fixture(t); good.bundle.source = download + filename
-  await good.updater.check(); await good.updater.begin('7', randomUUID()); await settle(good.updater)
+  await good.updater.check(); await good.updater.begin('7', randomUUID(), good.updater.base().profileKey); await settle(good.updater)
   assert.ok(good.calls[0][0].startsWith(join(good.directory, '.dsh-pi-login-updates', 'verified-')))
 })
 test('forgotten request is unknown, never successful or automatically resubmitted', async t => {
@@ -128,12 +130,12 @@ test('verified archive with wrong package metadata is refused and disposal abort
   const wrong = tarPackage({ ...pkg, name: 'foreign-package' })
   const wrongHash = createHash('sha256').update(wrong).digest('hex')
   const bad = await fixture(t, { fetcher: async url => String(url).endsWith('SHA256SUMS') ? new Response(`${wrongHash}  ${filename}`) : String(url).endsWith('.tgz') ? new Response(wrong) : fetcher(url) })
-  await bad.updater.check(); const id = randomUUID(); await bad.updater.begin('7', id); await settle(bad.updater)
+  await bad.updater.check(); const id = randomUUID(); await bad.updater.begin('7', id, bad.updater.base().profileKey); await settle(bad.updater)
   assert.equal(bad.calls.length, 0); assert.equal((await bad.updater.reconcile(id)).reason, 'metadata')
   const stopped = await fixture(t)
   await stopped.updater.check()
   stopped.updater.fetcher = async (_url, { signal }) => { signal.throwIfAborted(); return Response.json(release) }
-  await stopped.updater.begin('7', randomUUID()); stopped.updater.dispose(); await settle(stopped.updater)
+  await stopped.updater.begin('7', randomUUID(), stopped.updater.base().profileKey); stopped.updater.dispose(); await settle(stopped.updater)
   assert.equal(stopped.calls.length, 0)
 })
 
@@ -142,7 +144,7 @@ test('post-invocation transport failure remains unknown and reconciles the origi
   let waited = 0
   manager.installBundle = async (...args) => { calls.push(args); bundle.version = version; throw new Error('response lost after manager admission') }
   manager.waitForInstall = async () => { waited++; return { changed: true, application: 'restart-required', stage: 'install', target: PACKAGE, bundle: PACKAGE, version } }
-  await updater.check(); const id = randomUUID(); await updater.begin('7', id); await settle(updater)
+  await updater.check(); const id = randomUUID(); await updater.begin('7', id, updater.base().profileKey); await settle(updater)
   assert.equal((await updater.reconcile(id)).status, 'restart-required')
   assert.equal(waited, 1); assert.equal(calls.length, 1)
   const restarted = new PluginUpdates({ manager: () => manager, profileDir: directory, version, runtimeVersion: async () => '0.2.1-alpha.2' })
@@ -168,10 +170,61 @@ test('disposal or active login during the awaited journal save cannot start mana
     const gate = new Promise(resolve => { release = resolve })
     const { updater, calls } = await fixture(t, { isBusy: () => busy })
     const save = updater.save.bind(updater)
-    updater.save = async operation => { await save(operation); if (operation.status === 'installing') { reached(); await gate } }
-    await updater.check(); await updater.begin('7', randomUUID()); await waiting
+    updater.save = async (operation, claim) => { await save(operation, claim); if (operation.status === 'installing') { reached(); await gate } }
+    await updater.check(); await updater.begin('7', randomUUID(), updater.base().profileKey); await waiting
     if (action === 'dispose') updater.dispose(); else busy = true
     release(); await settle(updater)
     assert.equal(calls.length, 0)
   }
+})
+
+test('external upgrade during final receipt save cannot be downgraded', async t => {
+  const { updater, bundle, calls } = await fixture(t)
+  const save = updater.save.bind(updater)
+  updater.save = async (operation, claim) => {
+    await save(operation, claim)
+    if (operation.status === 'installing') bundle.version = '0.7.0'
+  }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 0)
+  assert.equal((await updater.reconcile(id)).reason, 'stale-candidate')
+})
+test('nominal success requires actual installed version before restart instruction', async t => {
+  const { updater, manager, bundle } = await fixture(t)
+  manager.installBundle = async () => ({ bundle: PACKAGE, version, application: 'restart-required' })
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal((await updater.reconcile(id)).status, 'unknown')
+  bundle.version = version
+  assert.equal((await updater.reconcile(id)).status, 'restart-required')
+  bundle.error = { code: 'not-bundle' }
+  assert.equal((await updater.reconcile(id)).status, 'unknown')
+})
+test('updating old receipt cannot take ownership of latest operation', async t => {
+  const { updater } = await fixture(t)
+  const first = { requestId: randomUUID(), version, status: 'failed' }
+  const second = { requestId: randomUUID(), version, status: 'unknown' }
+  await updater.save(first, true)
+  await updater.save(second, true)
+  await updater.save(first)
+  assert.equal(await updater.lastOperation(), second.requestId)
+})
+test('cancellation outcome survives nonzero package exit', () => {
+  assert.equal(
+    resultState({ application: 'cancelled', packageResult: { exitCode: 130 } }, version, version),
+    'cancelled',
+  )
+})
+
+test('profile mismatch refuses delayed request before any admission', async t => {
+ const first = await fixture(t), second = await fixture(t)
+ await second.updater.check()
+ await assert.rejects(second.updater.begin('7', randomUUID(), first.updater.base().profileKey), /profile/)
+ assert.equal(second.calls.length,0)
+ assert.equal(await second.updater.lastOperation(),undefined)
 })

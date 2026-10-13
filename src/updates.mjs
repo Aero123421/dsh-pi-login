@@ -151,11 +151,24 @@ function safeResult(result) {
   }
 }
 
-export function resultState(result, expected, runtime) {
+export function resultState(result, expected, runtime, installed) {
   if (!result) return 'unknown'
-  if (result.error || result.application === 'failed' || (result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut))) return 'failed'
   if (['cancelled', 'overridden'].includes(result.application)) return result.application
-  if (result.bundle !== PACKAGE || result.version !== expected) return 'unknown'
+  if (
+    result.error ||
+    result.application === 'failed' ||
+    (result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut))
+  )
+    return 'failed'
+  if (
+    result.bundle !== PACKAGE ||
+    result.version !== expected ||
+    !installed?.installed ||
+    installed.version !== expected ||
+    installed.error ||
+    installed.readOnlyReason
+  )
+    return 'unknown'
   if (result.application === 'restart-required') return 'restart-required'
   return result.application === 'applied' && runtime === expected ? 'applied' : 'unknown'
 }
@@ -179,7 +192,17 @@ export class PluginUpdates {
     const dshVersion = await this.runtimeVersion(); semanticVersion(dshVersion)
     return { manager, bundle, source, dshVersion }
   }
-  base() { return { runtimeVersion: this.version, releases: RELEASES } }
+  base() {
+    return {
+      runtimeVersion: this.version,
+      releases: RELEASES,
+      profileKey: this.profileDir
+        ? createHash('sha256')
+            .update(PACKAGE + '\0' + resolve(this.profileDir))
+            .digest('hex')
+        : undefined,
+    }
+  }
   async lastOperation() {
     try {
       const value = JSON.parse(await readFile(join(this.cacheDir, 'latest.json'), 'utf8'))
@@ -220,44 +243,66 @@ export class PluginUpdates {
     return this.checking
   }
   publicCandidate(candidate) { const { id, version, url, notes, compatibility } = candidate; return { id, version, url, notes, compatibility } }
-  async begin(id, operationId) {
+  async begin(id, operationId, profileKey) {
+    if (!profileKey || profileKey !== this.base().profileKey) throw new Error('profile')
     if (typeof operationId !== 'string') throw new Error('invalid-request')
     const requestId = updateRequestId(operationId)
     await this.capability()
-    if (this.running?.requestId === requestId) return this.running
-    try { await readFile(join(this.cacheDir, `${requestId}.json`)); return this.reconcile(requestId) } catch (error) { if (error.code !== 'ENOENT') throw error }
+    if (this.running?.requestId === requestId) return { ...this.base(), ...this.running }
+    try {
+      await readFile(join(this.cacheDir, `${requestId}.json`))
+      return this.reconcile(requestId)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
     const last = await this.lastOperation()
-    if (last && ['installing', 'unknown', 'restart-required'].includes((await this.reconcile(last)).status)) throw new Error('busy')
+    if (last && ['installing', 'unknown', 'restart-required'].includes((await this.reconcile(last)).status))
+      throw new Error('busy')
     if (this.closed || this.running || this.checking || this.isBusy()) throw new Error('busy')
     if (typeof id !== 'string' || !this.candidate || id !== this.candidate.id) throw new Error('stale-candidate')
     const candidate = this.candidate
     this.running = { requestId, version: candidate.version, status: 'preparing' }
     try {
       await this.privateDir()
-      await this.save(this.running)
-    } catch (error) { this.running = null; throw error }
+      await this.save(this.running, true)
+    } catch (error) {
+      this.running = null
+      throw error
+    }
     // Do not await install in an RPC owned by the plugin being replaced.
-    void this.execute(candidate, this.running).finally(() => { this.running = null })
-    return this.running
+    void this.execute(candidate, this.running).finally(() => {
+      this.running = null
+    })
+    return { ...this.base(), ...this.running }
   }
-  async save(operation) {
-    const directory = await this.privateDir(), file = join(directory, `${operation.requestId}.json`)
+  async save(operation, claim = false) {
+    const directory = await this.privateDir(),
+      file = join(directory, `${operation.requestId}.json`)
     const temp = join(directory, `${operation.requestId}.${randomUUID()}.tmp`)
-    await writeFile(temp, JSON.stringify(operation), { flag: 'wx', mode: 0o600 }); await rename(temp, file)
+    await writeFile(temp, JSON.stringify(operation), { flag: 'wx', mode: 0o600 })
+    await rename(temp, file)
+    if (!claim) return
     const index = join(directory, `${randomUUID()}.tmp`)
-    await writeFile(index, JSON.stringify({ requestId: operation.requestId }), { flag: 'wx', mode: 0o600 }); await rename(index, join(directory, 'latest.json'))
+    await writeFile(index, JSON.stringify({ requestId: operation.requestId }), { flag: 'wx', mode: 0o600 })
+    await rename(index, join(directory, 'latest.json'))
   }
   async execute(candidate, operation) {
     let managerInvoked = false
     try {
       const before = await this.capability()
       const fresh = await this.getCandidate(before.bundle.version ?? this.version)
-      if (!fresh || fresh.id !== candidate.id || fresh.version !== candidate.version || fresh.tarball !== candidate.tarball) throw new Error('stale-candidate')
+      if (
+        !fresh ||
+        fresh.id !== candidate.id ||
+        fresh.version !== candidate.version ||
+        fresh.tarball !== candidate.tarball
+      )
+        throw new Error('stale-candidate')
       const options = { fetcher: this.fetcher, signal: this.abort.signal }
       const checksum = (await boundedFetch(candidate.checksum, 8192, options)).toString()
       const lines = checksum.trim().split(/\r?\n/)
       if (lines.length !== 1) throw new Error('checksum')
-      const match = /^([a-fA-F0-9]{64})  (\S+)$/.exec(lines[0])
+      const match = /^([a-fA-F0-9]{64}) {2}(\S+)$/.exec(lines[0])
       if (!match || match[2] !== candidate.filename) throw new Error('checksum')
       const bytes = await boundedFetch(candidate.tarball, MAX_PACKAGE, options)
       if (createHash('sha256').update(bytes).digest('hex') !== match[1].toLowerCase()) throw new Error('checksum')
@@ -266,37 +311,80 @@ export class PluginUpdates {
       const path = join(dir, candidate.filename)
       await writeFile(path, bytes, { flag: 'wx', mode: 0o600 })
       const latest = await this.capability()
-      if (latest.bundle.source !== before.bundle.source || latest.bundle.enabled !== before.bundle.enabled || this.isBusy() || this.closed) throw new Error('busy')
+      if (
+        latest.bundle.source !== before.bundle.source ||
+        latest.bundle.enabled !== before.bundle.enabled ||
+        this.isBusy() ||
+        this.closed
+      )
+        throw new Error('busy')
       const spec = latest.source === 'github' ? `github:${REPOSITORY}#${candidate.tag}` : path
-      operation.status = 'installing'; await this.save(operation)
+      operation.status = 'installing'
+      await this.save(operation)
       if (this.closed || this.isBusy()) throw new Error('busy')
+      const final = await this.capability()
+      if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error('busy')
+      if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error('stale-candidate')
       managerInvoked = true
-      const result = await latest.manager.installBundle(spec, { enabled: latest.bundle.enabled, requestId: operation.requestId, saveExact: true })
-      operation.status = resultState(result, operation.version, this.version)
+      const result = await final.manager.installBundle(spec, {
+        enabled: final.bundle.enabled,
+        requestId: operation.requestId,
+        saveExact: true,
+      })
       operation.result = safeResult(result)
-    } catch (error) { operation.status = managerInvoked ? 'unknown' : 'failed'; operation.reason = reasonOf(error) }
-    try { await this.save(operation) } catch { /* Manager retains its running operation; reconcile still checks it. */ }
+      const installed = (await final.manager.listBundles()).find(item => item.name === PACKAGE)
+      operation.status = resultState(result, operation.version, this.version, installed)
+    } catch (error) {
+      operation.status = managerInvoked ? 'unknown' : 'failed'
+      operation.reason = reasonOf(error)
+    }
+    try {
+      await this.save(operation)
+    } catch {
+      /* Manager retains its running operation; reconcile still checks it. */
+    }
   }
   async reconcile(requestId) {
     if (typeof requestId !== 'string' || !UUID.test(requestId)) throw new Error('invalid-request')
     let operation
-    try { operation = JSON.parse(await readFile(join(this.cacheDir, `${requestId}.json`), 'utf8')) } catch { return { ...this.base(), status: 'unknown', requestId } }
-    if (operation.requestId !== requestId || typeof operation.version !== 'string') return { ...this.base(), status: 'unknown', requestId }
+    try {
+      operation = JSON.parse(await readFile(join(this.cacheDir, `${requestId}.json`), 'utf8'))
+    } catch {
+      return { ...this.base(), status: 'unknown', requestId }
+    }
+    if (operation.requestId !== requestId || typeof operation.version !== 'string')
+      return { ...this.base(), status: 'unknown', requestId }
     semanticVersion(operation.version)
     if (this.running?.requestId === requestId) return { ...this.base(), ...this.running }
-    if (operation.status === 'preparing') { operation.status = 'failed'; operation.reason = 'interrupted'; await this.save(operation) }
+    if (operation.status === 'preparing') {
+      operation.status = 'failed'
+      operation.reason = 'interrupted'
+      await this.save(operation)
+    }
     if (['installing', 'unknown'].includes(operation.status) && !operation.result) {
       const manager = this.manager()
-      const result = manager && await manager.waitForInstall(requestId)
-      if (result) { operation.result = safeResult(result); operation.status = resultState(result, operation.version, this.version); await this.save(operation) }
-      else operation.status = 'unknown'
+      const result = manager && (await manager.waitForInstall(requestId))
+      if (result) {
+        operation.result = safeResult(result)
+        // Verify the actual installed bundle below before reporting success.
+      } else operation.status = 'unknown'
     }
     const bundle = (await this.manager()?.listBundles())?.find(item => item.name === PACKAGE)
     const installed = bundle?.version
-    if (['installing', 'restart-required', 'unknown', 'applied'].includes(operation.status) && this.version === operation.version) {
-      operation.status = bundle?.installed && !bundle.error && !bundle.readOnlyReason && installed === operation.version ? 'applied' : 'unknown'
+    if (operation.result) operation.status = resultState(operation.result, operation.version, this.version, bundle)
+    if (
+      ['installing', 'restart-required', 'unknown', 'applied'].includes(operation.status) &&
+      this.version === operation.version
+    ) {
+      operation.status =
+        bundle?.installed && !bundle.error && !bundle.readOnlyReason && installed === operation.version
+          ? 'applied'
+          : 'unknown'
     }
     return { ...this.base(), ...operation, installedVersion: installed }
   }
-  dispose() { this.closed = true; this.abort.abort() }
+  dispose() {
+    this.closed = true
+    this.abort.abort()
+  }
 }

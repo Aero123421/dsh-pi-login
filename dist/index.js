@@ -439,7 +439,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.5.0",
+  version: "0.5.1",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -716,11 +716,13 @@ function safeResult(result) {
     ...result.packageResult ? { packageResult: { exitCode: result.packageResult.exitCode, timedOut: result.packageResult.timedOut, kind: result.packageResult.kind } } : {}
   };
 }
-function resultState(result, expected, runtime) {
+function resultState(result, expected, runtime, installed) {
   if (!result) return "unknown";
-  if (result.error || result.application === "failed" || result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut)) return "failed";
   if (["cancelled", "overridden"].includes(result.application)) return result.application;
-  if (result.bundle !== PACKAGE || result.version !== expected) return "unknown";
+  if (result.error || result.application === "failed" || result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut))
+    return "failed";
+  if (result.bundle !== PACKAGE || result.version !== expected || !installed?.installed || installed.version !== expected || installed.error || installed.readOnlyReason)
+    return "unknown";
   if (result.application === "restart-required") return "restart-required";
   return result.application === "applied" && runtime === expected ? "applied" : "unknown";
 }
@@ -754,7 +756,11 @@ var PluginUpdates = class {
     return { manager, bundle, source, dshVersion };
   }
   base() {
-    return { runtimeVersion: this.version, releases: RELEASES };
+    return {
+      runtimeVersion: this.version,
+      releases: RELEASES,
+      profileKey: this.profileDir ? createHash("sha256").update(PACKAGE + "\0" + resolve(this.profileDir)).digest("hex") : void 0
+    };
   }
   async lastOperation() {
     try {
@@ -810,11 +816,12 @@ var PluginUpdates = class {
     const { id, version, url, notes, compatibility } = candidate;
     return { id, version, url, notes, compatibility };
   }
-  async begin(id, operationId) {
+  async begin(id, operationId, profileKey) {
+    if (!profileKey || profileKey !== this.base().profileKey) throw new Error("profile");
     if (typeof operationId !== "string") throw new Error("invalid-request");
     const requestId = updateRequestId(operationId);
     await this.capability();
-    if (this.running?.requestId === requestId) return this.running;
+    if (this.running?.requestId === requestId) return { ...this.base(), ...this.running };
     try {
       await readFile(join(this.cacheDir, `${requestId}.json`));
       return this.reconcile(requestId);
@@ -822,14 +829,15 @@ var PluginUpdates = class {
       if (error.code !== "ENOENT") throw error;
     }
     const last = await this.lastOperation();
-    if (last && ["installing", "unknown", "restart-required"].includes((await this.reconcile(last)).status)) throw new Error("busy");
+    if (last && ["installing", "unknown", "restart-required"].includes((await this.reconcile(last)).status))
+      throw new Error("busy");
     if (this.closed || this.running || this.checking || this.isBusy()) throw new Error("busy");
     if (typeof id !== "string" || !this.candidate || id !== this.candidate.id) throw new Error("stale-candidate");
     const candidate = this.candidate;
     this.running = { requestId, version: candidate.version, status: "preparing" };
     try {
       await this.privateDir();
-      await this.save(this.running);
+      await this.save(this.running, true);
     } catch (error) {
       this.running = null;
       throw error;
@@ -837,13 +845,14 @@ var PluginUpdates = class {
     void this.execute(candidate, this.running).finally(() => {
       this.running = null;
     });
-    return this.running;
+    return { ...this.base(), ...this.running };
   }
-  async save(operation) {
+  async save(operation, claim = false) {
     const directory = await this.privateDir(), file = join(directory, `${operation.requestId}.json`);
     const temp = join(directory, `${operation.requestId}.${randomUUID3()}.tmp`);
     await writeFile(temp, JSON.stringify(operation), { flag: "wx", mode: 384 });
     await rename(temp, file);
+    if (!claim) return;
     const index = join(directory, `${randomUUID3()}.tmp`);
     await writeFile(index, JSON.stringify({ requestId: operation.requestId }), { flag: "wx", mode: 384 });
     await rename(index, join(directory, "latest.json"));
@@ -853,12 +862,13 @@ var PluginUpdates = class {
     try {
       const before = await this.capability();
       const fresh = await this.getCandidate(before.bundle.version ?? this.version);
-      if (!fresh || fresh.id !== candidate.id || fresh.version !== candidate.version || fresh.tarball !== candidate.tarball) throw new Error("stale-candidate");
+      if (!fresh || fresh.id !== candidate.id || fresh.version !== candidate.version || fresh.tarball !== candidate.tarball)
+        throw new Error("stale-candidate");
       const options = { fetcher: this.fetcher, signal: this.abort.signal };
       const checksum = (await boundedFetch(candidate.checksum, 8192, options)).toString();
       const lines = checksum.trim().split(/\r?\n/);
       if (lines.length !== 1) throw new Error("checksum");
-      const match = /^([a-fA-F0-9]{64})  (\S+)$/.exec(lines[0]);
+      const match = /^([a-fA-F0-9]{64}) {2}(\S+)$/.exec(lines[0]);
       if (!match || match[2] !== candidate.filename) throw new Error("checksum");
       const bytes = await boundedFetch(candidate.tarball, MAX_PACKAGE, options);
       if (createHash("sha256").update(bytes).digest("hex") !== match[1].toLowerCase()) throw new Error("checksum");
@@ -867,15 +877,24 @@ var PluginUpdates = class {
       const path = join(dir, candidate.filename);
       await writeFile(path, bytes, { flag: "wx", mode: 384 });
       const latest = await this.capability();
-      if (latest.bundle.source !== before.bundle.source || latest.bundle.enabled !== before.bundle.enabled || this.isBusy() || this.closed) throw new Error("busy");
+      if (latest.bundle.source !== before.bundle.source || latest.bundle.enabled !== before.bundle.enabled || this.isBusy() || this.closed)
+        throw new Error("busy");
       const spec = latest.source === "github" ? `github:${REPOSITORY}#${candidate.tag}` : path;
       operation.status = "installing";
       await this.save(operation);
       if (this.closed || this.isBusy()) throw new Error("busy");
+      const final = await this.capability();
+      if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error("busy");
+      if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error("stale-candidate");
       managerInvoked = true;
-      const result = await latest.manager.installBundle(spec, { enabled: latest.bundle.enabled, requestId: operation.requestId, saveExact: true });
-      operation.status = resultState(result, operation.version, this.version);
+      const result = await final.manager.installBundle(spec, {
+        enabled: final.bundle.enabled,
+        requestId: operation.requestId,
+        saveExact: true
+      });
       operation.result = safeResult(result);
+      const installed = (await final.manager.listBundles()).find((item) => item.name === PACKAGE);
+      operation.status = resultState(result, operation.version, this.version, installed);
     } catch (error) {
       operation.status = managerInvoked ? "unknown" : "failed";
       operation.reason = reasonOf(error);
@@ -893,7 +912,8 @@ var PluginUpdates = class {
     } catch {
       return { ...this.base(), status: "unknown", requestId };
     }
-    if (operation.requestId !== requestId || typeof operation.version !== "string") return { ...this.base(), status: "unknown", requestId };
+    if (operation.requestId !== requestId || typeof operation.version !== "string")
+      return { ...this.base(), status: "unknown", requestId };
     semanticVersion(operation.version);
     if (this.running?.requestId === requestId) return { ...this.base(), ...this.running };
     if (operation.status === "preparing") {
@@ -906,12 +926,11 @@ var PluginUpdates = class {
       const result = manager && await manager.waitForInstall(requestId);
       if (result) {
         operation.result = safeResult(result);
-        operation.status = resultState(result, operation.version, this.version);
-        await this.save(operation);
       } else operation.status = "unknown";
     }
     const bundle = (await this.manager()?.listBundles())?.find((item) => item.name === PACKAGE);
     const installed = bundle?.version;
+    if (operation.result) operation.status = resultState(operation.result, operation.version, this.version, bundle);
     if (["installing", "restart-required", "unknown", "applied"].includes(operation.status) && this.version === operation.version) {
       operation.status = bundle?.installed && !bundle.error && !bundle.readOnlyReason && installed === operation.version ? "applied" : "unknown";
     }
@@ -964,10 +983,10 @@ function applyLoginUI(ctx, options = {}) {
             try {
               if (method === "update-status") value = await updates.status();
               else if (method === "update-check") value = await updates.check();
-              else if (method === "update-begin") value = await updates.begin(payload.candidateId, payload.requestId);
+              else if (method === "update-begin") value = await updates.begin(payload.candidateId, payload.requestId, payload.profileKey);
               else value = await updates.reconcile(payload.requestId);
             } catch (error) {
-              throw new LoginError(error.message === "busy" ? "busy" : "update-failed");
+              throw new LoginError(["busy", "profile"].includes(error.message) ? error.message : "update-failed");
             }
           } else {
             const mutation = ["start", "answer", "enable", "set-model", "set-provider", "use-login"].includes(method);
