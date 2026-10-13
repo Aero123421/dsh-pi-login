@@ -7,12 +7,21 @@ const home = await mkdtemp(join(tmpdir(), 'pi-update-clean-'))
 const env = { ...process.env, DSH_HOME: home }
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
 const source = process.argv[2] ?? resolve(`artifacts/local-dsh-pi-login-${packageJson.version}.tgz`)
-function run(args) {
+async function run(args) {
  const result = spawnSync('dsh', args, { env, encoding: 'utf8', timeout: 180000 })
- if (result.status !== 0) { writeFile(join(home,'install.log'),result.stdout+result.stderr); throw new Error('DSH clean install failed: '+home) }
+ if (result.status !== 0) {
+  await writeFile(join(home,'install.log'),(result.stdout ?? '')+(result.stderr ?? ''))
+  const stage = args.includes('--dump-config') ? 'profile-bootstrap' : 'plugin-install'
+  const stderr = result.stderr ?? ''
+  const code = result.error?.code ?? stderr.match(/\b(?:ERR_[A-Z0-9_]+|EACCES|EPERM|ENOENT|ENOTDIR)\b/)?.[0] ?? 'CLI_FAILED'
+  const errorClass = stderr.match(/^(?:Error|TypeError|SyntaxError|RangeError|ReferenceError)(?=[: \[])/m)?.[0]
+  const frame = stderr.split('\n').find(line => /^\s+at\s/.test(line))?.trim().replace(/https?:\/\/[^\s)]+/g, '[remote-url]')
+  console.error('DSH bootstrap diagnostic: '+JSON.stringify({ stage, status: result.status, signal: result.signal, code, errorClass, frame }))
+  throw new Error('DSH '+stage+' failed; private logs: '+home)
+ }
 }
-run(['--profile','smoke','--from-default-profile','web','--dump-config'])
-run(['plugin','--profile','smoke','add','-w','--ignore-scripts',source])
+await run(['--profile','smoke','--from-default-profile','web','--dump-config'])
+await run(['plugin','--profile','smoke','add','-w','--ignore-scripts',source])
 const profile = join(home,'profiles','smoke','package.json')
 const manifest = JSON.parse(await readFile(profile,'utf8'))
 if (!manifest.dsh.profile.bundles.includes('@local/dsh-pi-login')) manifest.dsh.profile.bundles.push('@local/dsh-pi-login')
