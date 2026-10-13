@@ -274,3 +274,17 @@ Object.assign(ja, {
   deleted: '接続を削除しました。', cloned: '設定を複製しました。複製はオフ・未ログインで作成されます。',
   lastObservedShort: '以前の応答から',
 })
+
+// Muse Code over HTTP (0.7.0).
+Object.assign(en, {
+  museContributorNote: 'Contributor choices let Meta use your content to train future models, in exchange for more plan usage. They start off; turn on only the ones you want.',
+  museCatalogEmpty: 'Load this account’s Muse Code models. New models appear here; Contributor versions start off.',
+  museLoginRequired: 'Sign in to this Muse Code connection first.',
+  museCatalogFailed: 'Could not load the Muse Code model list. Sign in again or try later.',
+})
+Object.assign(ja, {
+  museContributorNote: 'Contributor版は、利用枠が増える代わりにMetaが内容を将来のモデルの学習に使います。最初はオフです。使うものだけオンにしてください。',
+  museCatalogEmpty: 'このアカウントのMuse Codeのモデルを読み込みます。Contributor版は最初はオフです。',
+  museLoginRequired: '先にこのMuse Code接続にログインしてください。',
+  museCatalogFailed: 'Muse Codeのモデル一覧を読み込めませんでした。再ログインするか、時間をおいて試してください。',
+})

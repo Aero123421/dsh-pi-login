@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { RegistryError, newConnectionId, routeForConnection } from './registry.mjs'
+import { sdkServiceOf } from './sdk-service.mjs'
 
 const NS = 'dsh-pi-login'
 const RECORD_SCOPE = 'llm-pi-ai'
@@ -90,12 +91,12 @@ export class ConnectionManager {
       text(connection.displayName)
       if (connection.profile?.headers && Object.keys(connection.profile.headers).length) throw new ConnectionError('secret-headers-require-reference')
       if (connection.headerRefs) validateHeaderRefs(connection.headerRefs)
-      if (connection.integrationId === 'pi') this.validateProfile(connection)
-      else {
+      if (connection.integrationId !== 'pi') {
         const owner = this.registry.owner(connection.integrationId)
         if (!owner.validateConnection) throw new ConnectionError('owner-managed')
         owner.validateConnection({ ...connection, connectionId: id })
       }
+      if (sdkServiceOf(connection) !== undefined) this.validateProfile(connection)
     }
   }
   async write(connections, revision, extra = [], token = this.registry.token()) {
@@ -132,7 +133,7 @@ export class ConnectionManager {
       const key = this.authKey(connection)
       const record = connection.integrationId === 'pi' ? await this.credentials.describeRecord(key) : await owner.describeConnection(connection)
       const configured = connection.credentialRef ? !!(await this.credentials.describe?.(connection.credentialRef))?.configured : record.configured === true
-      const stored = connection.integrationId === 'pi' && connection.authMethod === 'oauth' && configured ? await this.credentials.readRecord(key) : undefined
+      const stored = sdkServiceOf(connection) !== undefined && connection.authMethod === 'oauth' && configured ? await this.credentials.readRecord(key) : undefined
       const expired = stored?.kind === 'grant' && Number.isFinite(stored.payload?.expires) && stored.payload.expires <= Date.now()
       const verified = this.verified.get(id)
       const isVerified = verified?.record === connection.credentialRecordId && verified.credentialGeneration === connection.credentialGeneration
@@ -146,8 +147,6 @@ export class ConnectionManager {
         methods: service.methods.filter(method => method.id === connection.authMethod),
         authStatus: this.pendingLogins.has(id) ? 'updating' : expired ? 'expired' : configured && isVerified ? 'verified' : record.authStatus ?? (configured ? 'saved' : 'auth-required'), capabilities: service.capabilities,
         ...isVerified ? { verifiedAt: verified.verifiedAt } : {},
-        ...connection.museCode ? { museCode: structuredClone(connection.museCode) } : {},
-        ...record.executionKind ? { executionKind: record.executionKind } : {},
         profile: { ...connection.profile?.baseURL ? { baseURL: connection.profile.baseURL } : {}, ...connection.profile?.api ? { api: connection.profile.api } : {} },
         revision: section?.revision,
       }
@@ -207,10 +206,10 @@ export class ConnectionManager {
     const section = this.writable(revision)
     const connection = this.lookup(connectionId)
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ConnectionError('invalid-request')
-    const allowed = new Set(['displayName', 'enabled', 'apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod', 'contributorMode', 'modelId'])
+    const allowed = new Set(['displayName', 'enabled', 'apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod'])
     if (Object.keys(patch).some(key => !allowed.has(key))) throw new ConnectionError('invalid-request')
-    if (connection.integrationId !== 'pi' && ['apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod'].some(key => patch[key] !== undefined)) throw new ConnectionError('owner-managed')
-    if (connection.integrationId === 'pi' && ['contributorMode', 'modelId'].some(key => patch[key] !== undefined)) throw new ConnectionError('unsupported')
+    if (connection.integrationId !== 'pi' && ['apiKey', 'endpointUrl', 'api', 'headerRefs', 'authMethod'].some(key => patch[key] !== undefined)) throw new ConnectionError('owner-managed')
+    if (sdkServiceOf(connection) === undefined && patch.profile !== undefined) throw new ConnectionError('owner-managed')
     if (patch.displayName !== undefined) connection.displayName = text(patch.displayName)
     if (patch.enabled !== undefined) {
       if (typeof patch.enabled !== 'boolean') throw new ConnectionError('invalid-request')
@@ -226,19 +225,13 @@ export class ConnectionManager {
     if (patch.headerRefs) connection.headerRefs = validateHeaderRefs(patch.headerRefs)
     // Internal model operation only: explicit allowlist prevents changing endpoint or secrets here.
     if (patch.profile) {
-      const fields = ['disabledModels', 'enabledFastModels', 'enabledDiscoveredModels', 'reasoning']
+      const fields = ['disabledModels', 'enabledFastModels', 'enabledDiscoveredModels', 'enabledContributorModels', 'reasoning']
       if (Object.keys(patch.profile).some(key => !fields.includes(key))) throw new ConnectionError('invalid-request')
       Object.assign(connection.profile, patch.profile)
     }
     const oldRecordId = connection.credentialRecordId
     let newRecordId
     try {
-      if (connection.integrationId !== 'pi' && ['contributorMode', 'modelId'].some(key => patch[key] !== undefined)) {
-        const owner = this.registry.owner(connection.integrationId)
-        const changes = await owner.configureConnection(connection, patch, this.binding(connection))
-        if (!this.isCurrent(this.binding(connection))) throw new ConnectionError('connection-changed')
-        Object.assign(connection, changes)
-      }
       if (patch.authMethod !== undefined && patch.authMethod !== connection.authMethod) {
         if (!['oauth', 'api-key'].includes(patch.authMethod)) throw new ConnectionError('unsupported-method')
         connection.authMethod = patch.authMethod
@@ -270,7 +263,7 @@ export class ConnectionManager {
     const owner = this.registry.owner(original.integrationId)
     const copy = { ...original, routeId: original.integrationId === 'pi' ? routeForConnection(id) : owner.routeIdFor(id), credentialRecordId: id, credentialGeneration: 0,
       displayName: text(displayName ?? `${original.displayName} (copy)`), enabled: false }
-    delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute
+    delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute; delete copy.museCatalog
     delete copy.profile.apiKeyEnv; delete copy.profile.headers
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token)
     return { saved: true, connectionId: id }
@@ -285,6 +278,16 @@ export class ConnectionManager {
       else await this.registry.owner(connection.integrationId).deleteCredentials(connection)
     }
     return { deleted: true }
+  }
+  /** Store the account catalog a Muse Code refresh returned; no model is enabled by this. */
+  async saveMuseCatalog(binding, rows) {
+    if (!this.isCurrent(binding)) throw new ConnectionError('connection-changed')
+    const token = this.registry.token()
+    const connection = this.lookup(binding.connectionId)
+    connection.museCatalog = structuredClone(rows)
+    delete connection.museCode
+    delete connection.connectionId
+    await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token)
   }
   async beginLogin(connectionId) {
     const token = this.registry.token()

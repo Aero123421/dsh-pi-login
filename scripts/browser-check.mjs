@@ -55,44 +55,11 @@ await ctx.credentials.modifyRecord('llm-pi-ai/company-key', () => ({ kind: 'api-
 await ctx.credentials.modifyRecord('llm-pi-ai/meta', () => ({ kind: 'grant', payload: { token: 'fixture-meta' } }))
 await ctx.credentials.modifyRecord('llm-pi-ai/example', () => ({ kind: 'api-key', key: 'fixture-example' }))
 const manager = new ConnectionManager({ settings, credentials: ctx.credentials, registry })
-const musePrivateRoot = await mkdtemp(resolve('work/ui-muse-private-'))
-const museRequests = [], museFlows = new Map()
-const museOwner = host.createMuseCodeOwner({ ctx, connections: manager, privateRoot: musePrivateRoot,
- openHost: async spec => {
-  const config = join(spec.home, '.config', 'muse'), listeners = new Set()
-  let account = { state: 'loggedOut', credentialRequired: true }, mode = true
-  try { await readFile(join(config, 'auth.json')); account.state = 'accountLogin' } catch {}
-  return {
-   onNotification(fn) { listeners.add(fn); return () => listeners.delete(fn) },
-   async request(method, params) {
-    museRequests.push({ method, params })
-    switch (method) {
-     case 'settings/readSchema': return { schemaVersion: 1, keys: { 'contributor_mode_enabled': { type: 'boolean' } } }
-     case 'settings/read': return { schemaVersion: 1, values: { 'contributor_mode_enabled': mode } }
-     case 'settings/writeValue': mode = params.value; return { keyPath: params.keyPath, effectiveValue: mode }
-     case 'account/read': return account
-     case 'account/loginStart':
-      setTimeout(async () => {
-       if (spec.signal.aborted) return
-       await writeFile(join(config, 'auth.json'), JSON.stringify({ schema_version: 2, providers: { meta: { mechanism: 'oauth', access_token: `private-muse-identity-${spec.home.split('/').at(-1)}`, api_key: `private-muse-api-key-${spec.home.split('/').at(-1)}`, api_base_url: 'https://api.meta.ai/v1', user_email: 'private@fixture.test' } } }), { mode: 0o600 })
-       account = { state: 'accountLogin', credentialRequired: true }; mode = true
-       for (const fn of listeners) fn({ method: 'account/loginCompleted', params: { outcome: 'granted' } })
-      }, 1100)
-      return { verificationUrl: 'https://auth.meta.com/device?code=ABCD-EFGH', userCode: 'ABCD-EFGH' }
-     case 'account/loginCancel': return { cancelled: true }
-     case 'model/list': return { providerId: 'meta', profileId: null, source: 'providerCatalog', models: [
-      { providerId: 'meta', profileId: null, modelId: 'muse-wonder-1.0', displayLabel: 'Muse Wonder1', contextLimit: 1048576, outputLimit: null, variants: ['minimal', 'high', 'max'], isActive: false, isDefault: true },
-      { providerId: 'meta', profileId: null, modelId: 'muse-wonder-full-1.0', displayLabel: 'Muse Wonder Full', contextLimit: 1048576, outputLimit: null, variants: ['minimal', 'high', 'max'], isActive: false, isDefault: false },
-     ] }
-     case 'usage/read': return { usage: { tier: 'fixture-tier', observedAtMs: 1_700_000_000_000, window: { usedPercent: 31, resetsAtMs: 1_700_001_000_000, windowDurationMins: 300 }, weekly: { usedPercent: 52, resetsAtMs: 1_700_007_000_000 } } }
-     default: throw new Error('Unexpected mocked MSP request')
-    }
-   },
-   async close() { listeners.clear() },
-  }
- },
-})
+const museFlows = new Map()
+let museLoginCounter = 0
+const museOwner = host.createMuseCodeOwner({ ctx, connections: manager })
 registry.register(museOwner)
+// Muse Code signs in through Pi's Meta device flow; this fixture stands in for the SDK.
 function syncMuseFlows() {
  for (const [id, flow] of museFlows) {
   const current = manager.raw()[id]
@@ -100,8 +67,13 @@ function syncMuseFlows() {
  }
  for (const [id, connection] of Object.entries(manager.raw())) {
   if (connection.integrationId !== 'meta-muse-code' || museFlows.has(id)) continue
-  const value = { ...connection, connectionId: id }, binding = manager.binding(value)
-  const dispose = museOwner.registerFlow(ctx, value, () => manager.isCurrent(binding))
+  const dispose = ctx.authorization.registerFlow({ key: `llm-pi-ai/${connection.credentialRecordId}`, label: connection.displayName,
+   methods: [{ id: 'oauth', label: 'Sign in with Meta' }], async run(session) {
+    session.notify({ message: 'Enter this code on the verification page to finish signing in.', url: 'https://auth.meta.com/oauth/device/?code=ABCD-EFGH', code: 'ABCD-EFGH' })
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    museLoginCounter++
+    await session.commit({ kind: 'grant', payload: { type: 'oauth', refresh: `private-muse-identity-${museLoginCounter}`, access: `private-muse-key-${museLoginCounter}`, expires: Date.now() + 3600000 } })
+   } })
   museFlows.set(id, { identity: JSON.stringify([connection.credentialRecordId, connection.credentialGeneration, connection.displayName]), dispose })
  }
 }
@@ -115,7 +87,7 @@ ctx.authorization.registerFlow({ key: 'llm-pi-ai/openai-codex', label: 'OpenAI C
 } })
 const model = getBuiltinModels('openai-codex').find(model => model.id === 'gpt-6.1-sol')
 const fast = fastModelId(model.id)
-let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, usageCalls = 0, usageStatus = 'available'
+let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, museLoaded = false, usageCalls = 0, usageStatus = 'available'
 const full = 'muse-wonder-full-1.0'
 const catalogs = new host.ProviderCatalogs({
  meta: {
@@ -124,6 +96,7 @@ const catalogs = new host.ProviderCatalogs({
   errorCodes: { 'fixture-key-override': 'catalog-key-override' }, errors: { 'catalog-key-override': 'metaKeyOverride' },
  },
  example: { session: { refresh: async () => { exampleRefreshed = true } } },
+ 'muse-code': { session: { refresh: async () => { museLoaded = true } }, presentation: () => ({ notes: museLoaded ? [] : ['museCatalogEmpty'] }) },
 })
 const plugin = ctx.plugin({ inject: ['authorization', 'credentials', 'connection', 'settings'], apply: ctx => host.applyLoginUI(ctx, {
  connections: manager, registry, syncFlows: syncMuseFlows, catalogsFor: () => catalogs,
@@ -137,7 +110,10 @@ const plugin = ctx.plugin({ inject: ['authorization', 'credentials', 'connection
  catalog: (provider, profile) => provider === 'meta' ? [
   { id: 'muse-spark-1.3', name: 'Muse Spark 1.3', enabled: !profile.disabledModels?.includes('muse-spark-1.3') },
   ...(metaRefreshed ? [{ id: full, name: 'Muse Wonder Full', discovered: true, capabilityUnverified: true, enabled: profile.enabledDiscoveredModels?.includes(full) === true }] : []),
- ] : provider === 'example' ? [
+ ] : provider === 'muse-code' ? (museLoaded ? [['muse-wonder-1.0', 'Muse Wonder'], [full, 'Muse Wonder Full']] : []).flatMap(([id, name]) => [
+  { id, name, enabled: !profile.disabledModels?.includes(id) },
+  { id: `${id}::contributor`, name: `${name} Contributor`, contributor: true, enabled: profile.enabledContributorModels?.includes(`${id}::contributor`) === true },
+ ]) : provider === 'example' ? [
   { id: 'example-base', name: 'Example Base', enabled: true },
   ...(exampleRefreshed ? [{ id: 'example-new', name: 'Example New', discovered: true, enabled: profile.enabledDiscoveredModels?.includes('example-new') === true }] : []),
  ] : modelChoices(provider, [model], profile),
@@ -309,7 +285,7 @@ try {
  await page.getByRole('button', { name: '保存', exact: true }).click()
  await page.getByText('この接続先はホストで許可されていません。ホストの許可リストに追加してから保存してください。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
- // Real Muse owner and HostManager use the mocked official MSP commands.
+ // Muse Code signs in with Meta's device code and lists its own catalog.
  assert.equal(await modelsButton('Muse Code個人').count(), 0)
  await row('Muse Code個人').getByRole('button', { name: 'ログイン', exact: true }).click()
  await page.getByRole('link', { name: 'ブラウザで続ける', exact: true }).waitFor()
@@ -317,48 +293,19 @@ try {
  await page.getByText('ログインしました。この接続を使えます。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
  assert.equal(settingsValue.connections['c-muse-code'].enabled, true)
- assert.equal((await ctx.credentials.describeRecord('dsh-muse-code/c-muse-code')).configured, true)
- assert.equal((await ctx.credentials.describeRecord('llm-pi-ai/c-muse-code')).configured, false)
- // Each pick differs from the current one, since picking saves immediately.
- const variants = [
-  { name: 'Wonder1 Contributor', modelId: 'muse-wonder-1.0', contributor: true },
-  { name: 'Wonder Full', modelId: 'muse-wonder-full-1.0', contributor: false },
-  { name: 'Wonder1', modelId: 'muse-wonder-1.0', contributor: false },
-  { name: 'Wonder Full Contributor', modelId: 'muse-wonder-full-1.0', contributor: true },
- ]
- const updatePayloads = []
- const captureMuseSelection = async route => {
-  const payload = route.request().postDataJSON().payload
-  if (payload.connectionId === 'c-muse-code' && payload.patch.modelId) updatePayloads.push(payload.patch)
-  await route.continue()
- }
- await page.route('**/api/dsh-pi-login/connection-update', captureMuseSelection)
- for (const variant of variants) {
-  await modelsButton('Muse Code個人').click()
-  const dialog = page.getByRole('dialog')
-  await dialog.getByRole('radio', { name: 'Wonder1', exact: true }).waitFor()
-  await page.getByText('一覧にあるモデルです。この契約での生成権限は未確認です。', { exact: true }).waitFor()
-  assert.equal(await dialog.getByRole('switch').count(), 0)
-  assert.equal(await dialog.getByRole('checkbox').count(), 0)
-  assert.equal(await page.getByRole('link', { name: /Contributor/ }).count(), 0)
-  assert.equal(await dialog.getByRole('radio').count(), 4)
-  for (const choice of variants) await dialog.getByRole('radio', { name: choice.name, exact: true }).waitFor()
-  await dialog.getByRole('radio', { name: variant.name, exact: true }).check()
-  await page.getByText('Muse Codeのモデルを保存しました。', { exact: true }).waitFor()
-  assert.equal(settingsValue.connections['c-muse-code'].museCode.modelId, variant.modelId)
-  assert.equal(settingsValue.connections['c-muse-code'].museCode.contributorMode, variant.contributor)
-  assert.deepEqual(updatePayloads.at(-1), { modelId: variant.modelId, contributorMode: variant.contributor })
-  await page.keyboard.press('Escape')
-  await modelsButton('Muse Code個人').click()
-  const reopened = page.getByRole('dialog').getByRole('radio', { name: variant.name, exact: true })
-  await reopened.waitFor()
-  await page.waitForFunction(name => [...document.querySelectorAll('[role="dialog"] input[type="radio"]')].some(input => input.checked && input.parentElement.textContent === name), variant.name)
-  await page.keyboard.press('Escape')
-  await row('Muse Code個人').locator('.dsh-pi-row-meta').filter({ hasText: new RegExp(`· ${variant.name}$`) }).waitFor()
- }
- await page.unroute('**/api/dsh-pi-login/connection-update', captureMuseSelection)
+ assert.equal((await ctx.credentials.describeRecord('llm-pi-ai/c-muse-code')).configured, true)
  await modelsButton('Muse Code個人').click()
- await page.getByRole('dialog').getByRole('radio', { name: 'Wonder1', exact: true }).waitFor()
+ await page.getByText('このアカウントのMuse Codeのモデルを読み込みます。Contributor版は最初はオフです。', { exact: true }).waitFor()
+ await page.getByRole('button', { name: 'モデル一覧を更新', exact: true }).click()
+ const contributorSwitch = page.getByRole('switch', { name: 'モデルを使う: Muse Wonder Full Contributor', exact: true })
+ await contributorSwitch.waitFor()
+ assert.equal(await page.getByRole('dialog').getByRole('switch').count(), 4)
+ assert.equal(await page.getByRole('switch', { name: 'モデルを使う: Muse Wonder', exact: true }).getAttribute('aria-checked'), 'true')
+ assert.equal(await contributorSwitch.getAttribute('aria-checked'), 'false')
+ await page.getByText(/^Contributor版は、利用枠が増える代わりに/).waitFor()
+ await contributorSwitch.click()
+ await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'true' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: Muse Wonder Full Contributor"]')))
+ assert.deepEqual(settingsValue.connections['c-muse-code'].profile.enabledContributorModels, [`${full}::contributor`])
  for (const width of [390, 768, 1440]) {
   await page.setViewportSize({ width, height: 900 })
   for (const theme of ['light', 'dark']) {
@@ -370,10 +317,7 @@ try {
  const museDialog = await page.getByRole('dialog').boundingBox()
  assert.ok(museDialog.y >= 24 && museDialog.y + museDialog.height <= 736)
  await page.screenshot({ path: artifact('muse-models-mobile.png') })
- assert.ok(museRequests.some(request => request.method === 'settings/writeValue' && request.params.value === true))
- assert.ok(!museRequests.some(request => request.method === 'turn/start'))
- assert.ok(!museRequests.some(request => request.method === 'usage/read'), 'Muse model settings must not fetch usage')
- assert.doesNotMatch(await page.locator('body').innerText(), /private-muse-|private@fixture\.test/)
+ assert.doesNotMatch(await page.locator('body').innerText(), /private-muse-/)
  await page.keyboard.press('Escape')
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
  await page.setViewportSize({ width: 1000, height: 900 })
@@ -387,32 +331,11 @@ try {
  await page.getByText('ログインしました。この接続を使えます。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
  const secondMuse = Object.values(settingsValue.connections).find(connection => connection.displayName === 'Muse Code会社')
- const firstMuseRecord = await ctx.credentials.readRecord('dsh-muse-code/c-muse-code')
- const secondMuseRecord = await ctx.credentials.readRecord(`dsh-muse-code/${secondMuse.credentialRecordId}`)
- assert.notEqual(firstMuseRecord.payload.authDocument.providers.meta.access_token, secondMuseRecord.payload.authDocument.providers.meta.access_token)
- assert.equal(settingsValue.connections['c-muse-code'].museCode.contributorMode, true)
- assert.equal(secondMuse.museCode.contributorMode, false)
- // Auth source tests cover the allowlist; these terminal fixtures verify the UI copy.
- for (const [reason, message] of [
-  ['muse-code-cli-required', 'ホストに公式Muse Code CLIと対応するMSP SDKを導入してから再試行してください。'],
-  ['muse-code-protocol-unsupported', 'このMuse Code CLIはアカウント・設定管理に対応していません。公式CLIを更新してください。'],
- ]) {
-  const respond = value => route => route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value } } })
-  const startFailure = respond({ ticket: 'fixture-muse-failed-ticket' })
-  const terminalFailure = respond({ status: 'failed', reason })
-  await page.route('**/api/dsh-pi-login/start', startFailure)
-  await page.route('**/api/dsh-pi-login/state', terminalFailure)
-  try {
-   await settingsButton('Muse Code会社').click()
-   await page.getByRole('button', { name: '再ログイン', exact: true }).click()
-   await page.getByText(message, { exact: true }).waitFor()
-   await page.screenshot({ path: artifact(`${reason}-mobile.png`) })
-   await page.keyboard.press('Escape')
-  } finally {
-   await page.unroute('**/api/dsh-pi-login/start', startFailure)
-   await page.unroute('**/api/dsh-pi-login/state', terminalFailure)
-  }
- }
+ assert.equal(secondMuse.enabled, true)
+ const firstMuseRecord = await ctx.credentials.readRecord('llm-pi-ai/c-muse-code')
+ const secondMuseRecord = await ctx.credentials.readRecord(`llm-pi-ai/${secondMuse.credentialRecordId}`)
+ assert.notEqual(firstMuseRecord.payload.refresh, secondMuseRecord.payload.refresh)
+ assert.equal(secondMuse.profile.enabledContributorModels, undefined)
  for (const width of [390, 768, 1440]) {
   await page.setViewportSize({ width, height: 900 })
   for (const theme of ['light', 'dark']) {
@@ -486,5 +409,5 @@ try {
  }
  throw error
 } finally {
- await browser?.close(); await plugin.dispose(); await museOwner.dispose(); for (const flow of museFlows.values()) flow.dispose(); await rm(musePrivateRoot, { recursive: true, force: true }); catalogs.dispose(); manager.dispose(); registry.dispose(); await ctx.fiber.dispose(); await new Promise(resolve => server.close(resolve))
+ await browser?.close(); await plugin.dispose(); for (const flow of museFlows.values()) flow.dispose(); catalogs.dispose(); manager.dispose(); registry.dispose(); await ctx.fiber.dispose(); await new Promise(resolve => server.close(resolve))
 }

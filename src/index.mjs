@@ -3,14 +3,13 @@ import { apply as applyRuntime, Config } from './runtime/index.ts'
 import { catalogModels, catalogProvider, catalogProviderIds, resolveRouteModels } from './runtime/catalog.ts'
 import { credentialStoreFrom, connectionAuthFrom } from './runtime/auth.ts'
 import { createModels } from './runtime/models.ts'
-import { resolveConnectionProfiles } from './runtime/connections.ts'
+import { resolveConnectionProfiles, sdkServiceOf, MUSE_CODE_INTEGRATION_ID } from './runtime/connections.ts'
 import { IntegrationRegistry } from './registry.mjs'
 import { ConnectionManager, ConnectionError, profileKeyFor } from './connections.mjs'
 import { AccountUsageManager, createPiUsageProviders } from './account-usage.mjs'
 import { createMuseCodeOwner } from './muse-code-owner.mjs'
 import { createExternalIntegrations } from './external-integrations.mjs'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { MuseCodeCatalogSession, museCatalogProvider } from './muse-code-catalog.mjs'
 import { MetaCatalogSession } from './meta-catalog.mjs'
 import { metaCatalogProvider } from './meta-catalog-provider.mjs'
 import { ProviderCatalogs } from './provider-catalogs.mjs'
@@ -62,39 +61,24 @@ export function apply(ctx, config, options = {}) {
     })
   }
   registry.register({ integrationId: 'pi', label: 'Pi', source: '@earendil-works/pi-ai', listServices: piServices, listConnections: () => Object.values(manager.raw()) })
-  const muse = createMuseCodeOwner({ ctx, connections: manager,
-    privateRoot: join(ctx.get('profileContext')?.dir ?? join(tmpdir(), 'dsh-muse-code', registry.profileKey), '.dsh-muse-code'),
-    onLogin: async id => {
-      const connection = manager.lookup(id)
-      manager.markVerified(id)
-      usage.invalidate(id)
-      if (!connection.enabled) await manager.update(id, { enabled: true }, manager.section()?.revision)
-    },
-    ...options.muse,
-  })
+  const muse = createMuseCodeOwner({ ctx, connections: manager })
   registry.register(muse)
   registry.register(external.descriptor)
   // Optional bundle-local integrations explicitly opt in; never inspect their config or credentials.
   ctx.on('dsh-pi-login/register-integration', owner => registry.register(owner))
-  const museFlows = new Map()
-  const syncMuseFlows = () => {
-    for (const [id, flow] of museFlows) {
-      const current = config.connections.get()[id]
-      if (!current || flow.identity !== JSON.stringify([current.credentialRecordId, current.credentialGeneration, current.displayName])) { flow.dispose(); museFlows.delete(id) }
-    }
-    for (const [id, connection] of Object.entries(config.connections.get())) {
-      if (connection.integrationId !== 'meta-muse-code' || museFlows.has(id)) continue
-      const value = { ...connection, connectionId: id }
-      const binding = manager.binding(value)
-      const dispose = muse.registerFlow(ctx, value, () => manager.isCurrent(binding))
-      museFlows.set(id, { identity: JSON.stringify([connection.credentialRecordId, connection.credentialGeneration, connection.displayName]), dispose })
-    }
-  }
-  ctx.on('dsh-pi-login/connections-updated', syncMuseFlows)
   const sessionIdentity = connection => JSON.stringify([connection.serviceId, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api])
+  // Credentials address the SDK provider; currency still checks the stored connection.
   const authFor = connection => {
     const binding = manager.binding(connection)
-    return connectionAuthFrom(ctx, { ...binding, isCurrent: () => manager.isCurrent(binding) })
+    return connectionAuthFrom(ctx, { ...binding, serviceId: sdkServiceOf(connection) ?? connection.serviceId, isCurrent: () => manager.isCurrent(binding) })
+  }
+  const refreshAuth = async (connection, signal) => {
+    const service = sdkServiceOf(connection) ?? connection.serviceId
+    const auth = authFor(connection)
+    const models = createModels(auth)
+    models.setProvider(catalogProvider(service))
+    await models.getAuth(service, { signal })
+    return auth.credentials.read(service)
   }
   const catalogsFor = connection => {
     const id = connection.connectionId
@@ -102,7 +86,20 @@ export function apply(ctx, config, options = {}) {
     const previous = sessions.get(id)
     if (previous?.identity === identity) return previous.catalogs
     previous?.catalogs.dispose()
-    const meta = connection.serviceId === 'meta' ? new MetaCatalogSession({
+    if (connection.integrationId === MUSE_CODE_INTEGRATION_ID) {
+      const binding = manager.binding(connection)
+      const museSession = new MuseCodeCatalogSession({
+        credentials: authFor(connection).credentials,
+        snapshot: () => { try { return manager.lookup(id).museCatalog } catch { return undefined } },
+        persist: rows => manager.saveMuseCatalog(binding, rows),
+        refreshAuth: signal => refreshAuth(manager.lookup(id), signal),
+        onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
+      })
+      const catalogs = new ProviderCatalogs({ [connection.serviceId]: museCatalogProvider(museSession) })
+      sessions.set(id, { identity, catalogs, muse: museSession })
+      return catalogs
+    }
+    const meta = connection.serviceId === 'meta' && connection.integrationId === 'pi' ? new MetaCatalogSession({
       credentials: authFor(connection).credentials, profile: () => {
         const current = manager.lookup(id)
         return { ...current.profile, headerRefs: current.headerRefs, credentialRef: current.credentialRef }
@@ -116,18 +113,12 @@ export function apply(ctx, config, options = {}) {
   const usage = new AccountUsageManager({
     providers: {
       ...createPiUsageProviders({ metaSession: connection => { catalogsFor(connection); return sessions.get(connection.connectionId).meta } }),
-      'meta-muse-code/muse-code': { source: 'last-observed', requiresCredentials: false,
-        read: ({ connection, signal }) => muse.readUsage(connection, { signal }) },
+      [`${MUSE_CODE_INTEGRATION_ID}/muse-code`]: { source: 'internal-http',
+        read: ({ connection, signal, force }) => { catalogsFor(connection); return sessions.get(connection.connectionId).muse.usage({ signal, force }) } },
     },
     credentials: {
-      read: connection => authFor(connection).credentials.read(connection.serviceId),
-      refresh: async (connection, _record, signal) => {
-        const auth = authFor(connection)
-        const models = createModels(auth)
-        models.setProvider(catalogProvider(connection.serviceId))
-        await models.getAuth(connection.serviceId, { signal })
-        return auth.credentials.read(connection.serviceId)
-      },
+      read: connection => authFor(connection).credentials.read(sdkServiceOf(connection) ?? connection.serviceId),
+      refresh: (connection, _record, signal) => refreshAuth(connection, signal),
     },
   })
   const runtime = applyRuntime(ctx, config, {
@@ -140,6 +131,8 @@ export function apply(ctx, config, options = {}) {
       catalogsFor(connection).onLogin(connection.serviceId)
       usage.invalidate(id)
       if (!connection.enabled) await manager.update(id, { enabled: true }, manager.section()?.revision)
+      // A new Muse Code sign-in loads that account's catalog right away.
+      if (connection.integrationId === MUSE_CODE_INTEGRATION_ID) void catalogsFor(manager.lookup(id)).refresh(connection.serviceId).catch(() => {})
     },
     authorizeModel: (route, model, profile) => {
       if (!profile.connectionId) return legacyCatalogs.authorizeModel(route, model, profile)
@@ -148,7 +141,7 @@ export function apply(ctx, config, options = {}) {
     },
   })
   applyLoginUI(ctx, {
-    connections: manager, usage, registry, syncFlows: () => { runtime.syncFlows(); syncMuseFlows() },
+    connections: manager, usage, registry, syncFlows: () => runtime.syncFlows(),
     catalogs: legacyCatalogs, catalogsFor,
     catalog: (provider, profile, connectionId) => {
       const learned = connectionId ? catalogsFor(manager.lookup(connectionId)).catalog(provider) : legacyCatalogs.catalog(provider)
@@ -166,8 +159,6 @@ export function apply(ctx, config, options = {}) {
   let alive = true
   ctx.effect(() => () => {
     alive = false; manager.dispose(); registry.dispose(); external.dispose(); usage.dispose(); legacyCatalogs.dispose()
-    for (const flow of museFlows.values()) flow.dispose()
-    museFlows.clear(); void muse.dispose()
     for (const value of sessions.values()) value.catalogs.dispose()
     sessions.clear()
   }, 'AI connections: owned lifetime')

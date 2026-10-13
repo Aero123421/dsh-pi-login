@@ -1,20 +1,6 @@
-var __defProp = Object.defineProperty;
-var __getOwnPropNames = Object.getOwnPropertyNames;
 var __knownSymbol = (name2, symbol) => (symbol = Symbol[name2]) ? symbol : /* @__PURE__ */ Symbol.for("Symbol." + name2);
 var __typeError = (msg) => {
   throw TypeError(msg);
-};
-var __esm = (fn, res, err) => function __init() {
-  if (err) throw err[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err = [e], e;
-  }
-};
-var __export = (target, all) => {
-  for (var name2 in all)
-    __defProp(target, name2, { get: all[name2], enumerable: true });
 };
 var __using = (stack, value, async) => {
   if (value != null) {
@@ -43,3706 +29,20 @@ var __callDispose = (stack, error, hasError) => {
   var E = typeof SuppressedError === "function" ? SuppressedError : function(e, s, m, _) {
     return _ = Error(m), _.name = "SuppressedError", _.error = e, _.suppressed = s, _;
   };
-  var fail2 = (e) => error = hasError ? new E(e, error, "An error was suppressed during disposal") : (hasError = true, e);
+  var fail = (e) => error = hasError ? new E(e, error, "An error was suppressed during disposal") : (hasError = true, e);
   var next = (it) => {
     while (it = stack.pop()) {
       try {
         var result = it[1] && it[1].call(it[2]);
-        if (it[0]) return Promise.resolve(result).then(next, (e) => (fail2(e), next()));
+        if (it[0]) return Promise.resolve(result).then(next, (e) => (fail(e), next()));
       } catch (e) {
-        fail2(e);
+        fail(e);
       }
     }
     if (hasError) throw error;
   };
   return next();
 };
-
-// node_modules/@muse-code/sdk/dist/src/fingerprint.js
-function fingerprintMismatchMessage(pinned, actual) {
-  return [
-    "MSP schema fingerprint moved: re-pin after a schema advance.",
-    `  pinned by @muse-code/sdk: ${pinned}`,
-    `  schema/msp/stable/manifest.json: ${actual}`,
-    "",
-    "This does NOT mean the SDK is broken. The stable schema bundle advanced",
-    "(a #206 enrollment or renderer change). Fix it by running",
-    "scripts/regen-msp-pins.sh, which re-pins EXPECTED_SCHEMA_FINGERPRINT and",
-    "every other derived copy from the committed stable manifest, then adapt",
-    "the facade to whatever the advance actually changed. Never hand-edit",
-    "schema/msp/** to match the SDK."
-  ].join("\n");
-}
-function checkServedFingerprint(served, pinned = EXPECTED_SCHEMA_FINGERPRINT) {
-  if (served === pinned)
-    return void 0;
-  return {
-    kind: "schemaFingerprintMismatch",
-    pinned,
-    served,
-    message: `host schema fingerprint ${served} differs from the fingerprint this SDK pins (${pinned}); proceeding under additive-optional evolution (SS1.5.4). Re-pin after a schema advance.`
-  };
-}
-var EXPECTED_SCHEMA_FINGERPRINT;
-var init_fingerprint = __esm({
-  "node_modules/@muse-code/sdk/dist/src/fingerprint.js"() {
-    EXPECTED_SCHEMA_FINGERPRINT = "sha256:6de32db08bbbe0deb478d2bfcaba001e9fb490986bc80db3aceb4d996abf7df9";
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/errors.js
-var MuseSessionDiscardedError, MuseForeignSessionError, MuseGapFillError, PermissionProfileNotApplied;
-var init_errors = __esm({
-  "node_modules/@muse-code/sdk/dist/src/errors.js"() {
-    MuseSessionDiscardedError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "MuseSessionDiscardedError";
-      }
-    };
-    MuseForeignSessionError = class extends Error {
-      constructor(message) {
-        super(message);
-        this.name = "MuseForeignSessionError";
-      }
-    };
-    MuseGapFillError = class extends Error {
-      reason;
-      /** The gap's own bounds, verbatim and opaque (tdd SS4.1). */
-      after;
-      next;
-      constructor(reason, after, next, cause) {
-        super(`view/gap (${after}, ${next}) could not be filled: ${reason}`, { cause });
-        this.name = "MuseGapFillError";
-        this.reason = reason;
-        this.after = after;
-        this.next = next;
-      }
-    };
-    PermissionProfileNotApplied = class extends Error {
-      /** The profile id the caller required. */
-      requested;
-      /** The committed profile id the read-back served, or null when unknown. */
-      served;
-      /** The open session, so the caller can set, retry, or close it. */
-      sessionId;
-      constructor(requested, served, sessionId) {
-        super(`required permissionProfile ${JSON.stringify(requested)} was not applied: the committed selection is ${served === null ? "unknown" : JSON.stringify(served)} (session ${sessionId})`);
-        this.name = "PermissionProfileNotApplied";
-        this.requested = requested;
-        this.served = served;
-        this.sessionId = sessionId;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/fold/item-store.js
-var ItemStore;
-var init_item_store = __esm({
-  "node_modules/@muse-code/sdk/dist/src/fold/item-store.js"() {
-    init_errors();
-    ItemStore = class {
-      #items = /* @__PURE__ */ new Map();
-      /** itemId -> field path -> accumulated text. */
-      #deltas = /* @__PURE__ */ new Map();
-      /** First-opened order; an itemId appears exactly once. */
-      #order = [];
-      #terminalUnknown = /* @__PURE__ */ new Set();
-      #ephemeralSessionDiscarded = false;
-      /**
-       * Apply an `item/started` | `item/updated` | `item/completed` payload.
-       * Replace iff the incoming revision is strictly higher (INV-003).
-       */
-      apply(item) {
-        this.#assertSessionActive();
-        const held = this.#items.get(item.itemId);
-        if (held === void 0) {
-          this.#items.set(item.itemId, item);
-          this.#order.push(item.itemId);
-          return { kind: "inserted", itemId: item.itemId };
-        }
-        if (item.revision <= held.revision) {
-          return {
-            kind: "ignoredStaleRevision",
-            itemId: item.itemId,
-            held: held.revision,
-            offered: item.revision
-          };
-        }
-        this.#items.set(item.itemId, item);
-        return {
-          kind: "replaced",
-          itemId: item.itemId,
-          from: held.revision,
-          to: item.revision
-        };
-      }
-      /**
-       * Apply an `item/delta`: a UTF-8-safe append to the open item's field named
-       * by `field` (default `"text"`), contiguous and lossless in cursor order.
-       * The concatenation of all deltas for a field path equals that field's
-       * value on the final `item/completed` object (INV-004, tdd SS4.3.1).
-       */
-      applyDelta(itemId, delta, field = "text") {
-        this.#assertSessionActive();
-        let fields = this.#deltas.get(itemId);
-        if (fields === void 0) {
-          fields = /* @__PURE__ */ new Map();
-          this.#deltas.set(itemId, fields);
-        }
-        fields.set(field, (fields.get(field) ?? "") + delta);
-        if (!this.#items.has(itemId)) {
-          return { kind: "bufferedForAbsentItem", itemId, field };
-        }
-        return {
-          kind: "appended",
-          itemId,
-          field,
-          length: (fields.get(field) ?? "").length
-        };
-      }
-      /** The accumulated delta text for a field path, or `undefined` if none. */
-      accumulated(itemId, field = "text") {
-        return this.#deltas.get(itemId)?.get(field);
-      }
-      /** Every field path that has accumulated deltas for this item. */
-      accumulatedFields(itemId) {
-        const fields = this.#deltas.get(itemId);
-        return fields === void 0 ? [] : [...fields.keys()].sort();
-      }
-      get(itemId) {
-        return this.#items.get(itemId);
-      }
-      has(itemId) {
-        return this.#items.has(itemId);
-      }
-      /** Items in first-opened order (tdd SS4.9.1). */
-      list() {
-        const out = [];
-        for (const id of this.#order) {
-          const item = this.#items.get(id);
-          if (item !== void 0)
-            out.push(item);
-        }
-        return out;
-      }
-      /** The id of the most recently opened item, or `undefined` when empty. */
-      lastOpenedItemId() {
-        return this.#order.at(-1);
-      }
-      get size() {
-        return this.#items.size;
-      }
-      /**
-       * Seed from a snapshot's `state.items` (tdd SS4.9.1): every item at its
-       * latest revision at the snapshot cursor, in first-opened order. Seeding
-       * REPLACES the store — a snapshot is authoritative (tdd SS4.9), never
-       * merged into stale local state.
-       *
-       * Delta accumulators are intentionally NOT seeded: a snapshot carries
-       * streamed fields at their accumulated-so-far values on the item itself,
-       * and `view/page` never replays ephemeral-sourced deltas (tdd SS4.7.3).
-       */
-      seed(items) {
-        this.#assertSessionActive();
-        this.#items.clear();
-        this.#deltas.clear();
-        this.#terminalUnknown.clear();
-        this.#order.length = 0;
-        for (const item of items) {
-          if (!this.#items.has(item.itemId))
-            this.#order.push(item.itemId);
-          this.#items.set(item.itemId, item);
-        }
-      }
-      /**
-       * Permanently discard an ephemeral session after abnormal host death.
-       *
-       * The last wire item remains byte-for-byte intact: terminal-unknown is a
-       * client display annotation, never a fabricated `item/completed` or wire
-       * status (SS2.13.3b / SS4.4.3). Further events and snapshot seeding are
-       * refused because this session has no resume surface.
-       */
-      markEphemeralHostDeath(isInProgress) {
-        if (!this.#ephemeralSessionDiscarded) {
-          for (const item of this.#items.values()) {
-            if (isInProgress(item))
-              this.#terminalUnknown.add(item.itemId);
-          }
-          this.#ephemeralSessionDiscarded = true;
-        }
-        return this.#order.filter((itemId) => this.#terminalUnknown.has(itemId)).map((itemId) => ({ kind: "terminalUnknown", itemId }));
-      }
-      isTerminalUnknown(itemId) {
-        return this.#terminalUnknown.has(itemId);
-      }
-      get ephemeralSessionDiscarded() {
-        return this.#ephemeralSessionDiscarded;
-      }
-      #assertSessionActive() {
-        if (this.#ephemeralSessionDiscarded) {
-          throw new MuseSessionDiscardedError("ephemeral session was discarded after abnormal host death");
-        }
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/fold/state-store.js
-var SessionStateStore;
-var init_state_store = __esm({
-  "node_modules/@muse-code/sdk/dist/src/fold/state-store.js"() {
-    SessionStateStore = class {
-      #values = /* @__PURE__ */ new Map();
-      #cursors = /* @__PURE__ */ new Map();
-      /**
-       * Apply a state event. `cursor` is the event's `viewCursor`; when omitted
-       * (a snapshot seed, which carries one cursor for the whole state) the value
-       * is taken unconditionally.
-       */
-      apply(family, value, cursor) {
-        const previous = this.#values.get(family);
-        if (cursor !== void 0) {
-          const seen = this.#cursors.get(family);
-          if (seen !== void 0 && cursor === seen) {
-            return {
-              family,
-              previous,
-              current: previous ?? null,
-              applied: false
-            };
-          }
-          this.#cursors.set(family, cursor);
-        }
-        this.#values.set(family, value);
-        return { family, previous, current: value, applied: true };
-      }
-      /**
-       * Read a family. `undefined` means no fact has ever landed — distinct from
-       * `null`, which means a fact cleared it. Absent is never fabricated
-       * (tdd SS4.9.1).
-       */
-      get(family) {
-        return this.#values.get(family);
-      }
-      has(family) {
-        return this.#values.has(family);
-      }
-      /** Every family that holds a value, in insertion order. */
-      families() {
-        return [...this.#values.keys()];
-      }
-      /** Seed from a snapshot's state block: authoritative, replaces wholesale. */
-      seed(entries, cursor) {
-        this.#values.clear();
-        this.#cursors.clear();
-        for (const [family, value] of entries) {
-          this.#values.set(family, value);
-          if (cursor !== void 0)
-            this.#cursors.set(family, cursor);
-        }
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/fold/session-fold.js
-var SessionFold;
-var init_session_fold = __esm({
-  "node_modules/@muse-code/sdk/dist/src/fold/session-fold.js"() {
-    init_item_store();
-    init_state_store();
-    SessionFold = class _SessionFold {
-      #itemStore = new ItemStore();
-      #sessionStateStore = new SessionStateStore();
-      /** Items, snapshot-only: the mutators are `apply()`'s, not the consumer's. */
-      get items() {
-        return this.#itemStore;
-      }
-      /**
-       * Discharge the SS2.13.3b ephemeral host-death obligation over the item
-       * half: every item still in progress becomes terminal-unknown and the fold
-       * refuses further events (spec FM-002; slice 3's T030b).
-       *
-       * A FOLD-level method rather than a `FoldItems` entry on purpose. `items` is
-       * snapshot-only — an allowlist whose whole job is that a store mutator can
-       * never leak onto the consumer surface (PR #23087 review round) — and this
-       * IS a mutator. Widening the allowlist to reach it would undo that; routing
-       * it here keeps exactly one caller (`Session.hostExited`) and leaves the
-       * read surface untouched. The in-progress probe stays the caller's, so the
-       * store remains wire-shape-blind (INV-001).
-       */
-      markEphemeralHostDeath(isInProgress) {
-        return this.#itemStore.markEphemeralHostDeath(isInProgress);
-      }
-      /**
-       * The session-state families, keyed by notification method name. Named
-       * `sessionState` rather than `state` because the surface contract reserves
-       * `state` for the FR-008 aggregate that arrives with snapshot ingestion.
-       * Snapshot-only, like `items`.
-       */
-      get sessionState() {
-        return this.#sessionStateStore;
-      }
-      #turns = /* @__PURE__ */ new Map();
-      #pendingApprovals = /* @__PURE__ */ new Map();
-      #resolvedApprovals = /* @__PURE__ */ new Map();
-      #pendingUserInputs = /* @__PURE__ */ new Map();
-      #settledUserInputs = /* @__PURE__ */ new Map();
-      #activeTurnId;
-      #pendingGap;
-      /** The turn currently running, if one is. */
-      get activeTurnId() {
-        return this.#activeTurnId;
-      }
-      /**
-       * The outstanding delivery hole, or `undefined` when there is none (tdd
-       * SS4.8, FM-003).
-       *
-       * COALESCED, keeping the FIRST `after`: consecutive overflows are one hole
-       * from a filler's point of view, which is the client mirror of the server's
-       * own D-16487-1 bracket rule. A recovery walks `(after, next)` and calls
-       * `gapFilled(next)` with the target it actually reached, so a hole that grew
-       * while the walk was in flight cannot be reported filled.
-       */
-      get pendingGap() {
-        return this.#pendingGap;
-      }
-      /**
-       * Is this fold current with the session view?
-       *
-       * FM-003's "only then reports current": false from the moment a `view/gap`
-       * folds until its hole is filled. Live events keep folding meanwhile — they
-       * are real facts and dropping them would add a second hole — so this flag is
-       * the ONLY statement that the transcript has a hole in it.
-       */
-      get current() {
-        return this.#pendingGap === void 0;
-      }
-      /**
-       * A recovery filled the hole up to `next`. Returns whether it cleared.
-       *
-       * EQUALITY, never a relational compare (tdd SS4.1): the argument is the
-       * target the walk reached, and it clears only when that is still the
-       * outstanding target. A gap that arrived mid-walk left a newer `next`, so
-       * this answers `false` and the fold stays not-current — the truthful answer,
-       * since the second hole is unfilled.
-       *
-       * A fold-level mutator with the same rationale as `markEphemeralHostDeath`:
-       * `items`/`sessionState` are snapshot-only allowlists, and this belongs to
-       * neither store.
-       */
-      gapFilled(next) {
-        if (this.#pendingGap?.next !== next)
-          return false;
-        this.#pendingGap = void 0;
-        return true;
-      }
-      apply(event) {
-        if (event.params === null || typeof event.params !== "object" || Array.isArray(event.params)) {
-          return { kind: "ignoredMissingParams", method: event.method };
-        }
-        const typed = event;
-        switch (typed.method) {
-          case "item/started":
-          case "item/updated":
-          case "item/completed":
-            return { kind: "item", outcome: this.#itemStore.apply(typed.params.item) };
-          case "item/delta":
-            return {
-              kind: "itemDelta",
-              outcome: this.#itemStore.applyDelta(typed.params.itemId, typed.params.delta, typed.params.field ?? "text")
-            };
-          case "turn/started":
-            return this.#turnStarted(typed.params);
-          case "turn/completed":
-            return this.#turnCompleted(typed.params);
-          case "turn/retracted":
-            return this.#turnRetracted(typed.params);
-          case "turn/unqueued":
-            return this.#turnUnqueued(typed.params);
-          case "turn/retryScheduled":
-            return this.#turnRetryScheduled(typed.params);
-          case "turn/foregroundCompleted":
-            return this.#turnForegroundCompleted(typed.params);
-          case "approval/requested":
-            return this.#approvalRequested(typed.params);
-          case "approval/updated":
-            return this.#approvalUpdated(typed.params);
-          case "approval/resolved":
-            return this.#approvalResolved(typed.params);
-          case "userInput/requested":
-            return this.#userInputRequested(typed.params);
-          case "userInput/settled":
-            return this.#userInputSettled(typed.params);
-          case "view/gap":
-            return this.#deliveryGap(typed.params);
-          case "session/modelRouteUnserved":
-            return { kind: "modelRouteUnserved", params: typed.params };
-          case "session/modelChanged":
-          case "session/reasoningEffortChanged":
-          case "session/goalChanged":
-          case "session/todoListChanged":
-          case "session/branchChanged":
-          case "session/tokenUsage":
-          case "session/contextUsage":
-          case "session/approvalModeChanged":
-          case "session/nameChanged":
-            return {
-              kind: "sessionState",
-              outcome: this.#sessionStateStore.apply(typed.method, typed.params, typed.params.viewCursor)
-            };
-          default: {
-            const unrecognized = event;
-            return { kind: "ignoredUnrecognizedMethod", method: unrecognized.method };
-          }
-        }
-      }
-      /** Turns in first-observed order. */
-      turns() {
-        return [...this.#turns.values()].map((turn) => _SessionFold.#turnSnapshot(turn));
-      }
-      turn(turnId) {
-        const held = this.#turns.get(turnId);
-        return held === void 0 ? void 0 : _SessionFold.#turnSnapshot(held);
-      }
-      /** Approvals awaiting a durable terminal, in first-observed order. */
-      pendingApprovals() {
-        return [...this.#pendingApprovals.entries()].map(([approvalId, held]) => ({
-          approvalId,
-          requested: held.requested,
-          ...held.latestUpdate !== void 0 ? { latestUpdate: held.latestUpdate } : {}
-        }));
-      }
-      /** The winning durable terminal per approval, in first-observed order. */
-      resolvedApprovals() {
-        return [...this.#resolvedApprovals.values()];
-      }
-      /**
-       * Prompts awaiting a durable settlement, in first-observed order. The
-       * entries ARE the generated request params — the wire shape already carries
-       * `userInputId`, so a wrapper would only duplicate it (unlike
-       * `PendingApproval`, which earns its wrapper with `latestUpdate`).
-       */
-      pendingUserInputs() {
-        return [...this.#pendingUserInputs.values()];
-      }
-      /** The winning durable settlement per prompt, in first-observed order. */
-      settledUserInputs() {
-        return [...this.#settledUserInputs.values()];
-      }
-      // ---- turn lifecycle -----------------------------------------------------
-      #turnStarted(params) {
-        const turn = this.#turnFor(params.turnId);
-        if (turn.state !== "running") {
-          return { kind: "ignoredStaleFrame", method: "turn/started", id: params.turnId };
-        }
-        turn.commandId = params.commandId;
-        turn.state = "running";
-        this.#activeTurnId = params.turnId;
-        return { kind: "turn", turnId: params.turnId, state: turn.state };
-      }
-      #turnCompleted(params) {
-        const turn = this.#turnFor(params.turnId);
-        if (turn.state === "retracted" || turn.state === "unqueued") {
-          return { kind: "ignoredStaleFrame", method: "turn/completed", id: params.turnId };
-        }
-        turn.state = "settled";
-        turn.terminal = params.terminal;
-        if (params.error !== void 0)
-          turn.error = params.error;
-        turn.retryScheduled = void 0;
-        turn.foregroundCompleted = void 0;
-        this.#clearActive(params.turnId);
-        return { kind: "turn", turnId: params.turnId, state: turn.state };
-      }
-      #turnRetracted(params) {
-        const turn = this.#turnFor(params.turnId);
-        turn.commandId = params.commandId;
-        turn.state = "retracted";
-        this.#clearActive(params.turnId);
-        return { kind: "turn", turnId: params.turnId, state: turn.state };
-      }
-      #turnUnqueued(params) {
-        const turn = this.#turnFor(params.turnId);
-        turn.commandId = params.commandId;
-        turn.state = "unqueued";
-        this.#clearActive(params.turnId);
-        return { kind: "turn", turnId: params.turnId, state: turn.state };
-      }
-      #turnRetryScheduled(params) {
-        const turn = this.#turnFor(params.turnId);
-        if (turn.state !== "running") {
-          return { kind: "ignoredStaleFrame", method: "turn/retryScheduled", id: params.turnId };
-        }
-        turn.retryScheduled = params;
-        return { kind: "turn", turnId: params.turnId, state: turn.state };
-      }
-      #turnForegroundCompleted(params) {
-        const turn = this.#turnFor(params.turnId);
-        if (turn.state !== "running") {
-          return { kind: "ignoredStaleFrame", method: "turn/foregroundCompleted", id: params.turnId };
-        }
-        turn.foregroundCompleted = params;
-        return { kind: "turn", turnId: params.turnId, state: turn.state };
-      }
-      #turnFor(turnId) {
-        const held = this.#turns.get(turnId);
-        if (held !== void 0)
-          return held;
-        const fresh = { turnId, state: "running" };
-        this.#turns.set(turnId, fresh);
-        return fresh;
-      }
-      #clearActive(turnId) {
-        if (this.#activeTurnId === turnId)
-          this.#activeTurnId = void 0;
-      }
-      static #turnSnapshot(turn) {
-        return {
-          turnId: turn.turnId,
-          state: turn.state,
-          ...turn.commandId !== void 0 ? { commandId: turn.commandId } : {},
-          ...turn.terminal !== void 0 ? { terminal: turn.terminal } : {},
-          ...turn.error !== void 0 ? { error: turn.error } : {},
-          ...turn.retryScheduled !== void 0 ? { retryScheduled: turn.retryScheduled } : {},
-          ...turn.foregroundCompleted !== void 0 ? { foregroundCompleted: turn.foregroundCompleted } : {}
-        };
-      }
-      // ---- the delivery-plane marker ------------------------------------------
-      #deliveryGap(params) {
-        this.#pendingGap = {
-          after: this.#pendingGap?.after ?? params.after,
-          next: params.next,
-          sessionId: params.sessionId
-        };
-        return { after: params.after, kind: "deliveryGap", next: params.next };
-      }
-      // ---- approvals and user input as fold inputs ----------------------------
-      #approvalRequested(params) {
-        if (this.#resolvedApprovals.has(params.approvalId)) {
-          return { kind: "ignoredStaleFrame", method: "approval/requested", id: params.approvalId };
-        }
-        this.#pendingApprovals.set(params.approvalId, { requested: params });
-        return { kind: "approvalPending", approvalId: params.approvalId, requested: params };
-      }
-      #approvalUpdated(params) {
-        const held = this.#pendingApprovals.get(params.approvalId);
-        if (held === void 0) {
-          return { kind: "ignoredStaleFrame", method: "approval/updated", id: params.approvalId };
-        }
-        held.latestUpdate = params;
-        return { kind: "approvalPending", approvalId: params.approvalId, requested: held.requested };
-      }
-      #approvalResolved(params) {
-        this.#pendingApprovals.delete(params.approvalId);
-        const firstTerminal = !this.#resolvedApprovals.has(params.approvalId);
-        if (firstTerminal)
-          this.#resolvedApprovals.set(params.approvalId, params);
-        return { kind: "approvalResolved", approvalId: params.approvalId, firstTerminal };
-      }
-      #userInputRequested(params) {
-        if (this.#settledUserInputs.has(params.userInputId)) {
-          return { kind: "ignoredStaleFrame", method: "userInput/requested", id: params.userInputId };
-        }
-        this.#pendingUserInputs.set(params.userInputId, params);
-        return { kind: "userInputPending", userInputId: params.userInputId };
-      }
-      #userInputSettled(params) {
-        this.#pendingUserInputs.delete(params.userInputId);
-        const firstSettlement = !this.#settledUserInputs.has(params.userInputId);
-        if (firstSettlement)
-          this.#settledUserInputs.set(params.userInputId, params);
-        return { kind: "userInputSettled", userInputId: params.userInputId, firstSettlement };
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/pending/pending-command-set.js
-var COMMAND_REJECTED_CODE, COMMAND_REJECTED_KIND, QUEUED_DISPOSITION, PendingCommandSet;
-var init_pending_command_set = __esm({
-  "node_modules/@muse-code/sdk/dist/src/pending/pending-command-set.js"() {
-    init_errors();
-    COMMAND_REJECTED_CODE = -32030;
-    COMMAND_REJECTED_KIND = "commandRejected";
-    QUEUED_DISPOSITION = "queued";
-    PendingCommandSet = class _PendingCommandSet {
-      #entries = /* @__PURE__ */ new Map();
-      #ephemeralDiscardedCommandIds;
-      #discarded = false;
-      #nextSubmissionIndex = 0;
-      constructor(options) {
-        this.#ephemeralDiscardedCommandIds = options?.discardedCommandIds ?? /* @__PURE__ */ new Set();
-      }
-      /**
-       * Record a submission. `anchorAfterItemId` is the last item present in the
-       * client's fold right now (SS4.13 insertion point).
-       */
-      submitted(params) {
-        this.#assertNotEphemeralReplay(params.commandId);
-        this.#assertSessionActive();
-        if (this.#entries.has(params.commandId)) {
-          return;
-        }
-        const entry = {
-          commandId: params.commandId,
-          input: params.input,
-          anchorAfterItemId: params.anchorAfterItemId ?? null,
-          submissionIndex: this.#nextSubmissionIndex++
-        };
-        if (params.displayText !== void 0)
-          entry.displayText = params.displayText;
-        this.#entries.set(params.commandId, entry);
-      }
-      /** The submit (or a replay) was acked. */
-      acked(commandId, ack) {
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return;
-        entry.ack = ack;
-      }
-      /**
-       * The submit (or a replay) answered with an error.
-       *
-       * Only a durable `commandRejected` (-32030) is a settlement. Every other
-       * error admits nothing — the other SS3.1.2 admission errors and SS1's
-       * envelope errors, `inputTooLarge` among them — so the entry HOLDS while
-       * the client retries with the same `commandId` (SS4.13 "Nothing-admitted
-       * errors are not settlements").
-       */
-      ackErrored(commandId, error) {
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return "held";
-        if (!_PendingCommandSet.isSettlement(error))
-          return "held";
-        return this.#retire(entry, this.#rejectionRetirement(entry, error));
-      }
-      /**
-       * The client has decided to stop retrying a nothing-admitted error. The
-       * entry must not linger as a durable-looking echo (SS4.13).
-       */
-      stopRetrying(commandId) {
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return void 0;
-        return this.#retire(entry, {
-          kind: "retryAbandonedByClient",
-          commandId,
-          input: entry.input,
-          restoreToComposer: true
-        });
-      }
-      /**
-       * A `userMessage` item carrying this `commandId` folded in: the entry
-       * materialized and the item replaces it at the item's own transcript
-       * position (SS4.13 "Materialized").
-       *
-       * Multi-client echo de-duplication falls out of the same join: a
-       * `userMessage` with no matching local entry is another client's
-       * submission — this returns `undefined` and the caller renders it plainly.
-       */
-      observedUserMessage(commandId, itemId) {
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return void 0;
-        return this.#retire(entry, { kind: "materialized", commandId, matchedBy: "userMessage", itemId });
-      }
-      /**
-       * A reclaim this client actually observed (its own reclaim ack, or any live
-       * fold D-024's lane charters). Retire immediately — same composer restore,
-       * without waiting for a snapshot join (SS4.13 "Reclaimed").
-       */
-      observedReclaim(commandId) {
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return void 0;
-        return this.#retire(entry, {
-          kind: "reclaimed",
-          commandId,
-          input: entry.input,
-          restoreToComposer: true
-        });
-      }
-      /**
-       * Queue movement: a `turn/started` or `turn/completed` for a turn that is
-       * NOT the entry's own.
-       *
-       * SS4.3 carries no view event for a command-intake settlement, so a
-       * post-ack rejection reaches a live client only by replay: on each such
-       * event a client holding an acked-QUEUED entry MUST re-verify it by
-       * replaying its `commandId`. Queue movement is the trigger precisely
-       * because a queued turn's fate is decided at its launch boundary — no
-       * polling loop and no invented timeout (SS3.1.3 stays intact).
-       *
-       * @returns the `commandId`s the caller must replay.
-       */
-      observedQueueMovement(turnId) {
-        const out = [];
-        for (const entry of this.#entries.values()) {
-          if (entry.ack === void 0)
-            continue;
-          if (entry.ack.disposition !== QUEUED_DISPOSITION)
-            continue;
-          if (entry.ack.turnId === turnId)
-            continue;
-          out.push(entry.commandId);
-        }
-        return out;
-      }
-      /**
-       * Feed back a `commandId` replay answer (SS3.1.1 — always safe).
-       *
-       * Three shapes, per SS4.13's rejected/abandoned arms:
-       *  - a durable rejection: retire (reason `"abandoned"` → Abandoned arm,
-       *    any other reason → Rejected arm);
-       *  - the original ack, still pending: keep waiting;
-       *  - an ack whose staleness only a snapshot can prove: keep waiting — the
-       *    reclaimed signature needs `queuedTurns` in hand (`joinSnapshot`).
-       */
-      replayAnswered(commandId, answer) {
-        this.#assertNotEphemeralReplay(commandId);
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return "held";
-        if (answer.kind === "ack") {
-          entry.ack = answer.ack;
-          return "held";
-        }
-        if (!_PendingCommandSet.isSettlement(answer.error))
-          return "held";
-        return this.#retire(entry, this.#rejectionRetirement(entry, answer.error));
-      }
-      /**
-       * Reconnect with NO snapshot (`history.mode: "none"`, the default
-       * cursor-resume path). There is no join to run, so reconnect itself is the
-       * trigger: replay each ACKED entry's `commandId` once; resubmit each
-       * UNACKED entry's same `commandId` once before any retire-to-composer.
-       *
-       * Without `queuedTurns` in hand the reclaimed signature is undecidable, so
-       * a stale `"queued"` ack waits for the next snapshot join or queue
-       * movement — never a locally invented terminal.
-       */
-      reconnectedWithoutSnapshot() {
-        const mustReplay = [];
-        const mustResubmit = [];
-        for (const entry of this.#ordered()) {
-          if (entry.ack === void 0) {
-            mustResubmit.push(entry.commandId);
-          } else {
-            mustReplay.push(entry.commandId);
-          }
-        }
-        return {
-          retirements: [],
-          mustReplay,
-          mustResubmit,
-          kept: this.#ordered().map((e) => e.commandId)
-        };
-      }
-      /**
-       * Join local entries against an authoritative snapshot (SS4.9), by
-       * `commandId`. The five arms, in the order SS4.13 states them.
-       */
-      joinSnapshot(facts) {
-        const retirements = [];
-        const mustReplay = [];
-        const mustResubmit = [];
-        const userMessageItemByCommandId = /* @__PURE__ */ new Map();
-        for (const pair of facts.userMessageCommandIds) {
-          userMessageItemByCommandId.set(pair.commandId, pair.itemId);
-        }
-        const queuedIndexByCommandId = /* @__PURE__ */ new Map();
-        facts.queuedTurns.forEach((q, index) => queuedIndexByCommandId.set(q.commandId, index));
-        for (const entry of this.#ordered()) {
-          const { commandId } = entry;
-          const userMessageItemId = userMessageItemByCommandId.get(commandId);
-          if (userMessageItemId !== void 0) {
-            retirements.push(this.#retire(entry, {
-              kind: "materialized",
-              commandId,
-              matchedBy: "userMessage",
-              itemId: userMessageItemId
-            }));
-            continue;
-          }
-          if (facts.activeTurn?.commandId === commandId) {
-            retirements.push(this.#retire(entry, { kind: "materialized", commandId, matchedBy: "activeTurn" }));
-            continue;
-          }
-          const queuedIndex = queuedIndexByCommandId.get(commandId);
-          if (queuedIndex !== void 0) {
-            entry.queuedOrder = queuedIndex;
-            entry.anchorAfterItemId = facts.lastItemId;
-            continue;
-          }
-          if (entry.ack !== void 0 && facts.activeTurn !== null && entry.ack.turnId === facts.activeTurn.turnId) {
-            continue;
-          }
-          if (entry.ack !== void 0) {
-            mustReplay.push(commandId);
-            continue;
-          }
-          mustResubmit.push(commandId);
-        }
-        return {
-          retirements,
-          mustReplay,
-          mustResubmit,
-          kept: this.#ordered().map((e) => e.commandId)
-        };
-      }
-      /**
-       * The reclaimed signature, decidable only with a snapshot in hand: an
-       * acked-queued entry ABSENT from the snapshot's `queuedTurns` whose replay
-       * still answers the stale `"queued"` ack retires as *reclaimed* at the
-       * snapshot join (SS4.13 "Reclaimed").
-       *
-       * Call this with the replay answer for a `mustReplay` entry produced by
-       * `joinSnapshot`, passing the same snapshot's `queuedTurns` commandIds.
-       */
-      resolveReplayAtJoin(commandId, answer, snapshotQueuedCommandIds) {
-        this.#assertNotEphemeralReplay(commandId);
-        const entry = this.#entries.get(commandId);
-        if (entry === void 0)
-          return "held";
-        if (answer.kind === "error") {
-          if (!_PendingCommandSet.isSettlement(answer.error))
-            return "held";
-          return this.#retire(entry, this.#rejectionRetirement(entry, answer.error));
-        }
-        const stillQueuedByServer = new Set(snapshotQueuedCommandIds).has(commandId);
-        if (answer.ack.disposition === QUEUED_DISPOSITION && !stillQueuedByServer) {
-          return this.#retire(entry, {
-            kind: "reclaimed",
-            commandId,
-            input: entry.input,
-            restoreToComposer: true
-          });
-        }
-        entry.ack = answer.ack;
-        return "held";
-      }
-      /**
-       * Abnormal death of an EPHEMERAL-profile host (SS2.13, SS4.4.3 carve-out):
-       * nothing is ever settled, replaying a `commandId` at a new host is
-       * forbidden, and every entry falls under the discard obligation as
-       * terminal-unknown — a client-side annotation, never a wire fact.
-       */
-      discardEphemeral() {
-        const out = [];
-        for (const entry of this.#ordered()) {
-          this.#ephemeralDiscardedCommandIds.add(entry.commandId);
-          out.push(this.#retire(entry, {
-            kind: "terminalUnknown",
-            commandId: entry.commandId,
-            input: entry.input
-          }));
-        }
-        this.#discarded = true;
-        return out;
-      }
-      /** Has the ephemeral discard closed this set? */
-      get discarded() {
-        return this.#discarded;
-      }
-      #assertSessionActive() {
-        if (this.#discarded) {
-          throw new MuseSessionDiscardedError("ephemeral session was discarded after abnormal host death; it accepts no new submissions");
-        }
-      }
-      #assertNotEphemeralReplay(commandId) {
-        if (this.#ephemeralDiscardedCommandIds.has(commandId)) {
-          throw new MuseSessionDiscardedError(`ephemeral host died; commandId \`${commandId}\` cannot be replayed against a new host`);
-        }
-      }
-      /**
-       * Entries in render order.
-       *
-       * Before any join this is submission order. After a join, entries the
-       * server confirmed queued are re-anchored to the end of the reconciled
-       * fold and ordered among themselves by `queuedTurns` — so they sort after
-       * the submission-anchored entries (steers and unacked), which keep their
-       * own anchors. That is SS4.13's "entries render in submission order, and
-       * for queued submits the server-confirmed order wins whenever it is
-       * observed".
-       */
-      list() {
-        return this.#ordered().map((entry) => {
-          const out = {
-            commandId: entry.commandId,
-            input: entry.input,
-            anchorAfterItemId: entry.anchorAfterItemId,
-            submissionIndex: entry.submissionIndex,
-            ...entry.displayText !== void 0 ? { displayText: entry.displayText } : {},
-            ...entry.ack !== void 0 ? { ack: entry.ack } : {},
-            ...entry.queuedOrder !== void 0 ? { queuedOrder: entry.queuedOrder } : {}
-          };
-          return out;
-        });
-      }
-      get(commandId) {
-        return this.list().find((e) => e.commandId === commandId);
-      }
-      has(commandId) {
-        return this.#entries.has(commandId);
-      }
-      get size() {
-        return this.#entries.size;
-      }
-      /**
-       * Only a durable `commandRejected` (-32030) settles a command. Everything
-       * else admitted nothing (SS4.13).
-       *
-       * The registry binds `-32030` <-> `commandRejected` one-to-one (SS3.1.2
-       * Appendix B), so a response where the two fields DISAGREE is a server
-       * fault in which one field still asserts the durable rejection. Either
-       * signal settles (OR): SS3.1.2's stated bias for unfamiliar vocabulary is
-       * toward terminal ("treat unknown reasons as terminal rejections"), and
-       * holding forever on a half-asserted rejection strands the entry as the
-       * durable-looking echo SS4.13 forbids.
-       */
-      static isSettlement(error) {
-        return error.code === COMMAND_REJECTED_CODE || error.kind === COMMAND_REJECTED_KIND;
-      }
-      #rejectionRetirement(entry, error) {
-        const reason = error.reason ?? "";
-        if (reason === "abandoned") {
-          return {
-            kind: "abandoned",
-            commandId: entry.commandId,
-            input: entry.input,
-            restoreToComposer: true
-          };
-        }
-        return {
-          kind: "rejected",
-          commandId: entry.commandId,
-          reason,
-          input: entry.input,
-          restoreToComposer: true
-        };
-      }
-      #retire(entry, retirement) {
-        this.#entries.delete(entry.commandId);
-        return retirement;
-      }
-      #ordered() {
-        const submissionAnchored = [];
-        const launchOrdered = [];
-        for (const entry of this.#entries.values()) {
-          (entry.queuedOrder === void 0 ? submissionAnchored : launchOrdered).push(entry);
-        }
-        submissionAnchored.sort((a, b) => a.submissionIndex - b.submissionIndex);
-        launchOrdered.sort((a, b) => (a.queuedOrder ?? 0) - (b.queuedOrder ?? 0));
-        return [...submissionAnchored, ...launchOrdered];
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/connection/connection.js
-import { createHash as createHash5 } from "node:crypto";
-function requestKey(id) {
-  return `${typeof id === "number" ? "number" : "string"}:${String(id)}`;
-}
-function utf8ByteLength(text2) {
-  let bytes = 0;
-  for (const scalar of text2) {
-    const point = scalar.codePointAt(0);
-    bytes += point <= 127 ? 1 : point <= 2047 ? 2 : point <= 65535 ? 3 : 4;
-  }
-  return bytes;
-}
-function truncateToUtf8Bytes(text2, limitBytes) {
-  let bytes = 0;
-  let end = 0;
-  for (const scalar of text2) {
-    const point = scalar.codePointAt(0);
-    const width = point <= 127 ? 1 : point <= 2047 ? 2 : point <= 65535 ? 3 : 4;
-    if (bytes + width > limitBytes)
-      break;
-    bytes += width;
-    end += scalar.length;
-  }
-  return text2.slice(0, end);
-}
-function canonical(value) {
-  if (Array.isArray(value))
-    return `[${value.map(canonical).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    const object4 = value;
-    return `{${Object.keys(object4).sort().map((key) => `${JSON.stringify(key)}:${canonical(object4[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-function fingerprint2(canonicalForm) {
-  return createHash5("sha256").update(canonicalForm, "utf8").digest("hex");
-}
-function createUuidV7Mint() {
-  let lastMs = -1;
-  let sequence = 0;
-  return () => {
-    let now = Date.now();
-    if (now <= lastMs) {
-      now = lastMs;
-      sequence += 1;
-      if (sequence > 4095) {
-        now += 1;
-        sequence = 0;
-      }
-    } else {
-      sequence = 0;
-    }
-    lastMs = now;
-    const bytes = new Uint8Array(16);
-    globalThis.crypto.getRandomValues(bytes);
-    let timestamp3 = now;
-    for (let index = 5; index >= 0; index -= 1) {
-      bytes[index] = timestamp3 & 255;
-      timestamp3 = Math.floor(timestamp3 / 256);
-    }
-    bytes[6] = 112 | sequence >> 8 & 15;
-    bytes[7] = sequence & 255;
-    bytes[8] = bytes[8] & 63 | 128;
-    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-  };
-}
-async function defaultRetryDelay(attempt) {
-  const ceilingMs = Math.min(2e3, 50 * 2 ** Math.max(0, attempt - 1));
-  const delayMs = Math.floor(Math.random() * (ceilingMs + 1));
-  await new Promise((resolve2) => setTimeout(resolve2, delayMs));
-}
-function isObject(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-var DEFAULT_FRAME_LIMIT_BYTES, submissionTail, requestWithFrame, MspError, ProtocolError, Connection;
-var init_connection = __esm({
-  "node_modules/@muse-code/sdk/dist/src/connection/connection.js"() {
-    DEFAULT_FRAME_LIMIT_BYTES = 10485760;
-    submissionTail = /* @__PURE__ */ Symbol("Connection.submissionTail");
-    requestWithFrame = /* @__PURE__ */ Symbol("Connection.requestWithFrame");
-    MspError = class extends Error {
-      code;
-      kind;
-      data;
-      retryable;
-      constructor(error) {
-        super(error.message);
-        this.name = "MspError";
-        this.code = error.code;
-        this.kind = error.data?.kind ?? "unknown";
-        this.data = error.data === void 0 ? {} : { ...error.data };
-        this.retryable = error.data?.retryable;
-      }
-    };
-    ProtocolError = class extends Error {
-      /**
-       * The inbound frame (wire line) the violation was detected on, when there
-       * is one — the whole line, e.g. the response a pending request refused;
-       * an oversized frame is cut to the frame limit. Absent for local state
-       * errors (closed connection, EOF) that no frame caused.
-       */
-      line;
-      constructor(message, line) {
-        super(message);
-        this.name = "ProtocolError";
-        this.line = line;
-      }
-    };
-    Connection = class {
-      #transport;
-      #frameLimitBytes;
-      #mintCommandId;
-      #mintRequestId;
-      #pending = /* @__PURE__ */ new Map();
-      #commands = /* @__PURE__ */ new Map();
-      #nextRequestId = 1;
-      #serverRequestHandler;
-      #notificationHandler;
-      #protocolErrorHandler;
-      #writeTail = Promise.resolve();
-      // Settles when every accepted frame has been HANDED to the transport, as
-      // opposed to #writeTail, which settles when the peer has taken it.
-      #submitTail = Promise.resolve();
-      #writeFailure;
-      #buffer = "";
-      #bufferBytes = 0;
-      // FR-012: incremental accounting — never a full-buffer rescan per chunk
-      // FR-012: the last UTF-16 unit of #buffer (-1 when empty), maintained from each
-      // fresh chunk so the surrogate-pair reconciliation below never READS #buffer on
-      // the hot no-newline path — reading it (charCodeAt/indexOf/regex) flattens the
-      // V8 rope and copies the whole buffer per chunk, the O(bytes^2) this FR bans.
-      #bufferTailCode = -1;
-      #droppingOversized = false;
-      #finished = false;
-      #closedPromise;
-      #resolveClosed;
-      constructor(transport, options) {
-        this.#transport = transport;
-        this.#frameLimitBytes = options?.frameLimitBytes ?? DEFAULT_FRAME_LIMIT_BYTES;
-        this.#mintCommandId = options?.mintCommandId ?? createUuidV7Mint();
-        this.#mintRequestId = options?.mintRequestId ?? (() => {
-          const id = this.#nextRequestId;
-          this.#nextRequestId += 1;
-          return id;
-        });
-        this.#closedPromise = new Promise((resolve2) => {
-          this.#resolveClosed = resolve2;
-        });
-        void this.#readLoop();
-      }
-      get closed() {
-        return this.#closedPromise;
-      }
-      /** See {@link submissionTail}. */
-      [submissionTail]() {
-        return this.#submitTail;
-      }
-      request(method, params) {
-        return this.#request(method, params).then((framed) => framed.result);
-      }
-      /** See {@link requestWithFrame}. */
-      [requestWithFrame](method, params) {
-        return this.#request(method, params);
-      }
-      #request(method, params) {
-        if (this.#finished)
-          return Promise.reject(new ProtocolError("connection is closed"));
-        const id = this.#mintRequestId();
-        if (typeof id !== "string" && (typeof id !== "number" || !Number.isInteger(id))) {
-          return Promise.reject(new ProtocolError("request id must be a string or integer"));
-        }
-        if (this.#pending.has(requestKey(id))) {
-          return Promise.reject(new ProtocolError(`request id ${String(id)} is already in flight`));
-        }
-        const request = {
-          jsonrpc: "2.0",
-          id,
-          method,
-          ...params === void 0 ? {} : { params }
-        };
-        return new Promise((resolve2, reject) => {
-          this.#pending.set(requestKey(id), {
-            resolve: (result, line) => resolve2({ result, line }),
-            reject
-          });
-          void this.#write(request).catch((error) => {
-            this.#pending.delete(requestKey(id));
-            reject(error);
-          });
-        });
-      }
-      /**
-       * Take one id from THIS connection's single `commandId` minter (INV-013).
-       *
-       * Exposed for the callers that need the id BEFORE the ack: `sendUserTurn`
-       * records its optimistic SS4.13 entry under it, and an entry created only on
-       * the ack is invisible for exactly the window it exists to cover. The
-       * alternative was a facade-side mint, which is the second minter INV-013
-       * forbids — delegating here keeps the single-minter property intact and
-       * preserves the injected `mintCommandId` seam for deterministic transcripts.
-       *
-       * Pair it with `command(..., { commandId })`, which reuses the id instead of
-       * minting a second one.
-       */
-      mintCommandId() {
-        return this.#mintCommandId();
-      }
-      notify(method, params) {
-        const notification = {
-          jsonrpc: "2.0",
-          method,
-          ...params === void 0 ? {} : { params }
-        };
-        void this.#write(notification).catch((error) => this.#finish(error));
-      }
-      onServerRequest(handler) {
-        this.#serverRequestHandler = handler;
-      }
-      onNotification(handler) {
-        this.#notificationHandler = handler;
-      }
-      onProtocolError(handler) {
-        this.#protocolErrorHandler = handler;
-      }
-      async flush() {
-        await this.#writeTail;
-        if (this.#writeFailure !== void 0)
-          throw this.#writeFailure;
-      }
-      async command(method, params, options) {
-        const commandId = options?.commandId ?? this.#mintCommandId();
-        const commandParams = { ...params, commandId };
-        const signature = fingerprint2(canonical({ method, params: commandParams }));
-        const memory = this.#commands.get(commandId);
-        if (memory !== void 0 && memory.signature !== signature) {
-          throw new ProtocolError(`commandId ${commandId} was reused with a different payload`);
-        }
-        const remembered = memory ?? { signature };
-        this.#commands.set(commandId, remembered);
-        const maxAttempts = Math.max(1, options?.maxAttempts ?? 3);
-        const retryDelay = options?.retryDelay ?? defaultRetryDelay;
-        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-          try {
-            const ack = await this.request(method, commandParams);
-            if (ack["commandId"] !== void 0 && ack["commandId"] !== commandId) {
-              throw new ProtocolError(`${method} ack commandId ${String(ack["commandId"])} did not echo ${commandId}`);
-            }
-            const ackFingerprint = fingerprint2(canonical(ack));
-            if (remembered.ack !== void 0 && remembered.ack !== ackFingerprint) {
-              throw new ProtocolError(`${method} replay for commandId ${commandId} did not return a value-identical ack`);
-            }
-            remembered.ack = ackFingerprint;
-            return ack;
-          } catch (error) {
-            const retryableNothingAdmitted = error instanceof MspError && (error.code === -32001 && error.kind === "overloaded" || error.code === -32031 && error.kind === "backpressured");
-            if (!retryableNothingAdmitted || attempt === maxAttempts)
-              throw error;
-            await retryDelay(attempt, error);
-          }
-        }
-        throw new ProtocolError("unreachable command retry state");
-      }
-      async close() {
-        const tail = this.#writeTail;
-        if (this.#transport.close !== void 0) {
-          await this.#transport.close(this.#submitTail);
-          await tail;
-        } else {
-          this.#finish(new ProtocolError("connection closed"));
-        }
-        await this.#closedPromise;
-      }
-      async #write(frame) {
-        if (this.#finished)
-          throw new ProtocolError("connection is closed");
-        const line = `${JSON.stringify(frame)}
-`;
-        let markSubmitted;
-        const submitted = new Promise((resolve2) => {
-          markSubmitted = resolve2;
-        });
-        this.#submitTail = this.#submitTail.then(() => submitted);
-        const write = this.#writeTail.then(async () => {
-          try {
-            if (this.#finished)
-              throw new ProtocolError("connection is closed");
-            const inFlight = this.#transport.write(line);
-            markSubmitted();
-            await inFlight;
-          } catch (error) {
-            markSubmitted();
-            throw error;
-          }
-        });
-        this.#writeTail = write.catch((error) => {
-          this.#writeFailure = error;
-          this.#finish(error);
-        });
-        await write;
-      }
-      async #readLoop() {
-        try {
-          for await (const chunk of this.#transport.incoming)
-            this.#ingest(chunk);
-          if (!this.#droppingOversized && this.#buffer.length > 0) {
-            this.#protocolError(new ProtocolError("inbound frame ended without a newline", this.#buffer));
-          }
-          this.#finish(new ProtocolError("connection reached EOF"));
-        } catch (error) {
-          this.#finish(error);
-        }
-      }
-      #ingest(chunk) {
-        let remaining = chunk;
-        if (this.#droppingOversized) {
-          const newline = remaining.indexOf("\n");
-          if (newline < 0)
-            return;
-          this.#droppingOversized = false;
-          remaining = remaining.slice(newline + 1);
-        }
-        if (remaining.length === 0)
-          return;
-        const chunkHead = remaining.charCodeAt(0);
-        if (this.#bufferTailCode >= 55296 && this.#bufferTailCode <= 56319 && chunkHead >= 56320 && chunkHead <= 57343) {
-          this.#bufferBytes -= 2;
-        }
-        this.#buffer += remaining;
-        this.#bufferBytes += utf8ByteLength(remaining);
-        this.#bufferTailCode = remaining.charCodeAt(remaining.length - 1);
-        if (remaining.includes("\n")) {
-          while (true) {
-            const newline = this.#buffer.indexOf("\n");
-            if (newline < 0)
-              break;
-            const line = this.#buffer.slice(0, newline);
-            this.#buffer = this.#buffer.slice(newline + 1);
-            this.#bufferBytes -= utf8ByteLength(line) + 1;
-            this.#line(line);
-          }
-        }
-        if (this.#bufferBytes > this.#frameLimitBytes) {
-          this.#protocolError(new ProtocolError(`inbound frame exceeds ${this.#frameLimitBytes} bytes`, truncateToUtf8Bytes(this.#buffer, this.#frameLimitBytes)));
-          this.#buffer = "";
-          this.#bufferBytes = 0;
-          this.#bufferTailCode = -1;
-          this.#droppingOversized = true;
-        }
-      }
-      #line(raw) {
-        const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
-        if (line.trim().length === 0)
-          return;
-        if (utf8ByteLength(line) > this.#frameLimitBytes) {
-          this.#protocolError(new ProtocolError(`inbound frame exceeds ${this.#frameLimitBytes} bytes`, truncateToUtf8Bytes(line, this.#frameLimitBytes)));
-          return;
-        }
-        let parsed;
-        try {
-          parsed = JSON.parse(line);
-        } catch {
-          this.#protocolError(new ProtocolError("inbound frame is not valid JSON", line));
-          return;
-        }
-        if (!isObject(parsed) || parsed["jsonrpc"] !== "2.0") {
-          this.#protocolError(new ProtocolError("inbound frame is not a JSON-RPC 2.0 object", line));
-          return;
-        }
-        const method = parsed["method"];
-        const id = parsed["id"];
-        if (typeof method === "string") {
-          if (typeof id === "string" || typeof id === "number") {
-            if (typeof id !== "number" || !Number.isInteger(id) || id <= 0) {
-              this.#protocolError(new ProtocolError("server request id must be a positive integer", line));
-              return;
-            }
-            void this.#serverRequest(parsed).catch((error) => {
-              this.#finish(error);
-            });
-            return;
-          }
-          this.#notificationHandler?.(parsed);
-          return;
-        }
-        if (typeof id !== "string" && typeof id !== "number") {
-          this.#protocolError(new ProtocolError("response has no usable id", line));
-          return;
-        }
-        this.#response(parsed, id, line);
-      }
-      #response(frame, id, line) {
-        const pending = this.#pending.get(requestKey(id));
-        if (pending === void 0) {
-          this.#protocolError(new ProtocolError(`response for unknown request id ${String(id)}`, line));
-          return;
-        }
-        const hasResult = Object.hasOwn(frame, "result");
-        const hasError = Object.hasOwn(frame, "error");
-        if (hasResult === hasError) {
-          const violation = new ProtocolError("response must carry exactly one of result or error", line);
-          this.#pending.delete(requestKey(id));
-          pending.reject(violation);
-          this.#protocolError(violation);
-          return;
-        }
-        this.#pending.delete(requestKey(id));
-        if (hasResult) {
-          const result = frame["result"];
-          if (!isObject(result)) {
-            pending.reject(new ProtocolError("response result must be an object", line));
-            return;
-          }
-          pending.resolve(result, line);
-          return;
-        }
-        const error = frame["error"];
-        if (!isObject(error) || typeof error["code"] !== "number" || !Number.isInteger(error["code"]) || typeof error["message"] !== "string") {
-          pending.reject(new ProtocolError("error response has an invalid error object", line));
-          return;
-        }
-        const data = error["data"];
-        if (!isObject(data) || typeof data["kind"] !== "string") {
-          pending.reject(new ProtocolError("MSP error response has no data.kind", line));
-          return;
-        }
-        pending.reject(new MspError({
-          code: error["code"],
-          message: error["message"],
-          data
-        }));
-      }
-      async #serverRequest(request) {
-        const id = request.id;
-        try {
-          if (this.#serverRequestHandler === void 0) {
-            throw new MspError({
-              code: -32601,
-              message: `method not found: ${request.method}`,
-              data: { kind: "methodNotFound", retryable: false }
-            });
-          }
-          const result = await this.#serverRequestHandler(request);
-          await this.#write({ jsonrpc: "2.0", id, result }).catch((writeError) => this.#finish(writeError));
-        } catch (error) {
-          const typed = error instanceof MspError ? error : new MspError({
-            code: -32603,
-            message: error instanceof Error ? error.message : "server request handler failed",
-            data: { kind: "internal" }
-          });
-          await this.#write({
-            jsonrpc: "2.0",
-            id,
-            error: {
-              code: typed.code,
-              message: typed.message,
-              data: typed.data
-            }
-          }).catch((writeError) => this.#finish(writeError));
-        }
-      }
-      #protocolError(error) {
-        this.#protocolErrorHandler?.(error);
-      }
-      #finish(reason) {
-        if (this.#finished)
-          return;
-        this.#finished = true;
-        const error = reason instanceof Error ? reason : new ProtocolError(String(reason));
-        for (const pending of this.#pending.values())
-          pending.reject(error);
-        this.#pending.clear();
-        this.#resolveClosed?.();
-        this.#resolveClosed = void 0;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/connection/spawn.js
-import { spawn } from "node:child_process";
-function makeShutdownDeadline(budgetMs) {
-  let timer;
-  const expired = new Promise((resolve2) => {
-    timer = setTimeout(resolve2, budgetMs);
-  });
-  return {
-    expired,
-    clear: () => {
-      if (timer !== void 0)
-        clearTimeout(timer);
-      timer = void 0;
-    }
-  };
-}
-function classifyExit(processExit, stderrTail) {
-  const evidence = [...stderrTail];
-  switch (processExit.code) {
-    case 0:
-      return { kind: "cleanShutdown" };
-    case 1:
-      return { kind: "unhandledError", exitCode: 1, stderrTail: evidence };
-    case 2:
-      return { kind: "usageError", exitCode: 2, stderrTail: evidence, retry: "never" };
-    case 3:
-      return { kind: "configError", exitCode: 3, stderrTail: evidence, retry: "fix-config" };
-    case 4:
-      return {
-        kind: "leaseUnavailable",
-        exitCode: 4,
-        stderrTail: evidence,
-        retry: "after-lease-release"
-      };
-    case 5:
-      return {
-        kind: "sdkSurfaceUnavailable",
-        exitCode: 5,
-        stderrTail: evidence,
-        retry: "never"
-      };
-    default:
-      return {
-        kind: "crash",
-        exitCode: processExit.code,
-        exitSignal: processExit.signal,
-        stderrTail: evidence
-      };
-  }
-}
-function isBenignCloseRace(error) {
-  const code = error?.code;
-  return code === "ERR_STREAM_DESTROYED" || code === "EPIPE" || code === "ECANCELED";
-}
-function assertShutdownTimeout(shutdownTimeoutMs) {
-  if (!Number.isInteger(shutdownTimeoutMs) || shutdownTimeoutMs < 0 || shutdownTimeoutMs > MAX_SHUTDOWN_TIMEOUT_MS) {
-    throw new RangeError(`shutdownTimeoutMs must be an integer in 0..${MAX_SHUTDOWN_TIMEOUT_MS}, got ${String(shutdownTimeoutMs)}`);
-  }
-}
-function buildSpawnOptions(options) {
-  return {
-    ...options.cwd === void 0 ? {} : { cwd: options.cwd },
-    ...options.env === void 0 ? {} : { env: options.env },
-    detached: options.detached,
-    // FR-45141-1: `muse serve` is never meant to be seen. Without this, a
-    // Windows host with no console of its own pops a console window for the
-    // life of the connection; the flag is a no-op on other platforms.
-    windowsHide: true
-  };
-}
-function spawnMspConnection(options) {
-  return new MspHandshake(options);
-}
-var DEFAULT_STDERR_MAX_BYTES, DEFAULT_STDERR_MAX_LINES, DEFAULT_SHUTDOWN_TIMEOUT_MS, SIGTERM_GRACE_MS, MAX_SHUTDOWN_TIMEOUT_MS, ownedTransport, adoptFlushSource, initializeAnswered, StderrTail, ChildStdioTransport, MuseServeChild, MspHandshake, SpawnedMspConnection;
-var init_spawn = __esm({
-  "node_modules/@muse-code/sdk/dist/src/connection/spawn.js"() {
-    init_connection();
-    init_fingerprint();
-    DEFAULT_STDERR_MAX_BYTES = 8 * 1024;
-    DEFAULT_STDERR_MAX_LINES = 100;
-    DEFAULT_SHUTDOWN_TIMEOUT_MS = 3e4;
-    SIGTERM_GRACE_MS = 2e3;
-    MAX_SHUTDOWN_TIMEOUT_MS = 2147483647;
-    ownedTransport = /* @__PURE__ */ Symbol("MuseServeChild.transport");
-    adoptFlushSource = /* @__PURE__ */ Symbol("ChildStdioTransport.adoptFlushSource");
-    initializeAnswered = /* @__PURE__ */ Symbol("MspHandshake.initializeAnswered");
-    StderrTail = class {
-      #text = "";
-      push(chunk) {
-        this.#text += chunk;
-        this.#trimLines();
-        this.#trimBytes();
-      }
-      lines() {
-        if (this.#text.length === 0)
-          return [];
-        const lines = this.#text.split("\n");
-        if (lines.at(-1) === "")
-          lines.pop();
-        return lines;
-      }
-      #trimLines() {
-        let lineCount = this.#text.split("\n").length;
-        if (this.#text.endsWith("\n"))
-          lineCount -= 1;
-        while (lineCount > DEFAULT_STDERR_MAX_LINES) {
-          const firstBreak = this.#text.indexOf("\n");
-          if (firstBreak < 0)
-            break;
-          this.#text = this.#text.slice(firstBreak + 1);
-          lineCount -= 1;
-        }
-      }
-      #trimBytes() {
-        const bytes = Buffer.from(this.#text, "utf8");
-        if (bytes.byteLength <= DEFAULT_STDERR_MAX_BYTES)
-          return;
-        let start = bytes.byteLength - DEFAULT_STDERR_MAX_BYTES;
-        while (start < bytes.byteLength && (bytes[start] & 192) === 128)
-          start += 1;
-        this.#text = bytes.subarray(start).toString("utf8");
-      }
-    };
-    ChildStdioTransport = class {
-      child;
-      incoming;
-      exited;
-      #shutdownTimeoutMs;
-      #makeShutdownDeadline;
-      // True only when the boundary that SPAWNED this child made it a process-
-      // group leader (FR-017b). Never inferred from the child itself: a test
-      // handing the transport an ordinary child keeps the direct-kill path.
-      #ownsProcessGroup;
-      #closing;
-      // The default `flushed` for closes routed AROUND the connection — notably
-      // the public `child.close()`. Without it, step 0 existed only for
-      // Connection-routed closes while the contract claimed all three surfaces
-      // behaved identically, and `#closing ??=` let whichever call won the race
-      // discard the other's submission promise (PR #22819 round 4).
-      #defaultFlushed;
-      constructor(child, onStderr, shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS, ownsProcessGroup = false, deadlineFactory = makeShutdownDeadline) {
-        this.child = child;
-        assertShutdownTimeout(shutdownTimeoutMs);
-        this.#shutdownTimeoutMs = shutdownTimeoutMs;
-        this.#ownsProcessGroup = ownsProcessGroup;
-        this.#makeShutdownDeadline = deadlineFactory;
-        this.child.stdout.setEncoding("utf8");
-        this.child.stderr.setEncoding("utf8");
-        this.child.stderr.on("data", (chunk) => onStderr?.(chunk));
-        this.child.stdin.on("error", () => {
-        });
-        this.incoming = this.#stdoutChunks();
-        this.exited = new Promise((resolve2, reject) => {
-          this.child.once("error", reject);
-          this.child.once("close", (code, signal) => resolve2({ code, signal }));
-        });
-        this.exited.catch(() => {
-        });
-      }
-      async write(chunk) {
-        if (this.child.stdin.destroyed)
-          throw new ProtocolError("spawned MSP host stdin is closed");
-        await new Promise((resolve2, reject) => {
-          this.child.stdin.write(chunk, "utf8", (error) => error ? reject(error) : resolve2());
-        });
-      }
-      /**
-       * The single owner of shutdown (#15943). EOF first, then bounded: SS2.1.2
-       * gives the host a drain window and says the remainder past it has crash
-       * semantics, so past the window the SDK ends the process it owns rather
-       * than waiting on an EOF that may never come. Memoized, so concurrent and
-       * repeated calls share one attempt and one set of timers.
-       */
-      /** Module-private friend seam used by the handshake that owns both sides. */
-      [adoptFlushSource](source) {
-        this.#defaultFlushed = source;
-      }
-      async close(flushed) {
-        this.#closing ??= this.#shutdown(flushed ?? this.#defaultFlushed?.());
-        await this.#closing;
-      }
-      async #shutdown(flushed) {
-        const deadline = this.#makeShutdownDeadline(this.#shutdownTimeoutMs);
-        try {
-          if (flushed !== void 0)
-            await this.#beforeDeadline(flushed, deadline.expired);
-          return await this.#shutdownAfterFlush(deadline.expired);
-        } finally {
-          deadline.clear();
-        }
-      }
-      async #shutdownAfterFlush(deadline) {
-        const eof = this.#endStdin();
-        eof.catch(() => {
-        });
-        await this.#awaitExitOrTerminate(deadline);
-        await eof;
-      }
-      async #endStdin() {
-        if (this.child.stdin.destroyed || this.child.stdin.writableEnded)
-          return;
-        await new Promise((resolve2, reject) => {
-          this.child.stdin.end((error) => error === null || error === void 0 || isBenignCloseRace(error) ? resolve2() : reject(error));
-        });
-      }
-      /**
-       * Escalate only as far as the host forces. Every stage ends at the child's
-       * REAL exit, so `exited` — and every classification derived from it — stays
-       * a function of the observed `(code, signal)` pair (INV-011). A signal is a
-       * way to reach an exit, never a substitute for observing one.
-       */
-      async #awaitExitOrTerminate(deadline) {
-        if (await this.#beforeDeadline(this.#settled(), deadline))
-          return;
-        this.#signal("SIGTERM");
-        if (await this.#settledWithin(SIGTERM_GRACE_MS))
-          return;
-        this.child.stdin.destroy();
-        this.#signal("SIGKILL");
-        await this.#settled();
-      }
-      /**
-       * One signal per escalation stage, delivered to the whole owned process
-       * group where this spawn created one (FR-017b, #22777). The child PID
-       * alone is not enough: a grandchild that inherited the host's stdout
-       * keeps the `close` event — which `exited` and every stage here wait
-       * on — from firing even after the child itself is gone, and it never
-       * receives a child-targeted signal at all. A group signal that fails for
-       * any reason (expected: `ESRCH`, the whole group already exited between
-       * stages) falls through to the direct path, which Node makes a no-op on
-       * an exited child — the ladder must never rethrow out of a stage.
-       */
-      #signal(signal) {
-        const pid = this.child.pid;
-        if (this.#ownsProcessGroup && pid !== void 0) {
-          try {
-            process.kill(-pid, signal);
-            return;
-          } catch {
-          }
-        }
-        this.child.kill(signal);
-      }
-      /** True once `exited` settles either way — a rejection means no live child. */
-      async #settledWithin(budgetMs) {
-        return await this.#within(this.#settled(), budgetMs);
-      }
-      /** True if `work` settles before the one shared shutdown deadline fires. */
-      async #beforeDeadline(work, deadline) {
-        return await Promise.race([
-          work.then(() => true, () => true),
-          deadline.then(() => false)
-        ]);
-      }
-      /** True if `work` settles inside `budgetMs`; false when the budget expires. */
-      async #within(work, budgetMs) {
-        const deadline = makeShutdownDeadline(budgetMs);
-        try {
-          return await this.#beforeDeadline(work, deadline.expired);
-        } finally {
-          deadline.clear();
-        }
-      }
-      /**
-       * `exited` REJECTS when the spawn itself failed (ENOENT). There is no
-       * process to end and no exit to observe, so shutdown is complete; the
-       * rejection still reaches the caller through its own `await exited`
-       * (`MuseServeChild.close()`, `MspHandshake.close()`), unchanged.
-       */
-      async #settled() {
-        await this.exited.catch(() => {
-        });
-      }
-      async *#stdoutChunks() {
-        for await (const chunk of this.child.stdout)
-          yield String(chunk);
-      }
-    };
-    MuseServeChild = class _MuseServeChild {
-      #tail = new StderrTail();
-      #transport;
-      exit;
-      constructor(child, onStderr, shutdownTimeoutMs, ownsProcessGroup = false) {
-        this.#transport = new ChildStdioTransport(child, (chunk) => {
-          this.#tail.push(chunk);
-          onStderr?.(chunk);
-        }, shutdownTimeoutMs, ownsProcessGroup);
-        this.exit = this.#transport.exited.then((status) => classifyExit(status, this.#tail.lines()));
-        this.exit.catch(() => {
-        });
-      }
-      static spawn(options) {
-        if (options.shutdownTimeoutMs !== void 0)
-          assertShutdownTimeout(options.shutdownTimeoutMs);
-        const ownsProcessGroup = process.platform !== "win32";
-        const spawnOptions = buildSpawnOptions({
-          cwd: options.cwd,
-          env: options.env,
-          detached: ownsProcessGroup
-        });
-        const spawnChild = options.spawnFn ?? spawn;
-        return new _MuseServeChild(spawnChild(options.museBin, [...options.args ?? []], spawnOptions), options.onStderr, options.shutdownTimeoutMs, ownsProcessGroup);
-      }
-      get stderrTail() {
-        return this.#tail.lines();
-      }
-      /** Module-private friend seam used by the handshake machine for this child. */
-      [ownedTransport]() {
-        return this.#transport;
-      }
-      async close() {
-        await this.#transport.close();
-        return await this.exit;
-      }
-    };
-    MspHandshake = class {
-      #connection;
-      child;
-      #transport;
-      #started = false;
-      #answered = false;
-      constructor(options) {
-        this.child = MuseServeChild.spawn({
-          museBin: options.command,
-          ...options.args === void 0 ? {} : { args: options.args },
-          ...options.cwd === void 0 ? {} : { cwd: options.cwd },
-          ...options.env === void 0 ? {} : { env: options.env },
-          ...options.onStderr === void 0 ? {} : { onStderr: options.onStderr },
-          ...options.shutdownTimeoutMs === void 0 ? {} : { shutdownTimeoutMs: options.shutdownTimeoutMs }
-        });
-        this.#transport = this.child[ownedTransport]();
-        this.#connection = new Connection(this.#transport, options.connection);
-        this.#transport[adoptFlushSource](() => this.#connection[submissionTail]());
-      }
-      get exited() {
-        return this.#transport.exited;
-      }
-      onServerRequest(handler) {
-        this.#connection.onServerRequest(handler);
-      }
-      onNotification(handler) {
-        this.#connection.onNotification(handler);
-      }
-      onProtocolError(handler) {
-        this.#connection.onProtocolError(handler);
-      }
-      async close() {
-        await this.#connection.close();
-        return await this.#transport.exited;
-      }
-      /** See {@link initializeAnswered}. */
-      [initializeAnswered]() {
-        return this.#answered;
-      }
-      async initialize(params) {
-        if (this.#started)
-          throw new ProtocolError("initialize may be sent only once per connection");
-        this.#started = true;
-        const { result: raw, line } = await this.#connection[requestWithFrame]("initialize", params);
-        this.#answered = true;
-        const result = raw;
-        if (typeof result.schema?.fingerprint !== "string") {
-          throw new ProtocolError("initialize result has no schema fingerprint", line);
-        }
-        const fingerprintWarning = checkServedFingerprint(result.schema.fingerprint);
-        this.#connection.notify("initialized");
-        await this.#connection.flush();
-        return new SpawnedMspConnection(this.#connection, this.#transport, this.child, result, fingerprintWarning);
-      }
-    };
-    SpawnedMspConnection = class {
-      connection;
-      child;
-      initializeResult;
-      fingerprintWarning;
-      exited;
-      #transport;
-      constructor(connection, transport, child, initializeResult, fingerprintWarning) {
-        this.connection = connection;
-        this.#transport = transport;
-        this.child = child;
-        this.initializeResult = initializeResult;
-        this.fingerprintWarning = fingerprintWarning;
-        this.exited = transport.exited;
-      }
-      async close() {
-        await this.connection.close();
-        return await this.#transport.exited;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/discarded.js
-var DiscardedSessions;
-var init_discarded = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/discarded.js"() {
-    DiscardedSessions = class {
-      /** `commandId`s an ephemeral discharge retired. Never replayed again. */
-      commandIds = /* @__PURE__ */ new Set();
-      /** `sessionId`s whose ephemeral host died. Never reattached. */
-      sessionIds = /* @__PURE__ */ new Set();
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/host-death.js
-function readSessionDurability(result) {
-  const declared = result.sessionDurability;
-  if (declared === void 0 || declared === DURABLE)
-    return { kind: "durable" };
-  if (declared === EPHEMERAL)
-    return { kind: "ephemeral" };
-  return { kind: "unrecognized", value: declared };
-}
-function survivesHostDeath(profile2) {
-  return profile2.kind === DURABLE;
-}
-function isAbnormalHostDeath(notification) {
-  return notification.kind !== "cleanShutdown";
-}
-function isItemInProgress(item) {
-  return item.status === IN_PROGRESS;
-}
-var DURABLE, EPHEMERAL, IN_PROGRESS, MuseHostDiedError;
-var init_host_death = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/host-death.js"() {
-    DURABLE = "durable";
-    EPHEMERAL = "ephemeral";
-    IN_PROGRESS = "inProgress";
-    MuseHostDiedError = class _MuseHostDiedError extends Error {
-      exit;
-      // The parameter is narrowed rather than checked: `cleanShutdown` is not a
-      // death, so the type refuses to build this error for one instead of a
-      // ternary papering over a state no caller can reach.
-      constructor(exit) {
-        super(`MSP host died: ${exit.kind} (${_MuseHostDiedError.#cause(exit)})`);
-        this.name = "MuseHostDiedError";
-        this.exit = exit;
-      }
-      static #cause(exit) {
-        if (exit.kind === "transportEof")
-          return "transport EOF with no orderly close";
-        if (exit.kind === "crash" && exit.exitCode === null) {
-          return `signal ${String(exit.exitSignal)}`;
-        }
-        return `exit code ${String(exit.exitCode)}`;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/host-start.js
-function describeHostStartFailure(failure, tail) {
-  if (failure.kind === "spawnFailed") {
-    return `muse host could not be spawned: ${failure.error.message}`;
-  }
-  const exit = failure.exit;
-  const how = exit.kind === "cleanShutdown" ? "exit code 0" : exit.kind === "crash" ? exit.exitSignal !== null ? `signal ${exit.exitSignal}` : `exit code ${String(exit.exitCode)}` : `exit code ${String(exit.exitCode)}${"retry" in exit ? `, retry: ${exit.retry}` : ""}`;
-  const quoted = tail.slice(-MESSAGE_TAIL_LINES);
-  const evidence = tail.length === 0 ? "stderr tail: (empty)" : `stderr tail${quoted.length < tail.length ? ` (last ${quoted.length} of ${tail.length} lines)` : ""}:
-  ${quoted.join("\n  ")}`;
-  const when = failure.answeredInitialize ? "after answering initialize, before the handshake completed" : "before answering initialize";
-  return `muse host exited ${when}: ${exit.kind} (${how}); ${evidence}`;
-}
-async function hostStartFailure(child, cause, answeredInitialize) {
-  let exit;
-  try {
-    exit = await child.exit;
-  } catch (spawnError) {
-    return new MuseHostStartError({ kind: "spawnFailed", error: spawnError }, child.stderrTail, cause);
-  }
-  return new MuseHostStartError({ kind: "hostExited", exit, answeredInitialize }, child.stderrTail, cause);
-}
-var MESSAGE_TAIL_LINES, MuseHostStartError;
-var init_host_start = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/host-start.js"() {
-    MESSAGE_TAIL_LINES = 5;
-    MuseHostStartError = class extends Error {
-      failure;
-      /**
-       * The SDK's bounded stderr tail when the host was lost, one accessor
-       * regardless of arm: empty when no process ran, and the only place the
-       * evidence lives when the row is `cleanShutdown` (SS2.11 keeps no tail on
-       * the clean row; a logger wants the lines either way).
-       */
-      stderrTail;
-      constructor(failure, stderrTail, cause) {
-        super(describeHostStartFailure(failure, stderrTail), { cause });
-        this.name = "MuseHostStartError";
-        this.failure = failure;
-        this.stderrTail = stderrTail;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/approval.js
-var ApprovalRouter;
-var init_approval = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/approval.js"() {
-    ApprovalRouter = class _ApprovalRouter {
-      #sessionId;
-      #connection;
-      #handler;
-      #onFailure;
-      /**
-       * Approval STAGES already decided, keyed by `approvalId` + `requirementId`.
-       *
-       * Not `approvalId` alone: `requirementId` is SS5.4's multi-stage race guard,
-       * so a stage-2 request must get its own decision or the approval pends
-       * forever. Not per-request either: a redelivered `approval/requested` for the
-       * SAME stage must author no second decide, or a two-stage approval races
-       * itself. The key is kept on FAILURE too — a genuinely advancing stage brings
-       * a new `requirementId` and therefore a new key, so "ask the consumer once
-       * per stage" holds absolutely.
-       */
-      #decidedStages = /* @__PURE__ */ new Set();
-      /**
-       * Approvals whose `approval/decide` ACK came back `terminal: true`: the host
-       * closed the whole approval on that decision (a rule that also satisfied the
-       * remaining stages), so no later stage can need this consumer. Kept beside
-       * the stage latch because the runtime records only the RESOLVED stage
-       * (#37538), letting the view fold emit one trailing `stageResolved` update
-       * with a frontier the host already closed, right before `approval/resolved`.
-       */
-      #terminalApprovals = /* @__PURE__ */ new Set();
-      /**
-       * The most recently sent decide each approval has on the wire, settled when
-       * its ack lands or the decide fails. A trailing `stageResolved` update read
-       * in the SAME chunk as a `terminal: true` ack is routed before
-       * {@link #decide} resumes from that ack, so {@link updated} waits for it
-       * instead of re-asking. Scoped to the round trip: an open handler or a
-       * decide that never started blocks nobody.
-       */
-      #inFlight = /* @__PURE__ */ new Map();
-      constructor(sessionId, connection) {
-        this.#sessionId = sessionId;
-        this.#connection = connection;
-      }
-      /**
-       * Register the decision callback (FR-019).
-       *
-       * REPLACES any previous handler rather than adding to a list: two handlers
-       * would race to decide one approval and only one decision can win, so the
-       * loser's would be silently discarded.
-       */
-      onApproval(handler) {
-        this.#handler = handler;
-      }
-      /** Observe round trips that did not complete. See {@link ApprovalFailure}. */
-      onApprovalError(handler) {
-        this.#onFailure = handler;
-      }
-      /**
-       * An `approval/requested` folded. Returns the decision round trip to await,
-       * or `undefined` when this client authors nothing for it.
-       *
-       * No handler at all is the supported default posture, NOT a degraded one
-       * (D-008): the client runs under the server's own default-deny, and this SDK
-       * parks nothing — no queued decision, no synthesized denial, no local hold.
-       */
-      requested(params) {
-        const handler = this.#handler;
-        if (handler === void 0)
-          return void 0;
-        const stage = _ApprovalRouter.#stageKey(params);
-        if (this.#decidedStages.has(stage))
-          return void 0;
-        this.#decidedStages.add(stage);
-        return this.#decide(params, handler);
-      }
-      /**
-       * An `approval/updated` folded onto a STILL-PENDING approval (#36949).
-       *
-       * A multi-stage approval advances `currentRequirementId` through this frame
-       * ALONE on the notification plane — the SS5.6 item-3 re-issue on stage
-       * advance is the protected `approval/request` SERVER-REQUEST dual, which is
-       * not enrolled here (SHAPE NOTE above) — so waiting for a re-issued
-       * `approval/requested` notification leaves the new stage undecided and the
-       * turn pending forever.
-       *
-       * The update alone carries none of the request-shape members the handler is
-       * typed on, but the fold retains the original request and every identity
-       * member is stable across the stages of ONE approval, so the merged request
-       * below is honest (`REFRESH_FROM_*` above pins the split). Feeding it
-       * through {@link requested} reuses the per-stage latch, so an update whose
-       * requirement was already decided — and any later re-issued request for the
-       * stage this update decided — authors nothing.
-       */
-      updated(requested, params) {
-        if (params.change.kind === "alreadyTerminal")
-          return void 0;
-        if (this.#terminalApprovals.has(requested.approvalId))
-          return void 0;
-        const refreshed = {
-          approvalId: requested.approvalId,
-          availableChoices: params.availableChoices,
-          currentRequirementId: params.currentRequirementId,
-          itemId: requested.itemId,
-          judgeEscalated: requested.judgeEscalated,
-          protectedWrite: requested.protectedWrite,
-          rawArgs: requested.rawArgs,
-          sessionId: params.sessionId,
-          sourceRange: params.sourceRange,
-          subject: params.subject,
-          taskId: requested.taskId,
-          toolCallId: requested.toolCallId,
-          toolName: requested.toolName,
-          turnId: requested.turnId,
-          viewCursor: params.viewCursor
-        };
-        if (params.subagentOrigin !== void 0)
-          refreshed.subagentOrigin = params.subagentOrigin;
-        const acked = this.#inFlight.get(requested.approvalId);
-        if (acked !== void 0)
-          return this.#afterAck(acked, refreshed);
-        return this.requested(refreshed);
-      }
-      /** {@link updated}'s same-chunk arm: decide only once our own ack is in. */
-      async #afterAck(acked, refreshed) {
-        await acked;
-        if (this.#terminalApprovals.has(refreshed.approvalId))
-          return;
-        await this.requested(refreshed);
-      }
-      static #stageKey(params) {
-        const requirement = params.currentRequirementId;
-        return `${params.approvalId} ${requirement.approvalId}:${String(requirement.sourceIndex)}`;
-      }
-      async #decide(params, handler) {
-        const connection = this.#connection;
-        if (connection === void 0) {
-          this.#report({
-            approvalId: params.approvalId,
-            error: new Error("approval/decide needs a connection; this Session was constructed fold-only"),
-            kind: "submitFailed"
-          });
-          return;
-        }
-        let decision;
-        try {
-          decision = await handler(params);
-        } catch (error) {
-          this.#report({ approvalId: params.approvalId, error, kind: "handlerThrew" });
-          return;
-        }
-        const availableChoiceIds = params.availableChoices.map((choice) => choice.choiceId);
-        if (!availableChoiceIds.includes(decision.choiceId)) {
-          this.#report({
-            approvalId: params.approvalId,
-            availableChoiceIds,
-            choiceId: decision.choiceId,
-            kind: "unofferedChoice"
-          });
-          return;
-        }
-        const decideParams = {
-          approvalId: params.approvalId,
-          choiceId: decision.choiceId,
-          // Echoed from the request, never remembered: SS5.4 makes a stale value a
-          // -32053, and the request in hand is the only current statement of it.
-          requirementId: params.currentRequirementId,
-          sessionId: this.#sessionId
-        };
-        if (decision.feedback != null)
-          decideParams.feedback = decision.feedback;
-        const approvalId = params.approvalId;
-        let settle;
-        const acked = new Promise((resolve2) => {
-          settle = resolve2;
-        });
-        this.#inFlight.set(approvalId, acked);
-        try {
-          const ack = await connection.command("approval/decide", decideParams);
-          if (ack["terminal"] === true)
-            this.#terminalApprovals.add(approvalId);
-        } catch (error) {
-          this.#report({ approvalId, error, kind: "submitFailed" });
-        } finally {
-          settle();
-          if (this.#inFlight.get(approvalId) === acked)
-            this.#inFlight.delete(approvalId);
-        }
-      }
-      #report(failure) {
-        try {
-          this.#onFailure?.(failure);
-        } catch {
-        }
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/turn-submit.js
-function commandErrorResponse(error) {
-  if (!(error instanceof MspError))
-    return void 0;
-  const reason = error.data["reason"];
-  return {
-    code: error.code,
-    kind: error.kind,
-    ...typeof reason === "string" ? { reason } : {}
-  };
-}
-var TurnSubmitter;
-var init_turn_submit = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/turn-submit.js"() {
-    init_connection();
-    TurnSubmitter = class {
-      #sessionId;
-      #connection;
-      #pending;
-      /** See the module doc. Pruned on retirement, so it tracks the pending set. */
-      #memory = /* @__PURE__ */ new Map();
-      constructor(sessionId, connection, pending) {
-        this.#sessionId = sessionId;
-        this.#connection = connection;
-        this.#pending = pending;
-      }
-      get wired() {
-        return this.#connection !== void 0;
-      }
-      requireConnection(verb) {
-        const connection = this.#connection;
-        if (connection === void 0) {
-          throw new Error(`${verb} needs a connection; this Session was constructed fold-only`);
-        }
-        return connection;
-      }
-      /**
-       * Record the optimistic SS4.13 entry, then send `turn/start`.
-       *
-       * The ORDER is the point. An entry created only on the ack is invisible for
-       * exactly the window it exists to cover — between the user pressing enter and
-       * the host answering — and `anchorAfterItemId` is fixed here, at submission
-       * time, because SS4.13's insertion point may never be relocated by events
-       * that fold in afterwards.
-       */
-      async submit(options, anchorAfterItemId) {
-        const connection = this.requireConnection("sendUserTurn");
-        const commandId = connection.mintCommandId();
-        const params = this.#params(commandId, options);
-        this.#pending.submitted({
-          anchorAfterItemId,
-          commandId,
-          input: options.composerInput,
-          ...params.displayText === void 0 ? {} : { displayText: params.displayText }
-        });
-        this.#memory.set(commandId, params);
-        try {
-          const ack = await this.#send(connection, params, commandId);
-          this.#pending.acked(commandId, ack);
-          return ack;
-        } catch (error) {
-          const response = commandErrorResponse(error);
-          if (response !== void 0) {
-            const settled = this.#pending.ackErrored(commandId, response);
-            if (settled !== "held")
-              this.forgetRetired([settled]);
-          }
-          throw error;
-        }
-      }
-      /**
-       * Re-send one remembered `turn/start` under its ORIGINAL `commandId`
-       * (SS3.1.1 — always safe, and the only re-send that is not a double
-       * execution).
-       *
-       * `undefined` means "no answer this set can act on": either this session
-       * never authored the command (a caller-seeded entry), or the failure was a
-       * transport/protocol one, which proves nothing about the intake.
-       */
-      async replay(commandId) {
-        const params = this.#memory.get(commandId);
-        if (params === void 0)
-          return void 0;
-        const connection = this.requireConnection("turn/start replay");
-        try {
-          return { ack: await this.#send(connection, params, commandId), kind: "ack" };
-        } catch (error) {
-          const response = commandErrorResponse(error);
-          if (response === void 0)
-            return void 0;
-          return { error: response, kind: "error" };
-        }
-      }
-      /** Replay one entry and feed the answer back through the live SS4.13 rules. */
-      async driveReplay(commandId, into) {
-        const answer = await this.replay(commandId);
-        if (answer === void 0)
-          return;
-        const settled = this.#pending.replayAnswered(commandId, answer);
-        if (settled !== "held")
-          into.push(settled);
-      }
-      /** Drop the replay memory for retired entries so it tracks the pending set. */
-      forgetRetired(retirements) {
-        for (const retirement of retirements)
-          this.#memory.delete(retirement.commandId);
-      }
-      async #send(connection, params, commandId) {
-        const raw = await connection.command("turn/start", params, { commandId });
-        const result = raw;
-        return { disposition: result.disposition, turnId: result.turnId };
-      }
-      /**
-       * OPTIONAL MEANS OMITTED, NEVER `null` (tdd SS1.2), and the guards are LOOSE
-       * (`!= null`) for the same reason `MuseClient`'s are: the types bind only
-       * strict TypeScript consumers, and a plain-JS caller reaching the built
-       * `dist` can pass an explicit `null` a `!== undefined` guard would forward.
-       */
-      #params(commandId, options) {
-        const params = {
-          commandId,
-          input: options.input,
-          sessionId: this.#sessionId
-        };
-        if (options.displayText != null)
-          params.displayText = options.displayText;
-        if (options.ifBusy != null)
-          params.ifBusy = options.ifBusy;
-        if (options.reasoningEffort != null)
-          params.reasoningEffort = options.reasoningEffort;
-        if (options.workspaceRoots != null)
-          params.workspaceRoots = options.workspaceRoots;
-        if (options.userShell != null)
-          params.userShell = options.userShell;
-        return params;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/gap-fill.js
-var _a, PAGE_LIMIT, NO_RETIREMENTS, GapFiller;
-var init_gap_fill = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/gap-fill.js"() {
-    init_errors();
-    PAGE_LIMIT = 200;
-    NO_RETIREMENTS = Promise.resolve([]);
-    GapFiller = class {
-      #options;
-      /** Live frames held while a fill is in flight, in arrival order. */
-      #buffer = [];
-      #filling = false;
-      #cursor = "";
-      #onFailure;
-      constructor(options) {
-        this.#options = options;
-      }
-      /**
-       * Cursors the page served at or after a target — the events whose LIVE twin
-       * the wire has yet to deliver.
-       *
-       * THE LATE HALF of the recipe's overlap discard, and only that half (PR
-       * #24930 review rounds 1 and 2). A twin that has already arrived is in the
-       * buffer, and `#drain` discards those against its own local set of EVERY
-       * paged cursor. This set covers the other window: the wire promises no order
-       * between the marker and the frame at `next`, so a twin can legally arrive
-       * after the fill completed, when the buffer is gone. Folding it then re-runs
-       * its routing — for a `turn/started`, a duplicate SS4.13 queue-movement
-       * replay on the wire.
-       *
-       * SELF-DRAINING: an entry is removed the moment its twin arrives, and only
-       * cursors at or after a target ever enter (the walk stops at the page that
-       * carries it, so at most one page's worth per target).
-       *
-       * RESIDUAL, stated rather than hidden: an entry whose twin the wire never
-       * delivers — because a LATER hole swallowed it — has no arrival to retire it
-       * and stays, a short string each, bounded by one page's worth per TARGET —
-       * and a coalesced fill has several, since each extension's reaching page adds
-       * its own batch.
-       *
-       * Two prunes were tried and both were defects, so neither is coming back
-       * without a proof neither had. Clearing per fill (round 2) drops the refusal
-       * for a twin that is still on its way. Retiring inside the WALK when it meets
-       * the cursor before its own target (round 3) looks like page-order proof that
-       * the twin was swallowed, but the walk cannot see the BUFFER — a coalescing
-       * gap moves the target past a cursor whose twin is sitting in it, and the
-       * entry is deleted out from under the drain (round 4). Deciding staleness any
-       * other way means ordering two opaque cursors, which tdd SS4.1 forbids.
-       */
-      #servedTwins = /* @__PURE__ */ new Set();
-      /** While true, every live frame but the gap marker itself is held. */
-      get filling() {
-        return this.#filling;
-      }
-      /**
-       * Was this frame already applied from a page, as part of the overlap the
-       * splice discards? Consuming: a twin is refused exactly once.
-       *
-       * Returns the matched CURSOR rather than a boolean so the caller can report
-       * which event it refused without re-reading (and re-defaulting) a field this
-       * method already proved is there.
-       */
-      claimServedTwin(frame) {
-        const cursor = _a.#viewCursorOf(frame);
-        if (cursor === void 0 || !this.#servedTwins.has(cursor))
-          return void 0;
-        this.#servedTwins.delete(cursor);
-        return cursor;
-      }
-      /** Observe fills that did not complete. See {@link MuseGapFillError}. */
-      onError(handler) {
-        this.#onFailure = handler;
-      }
-      /** Hold one live frame until the paged prefix is in. */
-      hold(frame) {
-        this.#buffer.push(frame);
-      }
-      /**
-       * Recover the fold's outstanding hole.
-       *
-       * Called on every `view/gap`, including one that lands mid-fill: the running
-       * walk reads its target from `fold.pendingGap` on each pass, so a coalesced
-       * hole extends the walk in flight rather than starting a second one racing
-       * it for the same cursor stream.
-       */
-      start() {
-        const gap = this.#options.fold.pendingGap;
-        if (gap === void 0)
-          return NO_RETIREMENTS;
-        if (this.#filling)
-          return NO_RETIREMENTS;
-        const connection = this.#options.connection;
-        if (connection === void 0) {
-          this.#report(new MuseGapFillError("noConnection", gap.after, gap.next));
-          return NO_RETIREMENTS;
-        }
-        this.#filling = true;
-        this.#cursor = gap.after;
-        return this.#run(connection);
-      }
-      async #run(connection) {
-        const paged = [];
-        let filled = false;
-        try {
-          await this.#walk(connection, paged);
-          filled = true;
-        } catch (error) {
-          this.#reportFailure(error);
-        }
-        const drained = this.#drain(paged);
-        if (!filled)
-          return drained;
-        if (this.#options.discarded())
-          return drained;
-        if (this.#options.fold.pendingGap === void 0)
-          return drained;
-        const restarted = this.start();
-        return Promise.all([drained, restarted]).then(([first, second]) => [...first, ...second]);
-      }
-      /**
-       * Page until the fold's outstanding hole is closed.
-       *
-       * The outer loop is what makes a mid-walk `view/gap` safe: `gapFilled`
-       * refuses to clear a target the fold has since extended, so the walk simply
-       * keeps going toward the newer `next` on the SAME cursor stream.
-       */
-      async #walk(connection, paged) {
-        for (; ; ) {
-          if (this.#options.discarded())
-            return;
-          const gap = this.#options.fold.pendingGap;
-          if (gap === void 0)
-            return;
-          const target = gap.next;
-          await this.#walkTo(connection, target, gap.after, paged);
-          if (this.#options.discarded())
-            return;
-          if (this.#options.fold.gapFilled(target))
-            return;
-        }
-      }
-      async #walkTo(connection, target, after, paged) {
-        for (; ; ) {
-          if (this.#options.discarded())
-            return;
-          const result = await this.#page(connection, this.#cursor);
-          let reached = false;
-          let lastServed;
-          for (const event of result.events) {
-            this.#requireOwnSession(event, after, target);
-            const cursor = event.params.viewCursor;
-            lastServed = cursor;
-            const alreadyApplied = this.#servedTwins.has(cursor);
-            if (cursor === target)
-              reached = true;
-            if (alreadyApplied) {
-              continue;
-            }
-            paged.push(event);
-            if (reached)
-              this.#servedTwins.add(cursor);
-          }
-          if (result.nextCursor === null) {
-            if (lastServed !== void 0)
-              this.#cursor = lastServed;
-            return;
-          }
-          if (result.events.length === 0 || typeof result.nextCursor !== "string" || result.nextCursor === this.#cursor) {
-            throw new MuseGapFillError("pageStalled", after, target);
-          }
-          this.#cursor = result.nextCursor;
-          if (reached)
-            return;
-        }
-      }
-      async #page(connection, cursor) {
-        const params = {
-          cursor,
-          limit: PAGE_LIMIT,
-          sessionId: this.#options.sessionId
-        };
-        const raw = await connection.request("view/page", params);
-        return raw;
-      }
-      /**
-       * A page that serves another session's events aborts the fill.
-       *
-       * The same check `Session.apply` makes on a live frame, at the one other
-       * place a frame can enter the fold. Folding it would corrupt this
-       * transcript with another session's history, and the request that asked for
-       * it named this `sessionId`, so there is no reading under which the answer
-       * is right.
-       */
-      #requireOwnSession(event, after, target) {
-        const named = event.params?.sessionId;
-        if (typeof named === "string" && named !== this.#options.sessionId) {
-          throw new MuseGapFillError("pageFailed", after, target, new MuseForeignSessionError(`view/page for ${this.#options.sessionId} served an event for session ${named}`));
-        }
-      }
-      /**
-       * Splice: the paged prefix, then the buffered tail minus the overlap.
-       *
-       * Synchronous up to its return, deliberately. Clearing the buffer and the
-       * flag in the same run of code that re-feeds them is what makes the handover
-       * atomic — an `await` in the middle would let a live frame arrive after the
-       * flag dropped and fold ahead of the tail still waiting in the buffer.
-       *
-       * It is outside the walk's `try` because the buffered tail must be released
-       * on FAILURE too, and it needs no `try` of its own: every frame it re-feeds
-       * has already passed the one check `Session.apply` can throw on — the live
-       * half at buffer time, the paged half in the walk — so this cannot be the
-       * rejection `SessionApplyOutcome.io` promises never to be.
-       */
-      #drain(paged) {
-        const buffered = this.#buffer.splice(0);
-        this.#filling = false;
-        if (this.#options.discarded())
-          return NO_RETIREMENTS;
-        const sink = { retirements: [], tasks: [] };
-        const served = /* @__PURE__ */ new Set();
-        for (const frame of paged) {
-          const cursor = _a.#viewCursorOf(frame);
-          if (cursor !== void 0)
-            served.add(cursor);
-          this.#options.apply(frame, sink);
-        }
-        for (const frame of buffered) {
-          const cursor = _a.#viewCursorOf(frame);
-          if (cursor !== void 0 && (served.has(cursor) || this.#servedTwins.has(cursor))) {
-            this.#servedTwins.delete(cursor);
-            continue;
-          }
-          this.#options.apply(frame, sink);
-        }
-        if (sink.tasks.length === 0)
-          return Promise.resolve(sink.retirements);
-        return Promise.all(sink.tasks).then((batches) => [...sink.retirements, ...batches.flat()]);
-      }
-      static #viewCursorOf(frame) {
-        const cursor = frame.params?.viewCursor;
-        return typeof cursor === "string" ? cursor : void 0;
-      }
-      #reportFailure(error) {
-        if (error instanceof MuseGapFillError) {
-          this.#report(error);
-          return;
-        }
-        const gap = this.#options.fold.pendingGap;
-        this.#report(new MuseGapFillError("pageFailed", gap?.after ?? "", gap?.next ?? "", error));
-      }
-      #report(failure) {
-        try {
-          this.#onFailure?.(failure);
-        } catch {
-        }
-      }
-    };
-    _a = GapFiller;
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/turn-handle.js
-function isLaunchFailure(outcome) {
-  return outcome.kind === "completed" && outcome.params.terminal === TERMINAL_FAILED && outcome.params.error?.kind === LAUNCH_ERROR;
-}
-var TERMINAL_FAILED, LAUNCH_ERROR, PushStream, TurnHandle;
-var init_turn_handle = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/turn-handle.js"() {
-    TERMINAL_FAILED = "failed";
-    LAUNCH_ERROR = "launchError";
-    PushStream = class {
-      #buffer = [];
-      #onFinished;
-      /**
-       * FIFO, not a single slot. `items()`/`deltas()` hand out a plain
-       * `AsyncIterableIterator`, so `Promise.all([it.next(), it.next()])` prefetch
-       * is a reasonable thing for a consumer to write — and a single slot let the
-       * second call overwrite the first waiter, leaving the first promise never
-       * settled and handing its value to the second caller. A silently
-       * never-settling promise is the hang class this file exists to prevent.
-       */
-      #waiters = [];
-      #ended = false;
-      #failure;
-      /**
-       * `onFinished` deregisters this stream from its owner. Without it a consumer
-       * that `break`s out of a `for await` — or simply drops the iterator — stays
-       * in the fan-out set for the rest of the turn, so every later event is
-       * pushed into a stream nobody reads. A render loop that re-attaches per
-       * frame would grow one dead stream per frame.
-       */
-      constructor(onFinished) {
-        this.#onFinished = onFinished;
-      }
-      push(value) {
-        if (this.#ended)
-          return;
-        const waiter = this.#waiters.shift();
-        if (waiter === void 0) {
-          this.#buffer.push(value);
-          return;
-        }
-        waiter.resolve({ done: false, value });
-      }
-      end() {
-        if (this.#ended)
-          return;
-        this.#ended = true;
-        for (const waiter of this.#waiters.splice(0)) {
-          waiter.resolve({ done: true, value: void 0 });
-        }
-      }
-      fail(error) {
-        if (this.#ended)
-          return;
-        this.#ended = true;
-        this.#failure = error;
-        for (const waiter of this.#waiters.splice(0))
-          waiter.reject(error);
-      }
-      next() {
-        if (this.#buffer.length > 0) {
-          return Promise.resolve({ done: false, value: this.#buffer.shift() });
-        }
-        if (this.#failure !== void 0)
-          return Promise.reject(this.#failure);
-        if (this.#ended)
-          return Promise.resolve({ done: true, value: void 0 });
-        return new Promise((resolve2, reject) => {
-          this.#waiters.push({ reject, resolve: resolve2 });
-        });
-      }
-      /** `break`/`return` inside a `for await`: drop the backlog and finish. */
-      return() {
-        this.#buffer.length = 0;
-        this.end();
-        this.#onFinished();
-        return Promise.resolve({ done: true, value: void 0 });
-      }
-      [Symbol.asyncIterator]() {
-        return this;
-      }
-    };
-    TurnHandle = class {
-      turnId;
-      #replayItems;
-      #itemStreams = /* @__PURE__ */ new Set();
-      #deltaStreams = /* @__PURE__ */ new Set();
-      #completed;
-      #settle;
-      #fail;
-      #observedStart = false;
-      #settled = false;
-      /**
-       * Retained so an iterator opened AFTER the failure reports it too. Without
-       * it a late `items()` saw only `#settled` and ended cleanly — handing the
-       * consumer a partial replay plus a tidy `done`, i.e. an unfinished turn
-       * rendered as finished, which is the invented completion INV-006 forbids.
-       */
-      #failure;
-      constructor(turnId, replayItems) {
-        this.turnId = turnId;
-        this.#replayItems = replayItems;
-        this.#completed = new Promise((resolve2, reject) => {
-          this.#settle = resolve2;
-          this.#fail = reject;
-        });
-        this.#completed.catch(() => {
-        });
-      }
-      /** Settles on `turn/completed`, `turn/unqueued`, or the ephemeral discard. */
-      get completed() {
-        return this.#completed;
-      }
-      /**
-       * How many iterators this handle is still fanning out to.
-       *
-       * Exposed so the deregistration contract is assertable: an iterator a
-       * consumer broke out of, or simply dropped, must leave this set rather than
-       * accumulate for the rest of the turn.
-       */
-      get liveStreamCount() {
-        return this.#itemStreams.size + this.#deltaStreams.size;
-      }
-      /** Did a `turn/started` ever fold for this turn? */
-      get observedStart() {
-        return this.#observedStart;
-      }
-      /**
-       * This turn's items: everything the fold already holds for it, at its
-       * current revision and in first-opened order, then the live tail — one yield
-       * per fold-observed revision CHANGE. A stale re-emission mutates nothing
-       * (INV-003) and therefore yields nothing.
-       *
-       * The iterator ends when the turn settles; it never ends on a local timeout.
-       */
-      items() {
-        const stream = new PushStream(() => this.#itemStreams.delete(stream));
-        for (const item of this.#replayItems())
-          stream.push(item);
-        this.#admit(stream, this.#itemStreams);
-        return stream;
-      }
-      /**
-       * This turn's `item/delta` frames, live only.
-       *
-       * Deliberately NOT replayed, and the asymmetry with `items()` is a fact
-       * about the fold rather than an oversight: the store holds each item at its
-       * latest revision plus the ACCUMULATED delta text per field path
-       * (`ItemStore.accumulated`), never the delta event sequence. A consumer
-       * attaching mid-turn reads the accumulated value from the fold; there is no
-       * retained event list to replay, and inventing one would be a second copy of
-       * state that INV-002's determinism would then have to defend.
-       */
-      deltas() {
-        const stream = new PushStream(() => this.#deltaStreams.delete(stream));
-        this.#admit(stream, this.#deltaStreams);
-        return stream;
-      }
-      /**
-       * Register a fresh stream, or finish it the way this turn already finished.
-       * The failure branch comes FIRST: a turn that failed is not a turn that
-       * ended. `PushStream` drains the replay before reporting either, so a late
-       * consumer still receives everything it was owed.
-       */
-      #admit(stream, into) {
-        if (this.#failure !== void 0)
-          stream.fail(this.#failure);
-        else if (this.#settled)
-          stream.end();
-        else
-          into.add(stream);
-      }
-      // ---- fed by Session -----------------------------------------------------
-      markStarted() {
-        this.#observedStart = true;
-      }
-      pushItem(item) {
-        for (const stream of this.#itemStreams)
-          stream.push(item);
-      }
-      pushDelta(params) {
-        for (const stream of this.#deltaStreams)
-          stream.push(params);
-      }
-      settleCompleted(params) {
-        this.#finish({ kind: "completed", observedStart: this.#observedStart, params });
-      }
-      settleUnqueued(params) {
-        this.#finish({ kind: "unqueued", params });
-      }
-      /** SS2.13.3b: an ephemeral host died; stop waiting for a terminal. */
-      settleTerminalUnknown() {
-        this.#finish({ kind: "terminalUnknown" });
-      }
-      /**
-       * A DURABLE host died abnormally. The waiter gets no answer here — FM-001
-       * puts the terminals on resume — so it is rejected rather than resolved: a
-       * resolution would be the invented terminal INV-006 forbids, and silence
-       * would be the SS3.1.4 hang.
-       */
-      fail(error) {
-        if (this.#settled)
-          return;
-        this.#settled = true;
-        this.#failure = error;
-        this.#fail?.(error);
-        this.#clear();
-        for (const stream of this.#itemStreams)
-          stream.fail(error);
-        for (const stream of this.#deltaStreams)
-          stream.fail(error);
-        this.#itemStreams.clear();
-        this.#deltaStreams.clear();
-      }
-      #finish(outcome) {
-        if (this.#settled)
-          return;
-        this.#settled = true;
-        this.#settle?.(outcome);
-        this.#clear();
-        for (const stream of this.#itemStreams)
-          stream.end();
-        for (const stream of this.#deltaStreams)
-          stream.end();
-        this.#itemStreams.clear();
-        this.#deltaStreams.clear();
-      }
-      #clear() {
-        this.#settle = void 0;
-        this.#fail = void 0;
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/session.js
-var USER_MESSAGE, NO_IO, Session;
-var init_session = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/session.js"() {
-    init_session_fold();
-    init_pending_command_set();
-    init_approval();
-    init_turn_submit();
-    init_gap_fill();
-    init_host_death();
-    init_errors();
-    init_turn_handle();
-    USER_MESSAGE = "userMessage";
-    NO_IO = Promise.resolve([]);
-    Session = class _Session {
-      sessionId;
-      /** See {@link SessionOpening}. Absent when the caller built this directly. */
-      opening;
-      #pending;
-      #discarded;
-      /** `turn/start` submission and same-`commandId` replay (`turn-submit.ts`). */
-      #submit;
-      /** The FR-019 round trip (`approval.ts`). */
-      #approvals;
-      /** The FR-020 splice-fill (`gap-fill.ts`). */
-      #gaps;
-      #fold = new SessionFold();
-      #durability;
-      /** The first discharge, replayed verbatim on every later call. */
-      #discharge;
-      /** Set on a durable abnormal death, so late handles inherit the rejection. */
-      #deathError;
-      #turns = /* @__PURE__ */ new Map();
-      /**
-       * `item/delta` frames whose item the fold does not hold yet. The store
-       * already buffers the delta TEXT against the item's arrival (SS4.7.3, spec
-       * Edge Cases); a delta's TURN is equally unknowable until then, so the
-       * frames wait here and are attributed when the item lands. Dropping them
-       * instead would put a silent hole in the very iterators FR-020 forbids one
-       * in. Bounded by the same fact that bounds the store's own buffer: the
-       * durable `item/completed` always lands the item.
-       */
-      #unattributedDeltas = /* @__PURE__ */ new Map();
-      constructor(options) {
-        this.sessionId = options.sessionId;
-        this.#durability = options.durability;
-        this.#discarded = options.discarded;
-        this.opening = options.opening;
-        this.#pending = new PendingCommandSet(options.discarded === void 0 ? void 0 : { discardedCommandIds: options.discarded.commandIds });
-        this.#submit = new TurnSubmitter(options.sessionId, options.connection, this.#pending);
-        this.#approvals = new ApprovalRouter(options.sessionId, options.connection);
-        this.#gaps = new GapFiller({
-          apply: (frame, into) => this.#foldAndRoute(frame, into),
-          connection: options.connection,
-          discarded: () => this.#discharge?.kind === "discharged",
-          fold: this.#fold,
-          sessionId: options.sessionId
-        });
-      }
-      get durability() {
-        return this.#durability;
-      }
-      /** Read-only; events enter through `apply` so turn routing cannot be skipped. */
-      get fold() {
-        return this.#fold;
-      }
-      /** The SS4.13 set, minus the three mutators `Session` drives itself. */
-      get pending() {
-        return this.#pending;
-      }
-      /**
-       * How many turns this session has minted a handle for.
-       *
-       * Distinct from `fold.turns()`, which counts turns the WIRE named: a handle
-       * is also minted by `turn()` and by item routing, so this is the number that
-       * reveals a phantom turn minted from a bad key (a `userShell` item's null
-       * `turnId`, say). Read-only and observation-only.
-       *
-       * @internal Test observability, stripped from the published declarations
-       * (`stripInternal`). `Session` is barrel-exported, so without this the getter
-       * would be frozen API the moment #211 adopts the package — the same call
-       * `liveStreamCount` got by staying off the public `Turn` (Constitution XI).
-       */
-      get knownTurnCount() {
-        return this.#turns.size;
-      }
-      apply(event) {
-        const named = event.params?.sessionId;
-        if (typeof named === "string" && named !== this.sessionId) {
-          throw new MuseForeignSessionError(`event ${event.method} belongs to session ${named}, not ${this.sessionId}`);
-        }
-        if (this.#discharge?.kind === "discharged") {
-          return { fold: { kind: "refusedSessionDiscarded" }, io: NO_IO, retirements: [] };
-        }
-        if (this.#gaps.filling && event.method !== "view/gap") {
-          this.#gaps.hold(event);
-          return {
-            fold: { kind: "bufferedDuringGap", method: event.method },
-            io: NO_IO,
-            retirements: []
-          };
-        }
-        const twin = this.#gaps.claimServedTwin(event);
-        if (twin !== void 0) {
-          return {
-            fold: { kind: "ignoredGapOverlap", method: event.method, viewCursor: twin },
-            io: NO_IO,
-            retirements: []
-          };
-        }
-        const sink = { retirements: [], tasks: [] };
-        const outcome = this.#foldAndRoute(event, sink);
-        if (outcome.kind === "deliveryGap")
-          sink.tasks.push(this.#gaps.start());
-        return {
-          fold: outcome,
-          io: _Session.#settleIo(sink.tasks),
-          retirements: sink.retirements
-        };
-      }
-      /** Observe SS4.8 fills that did not complete. See `MuseGapFillError`. */
-      onGapError(handler) {
-        this.#gaps.onError(handler);
-      }
-      /**
-       * Fold one frame and fan it out to the turn handles that want it.
-       *
-       * The shared path: `apply` uses it for a live frame, and `GapFiller` uses it
-       * to re-feed the paged prefix and the buffered tail. One path is what makes
-       * a spliced frame indistinguishable from a live one to everything
-       * downstream — the fold, the iterators, and the SS4.13 retirements.
-       */
-      #foldAndRoute(event, sink) {
-        const retirements = [];
-        const tasks = sink.tasks;
-        const outcome = this.#fold.apply(event);
-        if (outcome.kind === "ignoredMissingParams")
-          return outcome;
-        const known = event;
-        switch (known.method) {
-          case "item/started":
-          case "item/updated":
-          case "item/completed":
-            if (outcome.kind === "item" && outcome.outcome.kind !== "ignoredStaleRevision") {
-              this.#itemFolded(known.params.item, retirements);
-            }
-            break;
-          case "item/delta":
-            this.#deltaFolded(known.params);
-            break;
-          case "turn/started":
-            this.#handle(known.params.turnId).markStarted();
-            this.#queueMoved(known.params.turnId, tasks);
-            break;
-          case "turn/completed":
-            this.#handle(known.params.turnId).settleCompleted(known.params);
-            this.#queueMoved(known.params.turnId, tasks);
-            break;
-          case "turn/unqueued": {
-            this.#handle(known.params.turnId).settleUnqueued(known.params);
-            const reclaimed = this.#pending.observedReclaim(known.params.commandId);
-            if (reclaimed !== void 0)
-              retirements.push(reclaimed);
-            break;
-          }
-          case "approval/requested":
-            if (outcome.kind === "approvalPending")
-              this.#approvalRequested(known.params, tasks);
-            break;
-          case "approval/updated":
-            if (outcome.kind === "approvalPending") {
-              this.#approvalUpdated(outcome.requested, known.params, tasks);
-            }
-            break;
-          // Folded, deliberately NOT routed to a turn handle. Listed rather than
-          // defaulted so this switch is exhaustive over `ViewEvent`: the fold's
-          // `AssertNever` forces each new #206 view notification into that union,
-          // and a `default` arm here would swallow the addition silently.
-          //
-          // `view/gap` is here because it routes to no turn: it names a hole in
-          // DELIVERY, so what it moves is the fold's currency, and the recovery
-          // it triggers is started by `apply` off the `deliveryGap` verdict rather
-          // than from this switch (FR-020 / T032).
-          case "view/gap":
-          case "turn/retracted":
-          // the turn still reaches its own terminal
-          case "turn/retryScheduled":
-          // non-terminal by contract (SS4.5.1)
-          case "turn/foregroundCompleted":
-          // non-terminal by contract (SS4.5.12)
-          case "approval/resolved":
-          case "userInput/requested":
-          case "userInput/settled":
-          case "session/modelChanged":
-          case "session/reasoningEffortChanged":
-          case "session/goalChanged":
-          case "session/todoListChanged":
-          case "session/branchChanged":
-          case "session/tokenUsage":
-          case "session/contextUsage":
-          case "session/approvalModeChanged":
-          case "session/modelRouteUnserved":
-          case "session/nameChanged":
-            break;
-          default: {
-            const unrouted = known;
-            void unrouted;
-            break;
-          }
-        }
-        if (retirements.length > 0) {
-          this.#submit.forgetRetired(retirements);
-          sink.retirements.push(...retirements);
-        }
-        return outcome;
-      }
-      /** Flatten the event's I/O tasks, or hand back the shared empty. */
-      static #settleIo(tasks) {
-        if (tasks.length === 0)
-          return NO_IO;
-        return Promise.all(tasks).then((batches) => batches.flat());
-      }
-      /**
-       * The handle for a turn, created on first mention from either side. A turn
-       * the fold has already settled returns its settled handle, so a wait
-       * registered late resolves instead of hanging on an event that has passed.
-       */
-      turn(turnId) {
-        const held = this.#turns.get(turnId);
-        if (held !== void 0)
-          return held;
-        const fresh = this.#mint(turnId);
-        if (this.#discharge?.kind === "discharged")
-          fresh.settleTerminalUnknown();
-        else if (this.#deathError !== void 0)
-          fresh.fail(this.#deathError);
-        return fresh;
-      }
-      /**
-       * A handle minted because a SERVER FRAME named this turn. Never pre-failed,
-       * and that is what makes the post-death behaviour ORDER-INDEPENDENT.
-       *
-       * A durable death does not stop the fold (FM-001), so frames can still
-       * arrive for a turn with no handle yet. Pre-failing here made the outcome
-       * depend on which frame arrived first: terminal-first settled, started-first
-       * pre-failed the handle and first-settlement-wins then dropped the real
-       * terminal one frame later — the same server fact, two different answers.
-       * That asymmetry is measured against synthetic frames; which order a real
-       * host emits after a crash is NOT something this lane has observed, and the
-       * rule does not depend on it. A frame arriving IS the connection still speaking,
-       * so a handle it mints is not a waiter with no answer coming; `turn()` keeps
-       * the latch for the case that genuinely is.
-       */
-      #handle(turnId) {
-        return this.#turns.get(turnId) ?? this.#mint(turnId);
-      }
-      #mint(turnId) {
-        const fresh = new TurnHandle(turnId, () => this.#itemsOfTurn(turnId));
-        this.#turns.set(turnId, fresh);
-        return fresh;
-      }
-      /**
-       * A host process exited. Classify it, and discharge SS2.13.3b if the profile
-       * demands it (tasks.md T030b, FM-002).
-       *
-       * REPORT EVERY NOTIFICATION OF THE DEATH — the exit promise AND transport
-       * EOF. A repeat report of an already-latched death is not a no-op: it marks
-       * END OF DRAIN and settles waits the drain minted after the first report.
-       * A consumer that dedupes exit notifications and reports the death once
-       * leaves those waits pending forever (FM-001).
-       *
-       * Three outcomes, and the middle one is the one an implementation drops:
-       *  - an ORDERLY exit (SS2.11 row 0) is not a death: nothing is discharged
-       *    and the session stays usable;
-       *  - a DURABLE session's abnormal death reconciles on resume (FM-001), so
-       *    the stores are left exactly as observed and only the waiters are told;
-       *  - an EPHEMERAL — or unrecognized (SS2.13.1) — session's abnormal death
-       *    discharges the obligation in full.
-       */
-      hostExited(exit) {
-        if (this.#discharge !== void 0) {
-          this.#sweepUnsettledAfterDrain();
-          return this.#discharge;
-        }
-        const profile2 = this.#durability;
-        if (!isAbnormalHostDeath(exit))
-          return { exit, kind: "notADeath", profile: profile2 };
-        if (survivesHostDeath(profile2)) {
-          const died = new MuseHostDiedError(exit);
-          this.#deathError = died;
-          for (const handle of this.#turns.values())
-            handle.fail(died);
-          this.#discharge = { exit, kind: "durableDeath", profile: profile2 };
-          return this.#discharge;
-        }
-        const retiredCommands = this.#pending.discardEphemeral();
-        const terminalUnknownItems = this.#fold.markEphemeralHostDeath(isItemInProgress);
-        for (const handle of this.#turns.values())
-          handle.settleTerminalUnknown();
-        this.#discarded?.sessionIds.add(this.sessionId);
-        this.#submit.forgetRetired(retiredCommands);
-        this.#discharge = {
-          exit,
-          kind: "discharged",
-          profile: profile2,
-          retiredCommands,
-          terminalUnknownItems
-        };
-        return this.#discharge;
-      }
-      /**
-       * Settle everything the drain left open. DURABLE ONLY, and `#deathError` is
-       * set iff a durable death latched, so the condition is the discriminator.
-       *
-       * There is deliberately no ephemeral arm: after a discharge the first
-       * notification settled every held handle, `apply()` refuses before a frame
-       * can mint one, and `turn()` settles a fresh mint on the spot — so no
-       * unsettled handle can exist for it to reach. An arm for that state would be
-       * untestable defense for something no producer reaches (Constitution XI) and
-       * a mutant that survives by construction.
-       */
-      #sweepUnsettledAfterDrain() {
-        if (this.#deathError === void 0)
-          return;
-        for (const handle of this.#turns.values())
-          handle.fail(this.#deathError);
-      }
-      // ---- FR-018 submit verb (T030 obligation a) -----------------------------
-      /**
-       * Submit a user turn (tdd SS3.2) and hand back THIS session's handle for the
-       * turn the ack named.
-       *
-       * The returned handle is the one `apply` already routes events to — not a
-       * second one minted beside it, which would compare equal on every field and
-       * then never receive an item, a delta, or a terminal.
-       *
-       * The wire shaping, the optimistic SS4.13 entry, and the settle-on-rejection
-       * rule all live in `TurnSubmitter`; what is decided HERE is the one thing that
-       * needs the fold: the entry's insertion point, which is the last item this
-       * session holds at submission time.
-       */
-      async sendUserTurn(options) {
-        const ack = await this.#submit.submit(options, this.#lastFoldedItemId());
-        return this.#handle(ack.turnId);
-      }
-      // ---- FR-019 approval round trip (T031) ----------------------------------
-      /** Answer approvals with `handler` (FR-019). See `ApprovalRouter`. */
-      onApproval(handler) {
-        this.#approvals.onApproval(handler);
-      }
-      /** Observe round trips that did not complete. See `ApprovalFailure`. */
-      onApprovalError(handler) {
-        this.#approvals.onApprovalError(handler);
-      }
-      // ---- consumer-driven SS4.13 retirement verbs ----------------------------
-      /**
-       * Stop the SS3.1.1 retry loop for one entry and take its input back
-       * (SS4.13 "Abandoned").
-       *
-       * A `Session` method rather than a `pending` view member: the retirement
-       * must also prune the submitter's replay memory, or the abandoned command's
-       * `turn/start` params live for the session's lifetime — unbounded over the
-       * sanctioned submit-then-abandon flow.
-       */
-      stopRetrying(commandId) {
-        const retired = this.#pending.stopRetrying(commandId);
-        if (retired !== void 0)
-          this.#submit.forgetRetired([retired]);
-        return retired;
-      }
-      /**
-       * Feed a consumer-driven replay's answer through the live SS4.13 settlement
-       * rules. Wrapped for the same replay-memory bookkeeping as `stopRetrying`;
-       * `"held"` means the answer settled nothing and the entry stays.
-       */
-      replayAnswered(commandId, answer) {
-        const settled = this.#pending.replayAnswered(commandId, answer);
-        if (settled !== "held")
-          this.#submit.forgetRetired([settled]);
-        return settled;
-      }
-      // ---- SS4.13 drivers that need client->server I/O (T030 obligation d) ----
-      /**
-       * Resolve a snapshot join by performing the I/O its plan demands (SS4.13,
-       * SS4.9): same-`commandId` resubmits FIRST, then the replays, then the
-       * reclaimed-signature verdict.
-       *
-       * The order is normative, not incidental: SS4.13 requires an unacked entry be
-       * resubmitted "before any retire-to-composer", because a join miss does not
-       * prove the intake was never written.
-       *
-       * `PendingCommandSet.joinSnapshot` stays available on `pending` for a
-       * fold-only consumer that performs its own I/O; this verb is for the wired
-       * case and therefore requires a connection even when the plan turns out empty.
-       */
-      async resolveSnapshotJoin(facts) {
-        this.#submit.requireConnection("resolveSnapshotJoin");
-        const plan = this.#pending.joinSnapshot(facts);
-        const out = [...plan.retirements];
-        for (const commandId of plan.mustResubmit)
-          await this.#submit.driveReplay(commandId, out);
-        const queuedCommandIds = facts.queuedTurns.map((queued) => queued.commandId);
-        for (const commandId of plan.mustReplay) {
-          const answer = await this.#submit.replay(commandId);
-          if (answer === void 0)
-            continue;
-          const settled = this.#pending.resolveReplayAtJoin(commandId, answer, queuedCommandIds);
-          if (settled !== "held")
-            out.push(settled);
-        }
-        this.#submit.forgetRetired(out);
-        return out;
-      }
-      /**
-       * Resolve a reconnect with NO snapshot (`history.mode: "none"`, the default
-       * cursor-resume path). Reconnect itself is the trigger: replay each acked
-       * entry once, resubmit each unacked entry's SAME `commandId` once.
-       */
-      async resolveReconnect() {
-        this.#submit.requireConnection("resolveReconnect");
-        const plan = this.#pending.reconnectedWithoutSnapshot();
-        const out = [];
-        for (const commandId of plan.mustResubmit)
-          await this.#submit.driveReplay(commandId, out);
-        for (const commandId of plan.mustReplay)
-          await this.#submit.driveReplay(commandId, out);
-        this.#submit.forgetRetired(out);
-        return out;
-      }
-      // ---- event-driven I/O ---------------------------------------------------
-      #lastFoldedItemId() {
-        const items = this.#fold.items.list();
-        return items.length === 0 ? null : items[items.length - 1]?.itemId ?? null;
-      }
-      /**
-       * SS4.13 "Queue movement": a `turn/started` or `turn/completed` for a turn
-       * that is not an entry's own decides that entry's fate at a launch boundary,
-       * and SS4.3 carries no view event for a command-intake settlement — so the
-       * only way to learn it is to replay.
-       */
-      #queueMoved(turnId, tasks) {
-        if (!this.#submit.wired)
-          return;
-        const commandIds = this.#pending.observedQueueMovement(turnId);
-        if (commandIds.length === 0)
-          return;
-        tasks.push(this.#driveQueueReplays(commandIds));
-      }
-      async #driveQueueReplays(commandIds) {
-        const out = [];
-        for (const commandId of commandIds) {
-          try {
-            await this.#submit.driveReplay(commandId, out);
-          } catch {
-          }
-        }
-        this.#submit.forgetRetired(out);
-        return out;
-      }
-      #approvalRequested(params, tasks) {
-        const decided = this.#approvals.requested(params);
-        if (decided !== void 0)
-          tasks.push(decided.then(() => []));
-      }
-      /** The #36949 stage-advance re-route; the merge lives on `ApprovalRouter.updated`. */
-      #approvalUpdated(requested, params, tasks) {
-        const decided = this.#approvals.updated(requested, params);
-        if (decided !== void 0)
-          tasks.push(decided.then(() => []));
-      }
-      #itemsOfTurn(turnId) {
-        return this.#fold.items.list().filter((item) => item.turnId === turnId);
-      }
-      #itemFolded(item, retirements) {
-        if (item.kind === USER_MESSAGE && item.commandId !== void 0) {
-          const materialized = this.#pending.observedUserMessage(item.commandId, item.itemId);
-          if (materialized !== void 0)
-            retirements.push(materialized);
-        }
-        const turnId = item.turnId;
-        if (turnId != null)
-          this.#handle(turnId).pushItem(item);
-        const buffered = this.#unattributedDeltas.get(item.itemId);
-        if (buffered === void 0)
-          return;
-        this.#unattributedDeltas.delete(item.itemId);
-        if (turnId == null)
-          return;
-        const handle = this.#handle(turnId);
-        for (const params of buffered)
-          handle.pushDelta(params);
-      }
-      #deltaFolded(params) {
-        const held = this.#fold.items.get(params.itemId);
-        if (held === void 0) {
-          const buffered = this.#unattributedDeltas.get(params.itemId);
-          if (buffered === void 0)
-            this.#unattributedDeltas.set(params.itemId, [params]);
-          else
-            buffered.push(params);
-          return;
-        }
-        if (held.turnId != null)
-          this.#handle(held.turnId).pushDelta(params);
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/facade/client.js
-function committedProfileId(snapshot) {
-  if (typeof snapshot !== "object" || snapshot === null)
-    return null;
-  const state = snapshot.permissionState;
-  if (typeof state !== "object" || state === null)
-    return null;
-  const id = state.profileId;
-  return typeof id === "string" ? id : null;
-}
-var MuseClient;
-var init_client = __esm({
-  "node_modules/@muse-code/sdk/dist/src/facade/client.js"() {
-    init_spawn();
-    init_errors();
-    init_discarded();
-    init_host_death();
-    init_connection();
-    init_host_start();
-    init_session();
-    MuseClient = class _MuseClient {
-      #connection;
-      #durability;
-      #discarded;
-      /** Sessions this client opened, so one death notification reaches them all. */
-      #sessions = /* @__PURE__ */ new Set();
-      /**
-       * Frames naming a session this client has not registered YET, held only
-       * while a `session/start`/`session/resume` is in flight (#49790): the host
-       * flushes the resume replay BEFORE the result, and the promise awaiting that
-       * result resumes only after the whole chunk has been routed. `#route` holds,
-       * `#openSession` drains, `#open` clears when the last open settles.
-       */
-      #held = /* @__PURE__ */ new Map();
-      #opening = 0;
-      /** The spawned host, when `spawn` built this client. */
-      #child;
-      #initializeResult;
-      /**
-       * Set by `close()` BEFORE the connection is torn down.
-       *
-       * This flag is the entire discriminator for obligation (b): the same
-       * transport EOF is an orderly SS2.1.2 shutdown when we caused it and an
-       * abnormal death when we did not, and nothing below this layer can tell.
-       */
-      #closing = false;
-      /** Latched by an abnormal EOF, so a later `resumeSession` can be withheld. */
-      #hostDied = false;
-      constructor(connection, options) {
-        this.#connection = connection;
-        this.#durability = options.durability;
-        this.#discarded = new DiscardedSessions();
-        this.#child = options.host?.child;
-        this.#initializeResult = options.host?.initializeResult;
-        this.#connection.onNotification((notification) => this.#route(notification));
-        void this.#connection.closed.then(() => this.#transportClosed());
-      }
-      /**
-       * Deliver one view notification to the session(s) it names.
-       *
-       * A frame naming NO session is dropped here rather than fed to every
-       * session: `Session.apply` already tolerates unknown methods, but only the
-       * frames that name a `sessionId` have an owner to route to. A frame naming
-       * an UNKNOWN session is dropped for the same reason — routing it anywhere
-       * would trip the foreign-frame throw on a session it does not belong to —
-       * UNLESS an open is in flight, when it may be that open's own session named
-       * by the server before the awaiting promise has run (#49790): then it is
-       * held for `#openSession` to fold, or for `#open` to clear.
-       */
-      #route(notification) {
-        const named = notification.params?.sessionId;
-        if (typeof named !== "string")
-          return;
-        let delivered = false;
-        for (const session of this.#sessions) {
-          if (session.sessionId === named) {
-            session.apply(notification);
-            delivered = true;
-          }
-        }
-        if (delivered || this.#opening === 0)
-          return;
-        const held = this.#held.get(named);
-        if (held === void 0)
-          this.#held.set(named, [notification]);
-        else
-          held.push(notification);
-      }
-      /**
-       * Spawn an owned host, run the SS1.4 handshake, and hand back a client whose
-       * durability profile came from that handshake (FR-018).
-       *
-       * The profile is READ rather than asked of the caller, which is the whole
-       * reason this factory exists beside the bare constructor: SS2.13.1 makes the
-       * absent/unrecognized distinction load-bearing, and a caller re-deriving it
-       * by hand is a caller that can get it wrong.
-       *
-       * Rejects with {@link MuseHostStartError} when the host is lost before the
-       * handshake completes (the binary could not be spawned, or the process
-       * ended first — exit code or signal plus the bounded stderr tail;
-       * `answeredInitialize` says whether it died after a usable answer). A host
-       * that answers with a reply the SDK refuses keeps its own error: an
-       * `MspError` for an SS1.6 refusal, or a `ProtocolError` (with the whole
-       * refused frame on `line`) for a reply the SDK cannot use, such as one with
-       * no schema fingerprint.
-       */
-      static async spawn(options) {
-        const handshake = spawnMspConnection({
-          command: options.museBin,
-          ...options.args === void 0 ? {} : { args: options.args },
-          ...options.cwd === void 0 ? {} : { cwd: options.cwd },
-          ...options.env === void 0 ? {} : { env: options.env },
-          ...options.onStderr === void 0 ? {} : { onStderr: options.onStderr },
-          ...options.shutdownTimeoutMs === void 0 ? {} : { shutdownTimeoutMs: options.shutdownTimeoutMs }
-        });
-        let spawned;
-        try {
-          spawned = await handshake.initialize({
-            clientInfo: options.clientInfo,
-            ...options.capabilities === void 0 ? {} : { capabilities: options.capabilities }
-          });
-        } catch (error) {
-          await handshake.close().catch(() => void 0);
-          const answered = error instanceof MspError || error instanceof ProtocolError && error.line !== void 0;
-          if (answered)
-            throw error;
-          throw await hostStartFailure(handshake.child, error, handshake[initializeAnswered]());
-        }
-        return new _MuseClient(spawned.connection, {
-          durability: readSessionDurability(spawned.initializeResult),
-          host: spawned
-        });
-      }
-      /**
-       * The handshake result, when this client was built by `spawn`.
-       *
-       * A plain `Error`, not a typed one: reading this off a client that was not
-       * built by `spawn` is API misuse, not a protocol STATE an embedder branches
-       * on — a typed class here would send the SS2.13.3b recovery path chasing a
-       * host death that never happened.
-       */
-      get initializeResult() {
-        if (this.#initializeResult === void 0) {
-          throw new Error("initializeResult is only available on a client built by MuseClient.spawn");
-        }
-        return this.#initializeResult;
-      }
-      /** The host's SS2.11 exit row, when this client was built by `spawn`. */
-      get exit() {
-        if (this.#child === void 0) {
-          throw new Error("exit is only available on a client built by MuseClient.spawn");
-        }
-        return this.#child.exit;
-      }
-      /** The durability profile every session this client opens inherits. */
-      get durability() {
-        return this.#durability;
-      }
-      /** Open a new root session (tdd SS2.5.1). */
-      async startSession(options = {}) {
-        const params = {};
-        if (options.approvalMode != null)
-          params.approvalMode = options.approvalMode;
-        if (options.providerId != null)
-          params.providerId = options.providerId;
-        if (options.sessionId != null)
-          params.sessionId = options.sessionId;
-        if (options.workspaceRoot != null)
-          params.workspaceRoot = options.workspaceRoot;
-        if (options.workspaceRoots != null)
-          params.workspaceRoots = options.workspaceRoots;
-        if (options.modelId != null)
-          params.modelId = options.modelId;
-        if (options.permissionProfile != null)
-          params.permissionProfile = options.permissionProfile;
-        const required = options.requirePermissionProfile === true;
-        if (required && options.permissionProfile == null) {
-          throw new Error("requirePermissionProfile needs permissionProfile: require the selection you pass");
-        }
-        const session = await this.#open("session/start", params, (raw) => ({
-          result: raw,
-          verb: "session/start"
-        }));
-        if (!required)
-          return session;
-        return this.#proveSelection(session, options.permissionProfile);
-      }
-      /**
-       * Prove a required start selection (TEST-42624-10): the start result's own
-       * `session.permissionState` first (absent = unknown, never applied); else a
-       * point-in-time `session/read`, which never subscribes. Only `profileId ==
-       * requested` proceeds; anything else throws `PermissionProfileNotApplied`
-       * BEFORE any turn is sent. The refused session is dropped from the client
-       * (no orphan keeps folding for an id the caller can never reach — the SDK
-       * has no set/close-by-id verb); the error's `sessionId` is the caller's
-       * handle to resume via `sessionId` or start again. A failed read-back
-       * propagates: the client still never proceeds on the default.
-       */
-      async #proveSelection(session, requested) {
-        const opening = session.opening;
-        const started = opening !== void 0 && opening.verb === "session/start" ? committedProfileId(opening.result.session) : null;
-        if (started !== null) {
-          if (started === requested)
-            return session;
-          this.#sessions.delete(session);
-          throw new PermissionProfileNotApplied(requested, started, session.sessionId);
-        }
-        const read = await this.#connection.command("session/read", {
-          sessionId: session.sessionId
-        });
-        const served = committedProfileId(read["session"]);
-        if (served === requested)
-          return session;
-        this.#sessions.delete(session);
-        throw new PermissionProfileNotApplied(requested, served, session.sessionId);
-      }
-      /**
-       * Load an existing session and subscribe this connection to its view
-       * (tdd SS2.5.2).
-       *
-       * WITHHELD after an ephemeral host death (SS2.13.3b clause 2, "do not attempt
-       * to reattach"), and refused on THIS side of the transport: a reattach
-       * attempt that reaches the wire has already violated the clause, whatever the
-       * server answers.
-       */
-      async resumeSession(options) {
-        this.#assertReattachAllowed(options.sessionId);
-        const params = { sessionId: options.sessionId };
-        if (options.cursor != null)
-          params.cursor = options.cursor;
-        if (options.excludeItems != null)
-          params.excludeItems = options.excludeItems;
-        if (options.history != null)
-          params.history = options.history;
-        return this.#open("session/resume", params, (raw) => ({
-          result: raw,
-          verb: "session/resume"
-        }));
-      }
-      /**
-       * Shut the host down in an orderly way (SS2.1.2); the shutdown this causes
-       * is not reported to your sessions as a host death.
-       *
-       * The EOF this close produces is NOT a death, which is what `#closing`
-       * records.
-       *
-       * `#closing` covers only the EOF; it must not swallow the EXIT ROW. When the
-       * host ignores stdin EOF, `#child.close()` escalates to SIGTERM/SIGKILL and
-       * the exit classifies as a crash — an abnormal death under SS2.13.3b no
-       * matter who started the close, and one no transport event will ever report
-       * here because `#closing` already claimed the EOF. So the classification the
-       * close itself returns is forwarded to every session: `hostExited` answers
-       * `notADeath` for `cleanShutdown`, keeping the orderly arm inert.
-       */
-      async close() {
-        this.#closing = true;
-        if (this.#child !== void 0) {
-          const exit = await this.#child.close();
-          if (isAbnormalHostDeath(exit)) {
-            for (const session of this.#sessions)
-              session.hostExited(exit);
-          }
-          return;
-        }
-        await this.#connection.close();
-      }
-      /**
-       * The window `#route` holds unknown-session frames for: from the request to
-       * the Session's registration. Counted, not flagged, so two concurrent opens
-       * keep it open until the LAST settles; cleared on settle so a frame that
-       * named no session this client opened is held no longer than the open it
-       * rode in with (#49790).
-       */
-      async #open(verb, params, opening) {
-        this.#opening += 1;
-        try {
-          const opened = opening(await this.#connection.command(verb, params));
-          return this.#openSession(opened.result.session.sessionId, opened);
-        } finally {
-          this.#opening -= 1;
-          if (this.#opening === 0)
-            this.#held.clear();
-        }
-      }
-      #openSession(sessionId, opening) {
-        const session = new Session({
-          connection: this.#connection,
-          discarded: this.#discarded,
-          durability: this.#durability,
-          opening,
-          sessionId
-        });
-        this.#sessions.add(session);
-        const held = this.#held.get(sessionId);
-        if (held !== void 0) {
-          this.#held.delete(sessionId);
-          for (const frame of held)
-            session.apply(frame);
-        }
-        return session;
-      }
-      #assertReattachAllowed(sessionId) {
-        if (this.#discarded.sessionIds.has(sessionId)) {
-          throw new MuseSessionDiscardedError(`session ${sessionId} was discarded after an ephemeral host death; it cannot be resumed`);
-        }
-        if (this.#hostDied && !this.#survivesHostDeath()) {
-          throw new MuseSessionDiscardedError("this client's ephemeral host died; SS2.13.3b forbids reattaching to it");
-        }
-      }
-      #survivesHostDeath() {
-        return this.#durability.kind === "durable";
-      }
-      /**
-       * The transport reached EOF. If this client did not cause it, that is
-       * SS2.13.3b's second death notification (T030 obligation b) and every session
-       * this client opened discharges through the SAME `Session.hostExited` path
-       * the process exit uses — including its latch, so whichever notification
-       * arrives second replays the first one's report instead of a half delta.
-       */
-      #transportClosed() {
-        if (this.#closing)
-          return;
-        this.#hostDied = true;
-        for (const session of this.#sessions)
-          session.hostExited({ kind: "transportEof" });
-      }
-    };
-  }
-});
-
-// node_modules/@muse-code/sdk/dist/src/index.js
-var src_exports = {};
-__export(src_exports, {
-  COMMAND_REJECTED_CODE: () => COMMAND_REJECTED_CODE,
-  COMMAND_REJECTED_KIND: () => COMMAND_REJECTED_KIND,
-  Connection: () => Connection,
-  DiscardedSessions: () => DiscardedSessions,
-  EXPECTED_SCHEMA_FINGERPRINT: () => EXPECTED_SCHEMA_FINGERPRINT,
-  ItemStore: () => ItemStore,
-  MspError: () => MspError,
-  MspHandshake: () => MspHandshake,
-  MuseClient: () => MuseClient,
-  MuseForeignSessionError: () => MuseForeignSessionError,
-  MuseGapFillError: () => MuseGapFillError,
-  MuseHostDiedError: () => MuseHostDiedError,
-  MuseHostStartError: () => MuseHostStartError,
-  MuseServeChild: () => MuseServeChild,
-  MuseSessionDiscardedError: () => MuseSessionDiscardedError,
-  PendingCommandSet: () => PendingCommandSet,
-  PermissionProfileNotApplied: () => PermissionProfileNotApplied,
-  ProtocolError: () => ProtocolError,
-  Session: () => Session,
-  SessionFold: () => SessionFold,
-  SessionStateStore: () => SessionStateStore,
-  SpawnedMspConnection: () => SpawnedMspConnection,
-  checkServedFingerprint: () => checkServedFingerprint,
-  createUuidV7Mint: () => createUuidV7Mint,
-  fingerprintMismatchMessage: () => fingerprintMismatchMessage,
-  isLaunchFailure: () => isLaunchFailure,
-  readSessionDurability: () => readSessionDurability,
-  spawnMspConnection: () => spawnMspConnection
-});
-var init_src = __esm({
-  "node_modules/@muse-code/sdk/dist/src/index.js"() {
-    init_fingerprint();
-    init_item_store();
-    init_state_store();
-    init_session_fold();
-    init_pending_command_set();
-    init_connection();
-    init_spawn();
-    init_client();
-    init_discarded();
-    init_errors();
-    init_host_death();
-    init_host_start();
-    init_session();
-    init_turn_handle();
-  }
-});
 
 // src/provider-catalogs.mjs
 var ERROR_CODES = /* @__PURE__ */ new Set(["catalog-login-required", "catalog-key-override", "catalog-settings-incompatible", "catalog-account-changed", "catalog-rate-limited", "catalog-refresh-failed", "catalog-refresh-unsupported"]);
@@ -3813,73 +113,10 @@ var ProviderCatalogs = class {
 
 // src/broker.mjs
 import { randomUUID } from "node:crypto";
-
-// src/muse-code.mjs
-var MUSE_CODE_INTEGRATION_ID = "meta-muse-code";
-var MUSE_CODE_SERVICE_ID = "muse-code";
-var MUSE_CODE_EVIDENCE = Object.freeze({
-  repository: "https://github.com/meta-models/muse-code-sdk",
-  commit: "a0c8611b382584eb5091942b477f30e92e1c8d18",
-  sdkVersion: "1.4.7",
-  protocol: "Muse Session Protocol (MSP)",
-  schema: "https://github.com/meta-models/muse-code-sdk/blob/a0c8611b382584eb5091942b477f30e92e1c8d18/schema/msp/msp.d.ts",
-  experimentalDocsCommit: "1ee1e5dee1f5c4d9aad22c9182205ccb5648b2dd",
-  accountProtocol: "https://meta-models.github.io/muse-code-sdk/next/generated/msp/methods/account-loginstart/",
-  settingsProtocol: "https://meta-models.github.io/muse-code-sdk/next/generated/msp/types/settingswritevalueparams/",
-  isolationSource: "https://github.com/HarjjotSinghh/aonia/blob/main/docs/SPEC.md",
-  contributorTerms: "https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode",
-  modelAvailability: "https://dev.meta.ai/docs/models#models__muse-wonder-availability",
-  limitations: Object.freeze([
-    "agent-session-protocol",
-    "live-multi-account-isolation-unverified",
-    "contributor-setting-probed-per-host",
-    "catalog-is-not-entitlement",
-    "live-generation-unverified"
-  ])
-});
-var ERRORS = Object.freeze({
-  "muse-code-unavailable": "This Muse Code operation is unavailable on the current host.",
-  "muse-code-llm-unsupported": "Muse Code MSP runs agent sessions with host-owned tools. A compatible DSH LLM bridge has not been verified.",
-  "muse-code-observation-invalid": "The Muse Code observation did not match the verified MSP contract.",
-  "muse-code-observation-failed": "The Muse Code observation could not be read.",
-  "muse-code-observation-closed": "This Muse Code observation session has ended.",
-  "muse-code-cli-required": "Install the official Muse Code CLI and its supported MSP SDK on the host to use this connection.",
-  "muse-code-protocol-unsupported": "This Muse Code CLI does not provide the required account and settings protocol. Update the official CLI.",
-  "muse-code-login-required": "Sign in to this Muse Code connection first.",
-  "muse-code-login-failed": "Muse Code sign-in did not complete.",
-  "muse-code-mode-unavailable": "This account or Muse Code host cannot apply the requested Contributor setting.",
-  "muse-code-connection-changed": "This Muse Code connection or host profile changed during the operation.",
-  "muse-code-connection-disabled": "Enable this Muse Code connection before starting a new agent turn.",
-  "muse-code-busy": "This Muse Code connection is already performing an operation.",
-  "muse-code-session-failed": "The Muse Code agent session failed. No other account or API was used.",
-  "muse-code-model-unavailable": "The requested Muse Code model was not advertised by this host."
-});
-var MuseCodeError = class extends Error {
-  constructor(code) {
-    super(ERRORS[code] ?? ERRORS["muse-code-unavailable"]);
-    this.name = "MuseCodeError";
-    this.code = Object.hasOwn(ERRORS, code) ? code : "muse-code-unavailable";
-  }
-};
-
-// src/broker.mjs
 var KEY_PATTERN = /^llm-pi-ai\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 var LIVE = "running";
 var NS = "dsh-pi-login";
 var MAX_TIMER_DELAY_MS = 2147483647;
-var MUSE_LOGIN_REASONS = /* @__PURE__ */ new Set([
-  "muse-code-unavailable",
-  "muse-code-cli-required",
-  "muse-code-protocol-unsupported",
-  "muse-code-login-required",
-  "muse-code-login-failed",
-  "muse-code-connection-changed",
-  "muse-code-connection-disabled",
-  "muse-code-busy",
-  "muse-code-observation-invalid",
-  "muse-code-observation-failed",
-  "muse-code-observation-closed"
-]);
 var LoginError = class extends Error {
   constructor(code) {
     super(code);
@@ -3963,7 +200,7 @@ var PiLoginBroker = class {
   isCatalogCurrent(binding) {
     if (!this.connections.isCurrent(binding)) return false;
     const current = this.connections.lookup(binding.connectionId);
-    const identity2 = (connection) => JSON.stringify([
+    const identity = (connection) => JSON.stringify([
       connection.integrationId,
       connection.authMethod,
       connection.credentialRef,
@@ -3971,7 +208,7 @@ var PiLoginBroker = class {
       connection.profile?.api,
       connection.headerRefs
     ]);
-    return identity2(current) === identity2(binding);
+    return identity(current) === identity(binding);
   }
   withdrawStale(attempt) {
     attempt.reason = "connection-changed";
@@ -3998,6 +235,7 @@ var PiLoginBroker = class {
           name: model.name,
           enabled: model.enabled ?? !profile3.disabledModels?.includes(model.id),
           fast: model.serviceTier === "priority",
+          ...model.contributor ? { contributor: true } : {},
           ...model.discovered ? { discovered: true } : {},
           ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {}
         }))
@@ -4035,9 +273,10 @@ var PiLoginBroker = class {
     const provider = connection?.serviceId ?? key.slice("llm-pi-ai/".length);
     const profile2 = connection?.profile ?? this.section().value?.providers?.[provider];
     if (!profile2) throw new LoginError("not-enabled");
-    const field = choice.fast ? "enabledFastModels" : choice.discovered ? "enabledDiscoveredModels" : "disabledModels";
+    const optIn = choice.fast || choice.contributor || choice.discovered;
+    const field = choice.fast ? "enabledFastModels" : choice.contributor ? "enabledContributorModels" : choice.discovered ? "enabledDiscoveredModels" : "disabledModels";
     const selected = new Set(profile2[field] ?? []);
-    if (choice.fast || choice.discovered ? enabled : !enabled) selected.add(model);
+    if (optIn ? enabled : !enabled) selected.add(model);
     else selected.delete(model);
     const changes = { [field]: [...selected] };
     if (choice.discovered) {
@@ -4156,7 +395,6 @@ var PiLoginBroker = class {
     }, (error) => {
       attempt.status = attempt.controller.signal.aborted ? "cancelled" : "failed";
       if (!attempt.controller.signal.aborted && error instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error.message)) attempt.reason = "provider-expired";
-      else if (!attempt.controller.signal.aborted && connection?.integrationId === MUSE_CODE_INTEGRATION_ID && error instanceof MuseCodeError && MUSE_LOGIN_REASONS.has(error.code)) attempt.reason = error.code;
     }).finally(() => {
       if (attempt.loginStarted) this.connections.endLogin(connection.connectionId);
       clearTimeout(attempt.timer);
@@ -4400,8 +638,7 @@ var package_default = {
     }
   },
   dependencies: {
-    "@earendil-works/pi-ai": "1.1.0",
-    "@muse-code/sdk": "1.4.7"
+    "@earendil-works/pi-ai": "1.1.0"
   },
   engines: {
     node: ">=22.19.0"
@@ -4972,6 +1209,15 @@ var IntegrationRegistry = class {
   }
 };
 
+// src/sdk-service.mjs
+var MUSE_CODE_INTEGRATION_ID = "meta-muse-code";
+var MUSE_CODE_SERVICE_ID = "muse-code";
+function sdkServiceOf(connection) {
+  if (connection.integrationId === "pi") return connection.serviceId;
+  if (connection.integrationId === MUSE_CODE_INTEGRATION_ID && connection.serviceId === MUSE_CODE_SERVICE_ID) return "meta";
+  return void 0;
+}
+
 // src/connections.mjs
 var NS2 = "dsh-pi-login";
 var RECORD_SCOPE = "llm-pi-ai";
@@ -5076,12 +1322,12 @@ var ConnectionManager = class {
       text(connection.displayName);
       if (connection.profile?.headers && Object.keys(connection.profile.headers).length) throw new ConnectionError("secret-headers-require-reference");
       if (connection.headerRefs) validateHeaderRefs(connection.headerRefs);
-      if (connection.integrationId === "pi") this.validateProfile(connection);
-      else {
+      if (connection.integrationId !== "pi") {
         const owner = this.registry.owner(connection.integrationId);
         if (!owner.validateConnection) throw new ConnectionError("owner-managed");
         owner.validateConnection({ ...connection, connectionId: id });
       }
+      if (sdkServiceOf(connection) !== void 0) this.validateProfile(connection);
     }
   }
   async write(connections, revision, extra = [], token2 = this.registry.token()) {
@@ -5119,7 +1365,7 @@ var ConnectionManager = class {
         const key = this.authKey(connection);
         const record = connection.integrationId === "pi" ? await this.credentials.describeRecord(key) : await owner.describeConnection(connection);
         const configured = connection.credentialRef ? !!(await this.credentials.describe?.(connection.credentialRef))?.configured : record.configured === true;
-        const stored = connection.integrationId === "pi" && connection.authMethod === "oauth" && configured ? await this.credentials.readRecord(key) : void 0;
+        const stored = sdkServiceOf(connection) !== void 0 && connection.authMethod === "oauth" && configured ? await this.credentials.readRecord(key) : void 0;
         const expired = stored?.kind === "grant" && Number.isFinite(stored.payload?.expires) && stored.payload.expires <= Date.now();
         const verified = this.verified.get(id);
         const isVerified = verified?.record === connection.credentialRecordId && verified.credentialGeneration === connection.credentialGeneration;
@@ -5142,8 +1388,6 @@ var ConnectionManager = class {
           authStatus: this.pendingLogins.has(id) ? "updating" : expired ? "expired" : configured && isVerified ? "verified" : record.authStatus ?? (configured ? "saved" : "auth-required"),
           capabilities: service.capabilities,
           ...isVerified ? { verifiedAt: verified.verifiedAt } : {},
-          ...connection.museCode ? { museCode: structuredClone(connection.museCode) } : {},
-          ...record.executionKind ? { executionKind: record.executionKind } : {},
           profile: { ...connection.profile?.baseURL ? { baseURL: connection.profile.baseURL } : {}, ...connection.profile?.api ? { api: connection.profile.api } : {} },
           revision: section?.revision
         };
@@ -5208,8 +1452,8 @@ var ConnectionManager = class {
     try {
       if (input.apiKey !== void 0) {
         if (input.authMethod !== "api-key") throw new ConnectionError("unsupported-method");
-        const secret2 = text(input.apiKey, 16384);
-        await this.credentials.modifyRecord(credentialKey(id), () => ({ kind: "api-key", key: secret2 }));
+        const secret = text(input.apiKey, 16384);
+        await this.credentials.modifyRecord(credentialKey(id), () => ({ kind: "api-key", key: secret }));
         stored = true;
         connection.enabled = true;
       }
@@ -5226,10 +1470,10 @@ var ConnectionManager = class {
     const section = this.writable(revision);
     const connection = this.lookup(connectionId2);
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new ConnectionError("invalid-request");
-    const allowed = /* @__PURE__ */ new Set(["displayName", "enabled", "apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod", "contributorMode", "modelId"]);
+    const allowed = /* @__PURE__ */ new Set(["displayName", "enabled", "apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod"]);
     if (Object.keys(patch).some((key) => !allowed.has(key))) throw new ConnectionError("invalid-request");
-    if (connection.integrationId !== "pi" && ["apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod"].some((key) => patch[key] !== void 0)) throw new ConnectionError("owner-managed");
-    if (connection.integrationId === "pi" && ["contributorMode", "modelId"].some((key) => patch[key] !== void 0)) throw new ConnectionError("unsupported");
+    if (connection.integrationId !== "pi" && ["apiKey", "endpointUrl", "api", "headerRefs", "authMethod"].some((key) => patch[key] !== void 0)) throw new ConnectionError("owner-managed");
+    if (sdkServiceOf(connection) === void 0 && patch.profile !== void 0) throw new ConnectionError("owner-managed");
     if (patch.displayName !== void 0) connection.displayName = text(patch.displayName);
     if (patch.enabled !== void 0) {
       if (typeof patch.enabled !== "boolean") throw new ConnectionError("invalid-request");
@@ -5246,19 +1490,13 @@ var ConnectionManager = class {
     }
     if (patch.headerRefs) connection.headerRefs = validateHeaderRefs(patch.headerRefs);
     if (patch.profile) {
-      const fields = ["disabledModels", "enabledFastModels", "enabledDiscoveredModels", "reasoning"];
+      const fields = ["disabledModels", "enabledFastModels", "enabledDiscoveredModels", "enabledContributorModels", "reasoning"];
       if (Object.keys(patch.profile).some((key) => !fields.includes(key))) throw new ConnectionError("invalid-request");
       Object.assign(connection.profile, patch.profile);
     }
     const oldRecordId = connection.credentialRecordId;
     let newRecordId;
     try {
-      if (connection.integrationId !== "pi" && ["contributorMode", "modelId"].some((key) => patch[key] !== void 0)) {
-        const owner = this.registry.owner(connection.integrationId);
-        const changes = await owner.configureConnection(connection, patch, this.binding(connection));
-        if (!this.isCurrent(this.binding(connection))) throw new ConnectionError("connection-changed");
-        Object.assign(connection, changes);
-      }
       if (patch.authMethod !== void 0 && patch.authMethod !== connection.authMethod) {
         if (!["oauth", "api-key"].includes(patch.authMethod)) throw new ConnectionError("unsupported-method");
         connection.authMethod = patch.authMethod;
@@ -5305,6 +1543,7 @@ var ConnectionManager = class {
     delete copy.credentialRef;
     delete copy.headerRefs;
     delete copy.legacyRoute;
+    delete copy.museCatalog;
     delete copy.profile.apiKeyEnv;
     delete copy.profile.headers;
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token2);
@@ -5321,6 +1560,16 @@ var ConnectionManager = class {
       else await this.registry.owner(connection.integrationId).deleteCredentials(connection);
     }
     return { deleted: true };
+  }
+  /** Store the account catalog a Muse Code refresh returned; no model is enabled by this. */
+  async saveMuseCatalog(binding, rows) {
+    if (!this.isCurrent(binding)) throw new ConnectionError("connection-changed");
+    const token2 = this.registry.token();
+    const connection = this.lookup(binding.connectionId);
+    connection.museCatalog = structuredClone(rows);
+    delete connection.museCode;
+    delete connection.connectionId;
+    await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token2);
   }
   async beginLogin(connectionId2) {
     const token2 = this.registry.token();
@@ -5473,22 +1722,6 @@ function applyLoginUI(ctx, options = {}) {
               } else if (method === "connection-list") {
                 if (!options.connections) throw new LoginError("unavailable");
                 value = await options.connections.list();
-              } else if (["models", "refresh-models"].includes(method) && payload.connectionId && options.connections?.lookup(payload.connectionId).integrationId !== "pi") {
-                const connection = options.connections.lookup(payload.connectionId);
-                const binding = options.connections.binding(connection);
-                const owner = options.registry.owner(connection.integrationId);
-                const result = await owner.readModels(binding, { signal: request.signal });
-                if (!options.connections.isCurrent(binding)) throw new LoginError("connection-changed");
-                value = {
-                  connectionId: connection.connectionId,
-                  revision: options.connections.section()?.revision,
-                  enabled: connection.enabled,
-                  models: result.models,
-                  contributor: result.contributor,
-                  executionKind: result.executionKind,
-                  liveVerified: false,
-                  refresh: { canRefresh: true }
-                };
               } else if (method === "usage") {
                 if (!options.connections || !options.usage) throw new LoginError("unavailable");
                 options.connections.guard(payload);
@@ -5504,7 +1737,7 @@ function applyLoginUI(ctx, options = {}) {
           return Response.json({ type: "server-response", rpcId, result: { ok: true, value } }, { headers: { "cache-control": "no-store" } });
         } catch (error) {
           if (rpcId === void 0) return new Response("invalid request", { status: 400 });
-          const code = error instanceof LoginError || error instanceof ConnectionError || error instanceof RegistryError || error instanceof MuseCodeError ? error.code : "unavailable";
+          const code = error instanceof LoginError || error instanceof ConnectionError || error instanceof RegistryError ? error.code : "unavailable";
           return Response.json({ type: "server-response", rpcId, result: { ok: false, error: { code: `dsh-pi-login/${code}`, message: code, details: {} } } }, { headers: { "cache-control": "no-store" } });
         }
       }
@@ -6238,6 +2471,13 @@ function buildProvider(spec) {
 
 // src/runtime/fast.ts
 import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
+
+// src/catalog-metadata.mjs
+var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
+var MUSE_CONTRIBUTOR = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor");
+var MUSE_CONTRIBUTOR_HEADER = "x-tbh-contributor-mode";
+
+// src/runtime/fast.ts
 var GPT_FAST_IDS = [
   "gpt-5.5",
   "gpt-5.6-sol",
@@ -6259,11 +2499,35 @@ function supportsFastTier(provider, model) {
 function fastModelId(model) {
   return `${model}::fast`;
 }
+function contributorModelId(model) {
+  return `${model}::contributor`;
+}
 function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ */ new Set()) {
   const ids = new Set(models.map((model) => model.id));
   const configuredIds = new Set(profile2.models?.map((model) => model.id) ?? []);
   return models.flatMap((model) => {
     const supported = supportsFastTier(provider, model);
+    const muse = model[MUSE_CONTRIBUTOR];
+    if (muse !== void 0) {
+      const standard = {
+        id: model.id,
+        name: model.name,
+        model,
+        enabled: !profile2.disabledModels?.includes(model.id),
+        headers: { [MUSE_CONTRIBUTOR_HEADER]: "0" }
+      };
+      if (!muse) return [standard];
+      const id2 = contributorModelId(model.id);
+      if (ids.has(id2)) throw new PiAiCatalogError(`Contributor model ID "${id2}" conflicts with a configured model`);
+      return [standard, {
+        id: id2,
+        name: `${model.name} Contributor`,
+        model,
+        contributor: true,
+        enabled: profile2.enabledContributorModels?.includes(id2) === true,
+        headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" }
+      }];
+    }
     const ordinary = {
       id: model.id,
       name: model.name,
@@ -6295,9 +2559,6 @@ function streamWithTier(models, model, context, options, serviceTier) {
   if (model.api === "openai-codex-responses") return models.stream(model, context, full);
   throw new Error("Fast choices require an OpenAI Responses API");
 }
-
-// src/catalog-metadata.mjs
-var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
 
 // src/runtime/config.ts
 var DEFAULT_STREAM_IDLE_TIMEOUT_MS = 3e5;
@@ -6379,6 +2640,7 @@ var profile = z.object({
   disabledModels: z.array(z.string()),
   enabledFastModels: z.array(z.string()),
   enabledDiscoveredModels: z.array(z.string()),
+  enabledContributorModels: z.array(z.string()),
   apiKeyEnv: z.string().role("credential-ref"),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
@@ -6421,7 +2683,16 @@ var Config = z.object({
     integrationLabel: z.string(),
     serviceLabel: z.string(),
     profile,
-    museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() })
+    museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
+    museCatalog: z.array(z.object({
+      id: z.string().required(),
+      name: z.string().required(),
+      contextWindow: z.natural().required(),
+      maxTokens: z.natural().required(),
+      input: z.array(z.union(["text", "image"])),
+      efforts: z.array(z.string()),
+      contributor: z.boolean()
+    }))
   })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile()
 });
@@ -6990,7 +3261,7 @@ var isolatedAuth = {
 };
 function requestAuth(auth, profile2, signal) {
   if (profile2.connectionId === void 0 || auth.credentials === void 0) return auth;
-  const serviceId = profile2.serviceId;
+  const serviceId = profile2.sdkServiceId ?? profile2.serviceId;
   let credential = auth.credentials.read(serviceId, { signal }).then((value) => {
     if (value === void 0 || (profile2.authMethod === "oauth" ? value.type !== "oauth" : value.type !== "api_key")) return void 0;
     return structuredClone(value);
@@ -7202,7 +3473,7 @@ var PiAiAdapter = class extends LlmAdapter {
           signal: watchdog.signal,
           // Profile headers are deployment-owned; attribution names are
           // Harness-owned and therefore win collisions.
-          headers: { ...requestHeaders({ ...profile2.headers, ...storedHeaders }), ...accountAuthorization?.headers }
+          headers: { ...requestHeaders({ ...profile2.headers, ...storedHeaders }), ...choice.headers, ...accountAuthorization?.headers }
         };
         const events = choice.serviceTier !== void 0 ? streamWithTier(models, model, context, streamOptions, choice.serviceTier) : models.streamSimple(model, context, streamOptions);
         const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model, replayScope, options.provider)[Symbol.asyncIterator]();
@@ -7444,7 +3715,9 @@ function authContextFrom(ctx) {
 function resolveConnectionProfiles(connections, catalogs, validation = "strict") {
   const routes = /* @__PURE__ */ new Map();
   for (const [connectionId2, connection] of Object.entries(connections ?? {})) {
-    if (connection.integrationId !== "pi") continue;
+    const sdkService = sdkServiceOf(connection);
+    if (sdkService === void 0) continue;
+    const museCode = connection.integrationId === MUSE_CODE_INTEGRATION_ID;
     if (!connectionId2 || !connection.serviceId || !connection.routeId || !connection.credentialRecordId) {
       throw new Error("llm-pi-ai: connection identity must be non-empty");
     }
@@ -7452,15 +3725,15 @@ function resolveConnectionProfiles(connections, catalogs, validation = "strict")
       throw new Error(`llm-pi-ai: connection "${connectionId2}" has an invalid credential generation`);
     }
     if (routes.has(connection.routeId)) throw new Error(`llm-pi-ai: duplicate connection route "${connection.routeId}"`);
-    const installed = catalogs?.(connection.serviceId, connectionId2);
-    const defaults = installed ?? catalogModels(connection.serviceId);
-    const native = catalogModels(connection.serviceId);
+    const installed = catalogs?.(connection.serviceId, connectionId2) ?? (museCode ? /* @__PURE__ */ new Map() : void 0);
+    const defaults = installed ?? catalogModels(sdkService);
+    const native = catalogModels(sdkService);
     const unverified = /* @__PURE__ */ new Set();
     let source = connection.profile;
     if (!connection.legacyRoute && connection.routeId !== connection.serviceId && source.baseURL !== void 0) {
       const endpoint = source.baseURL.replace(/\/+$/, "");
       for (const id of /* @__PURE__ */ new Set([...defaults.keys(), ...source.models?.map((model2) => model2.id) ?? []])) {
-        const baseline = native.get(id)?.baseUrl ?? catalogProvider(connection.serviceId)?.baseUrl;
+        const baseline = native.get(id)?.baseUrl ?? catalogProvider(sdkService)?.baseUrl;
         if (baseline === void 0 || endpoint !== baseline.replace(/\/+$/, "")) unverified.add(id);
       }
       if (unverified.size && !source.models?.length) {
@@ -7476,11 +3749,11 @@ function resolveConnectionProfiles(connections, catalogs, validation = "strict")
         source = { ...source, modelOverrides: overrides };
       }
     }
-    const profile2 = resolveProfiles({ [connection.serviceId]: {
+    const profile2 = resolveProfiles({ [sdkService]: {
       ...source,
       displayName: connection.displayName,
       ...connection.credentialRef === void 0 ? {} : { apiKeyEnv: connection.credentialRef }
-    } }, validation, () => installed).get(connection.serviceId);
+    } }, museCode && installed?.size === 0 ? "deferred" : validation, () => installed).get(sdkService);
     const model = profile2.piProvider?.getModels()[0];
     routes.set(connection.routeId, {
       ...profile2,
@@ -7488,13 +3761,14 @@ function resolveConnectionProfiles(connections, catalogs, validation = "strict")
       connectionId: connectionId2,
       integrationId: connection.integrationId,
       serviceId: connection.serviceId,
+      sdkServiceId: sdkService,
       credentialRecordId: connection.credentialRecordId,
       credentialGeneration: connection.credentialGeneration,
       authMethod: connection.authMethod,
       ...connection.credentialRef === void 0 ? {} : { credentialRef: connection.credentialRef },
       ...connection.headerRefs === void 0 ? {} : { headerRefs: { ...connection.headerRefs } },
-      integrationLabel: connection.integrationLabel ?? (connection.integrationId === "pi" ? "Pi" : connection.integrationId),
-      serviceLabel: connection.serviceLabel ?? catalogProvider(connection.serviceId)?.name ?? connection.serviceId,
+      integrationLabel: connection.integrationLabel ?? (connection.integrationId === "pi" ? "Pi" : museCode ? "Meta" : connection.integrationId),
+      serviceLabel: connection.serviceLabel ?? (museCode ? "Muse Code" : catalogProvider(sdkService)?.name ?? connection.serviceId),
       modelChoices: profile2.modelChoices.map((choice) => unverified.has(choice.model.id) ? { ...choice, capabilityUnverified: true } : choice),
       replayScope: {
         connectionId: connectionId2,
@@ -7704,8 +3978,8 @@ import { randomUUID as randomUUID5 } from "node:crypto";
 import { isCredentialKeySegment as isCredentialKeySegment2 } from "@deepseek-ai/dsh-credentials";
 function loginMethods(provider) {
   const methods = [];
-  const oauth2 = provider?.auth.oauth;
-  if (oauth2 !== void 0) methods.push({ id: "oauth", label: oauth2.loginLabel ?? oauth2.name });
+  const oauth3 = provider?.auth.oauth;
+  if (oauth3 !== void 0) methods.push({ id: "oauth", label: oauth3.loginLabel ?? oauth3.name });
   const apiKey = provider?.auth.apiKey;
   if (apiKey?.login !== void 0) methods.push({ id: "api-key", label: apiKey.name });
   return methods;
@@ -7765,8 +4039,8 @@ function registerPiAiFlows(ctx, auth, onLogin) {
   const disposers = [];
   for (const providerId of catalogProviderIds()) {
     const provider = catalogProvider(providerId);
-    const [first, ...rest] = loginMethods(provider);
-    if (provider === void 0 || first === void 0) continue;
+    const [first2, ...rest] = loginMethods(provider);
+    if (provider === void 0 || first2 === void 0) continue;
     if (!isCredentialKeySegment2(providerId)) {
       ctx.logger.warn(
         'llm-pi-ai: catalog provider "%s" cannot address a credential record; its sign-in is not offered',
@@ -7777,7 +4051,7 @@ function registerPiAiFlows(ctx, auth, onLogin) {
     disposers.push(ctx.authorization.registerFlow({
       key: recordKeyFor(providerId),
       label: provider.name,
-      methods: [first, ...rest],
+      methods: [first2, ...rest],
       async run(session) {
         const models = createModels(auth);
         models.setProvider(provider);
@@ -7832,14 +4106,15 @@ function registerConnectionFlows(ctx, connections, onLogin) {
       }
     }
     for (const [id, connection] of Object.entries(current)) {
-      if (registered.has(id) || connection.integrationId !== "pi") continue;
-      const provider = catalogProvider(connection.serviceId);
+      const sdkService = sdkServiceOf(connection);
+      if (registered.has(id) || sdkService === void 0) continue;
+      const provider = catalogProvider(sdkService);
       const method = loginMethods(provider).find((method2) => method2.id === connection.authMethod);
       if (provider === void 0 || method === void 0 || !isCredentialKeySegment2(connection.credentialRecordId)) continue;
-      const identity2 = loginIdentity(connection);
+      const identity = loginIdentity(connection);
       const isCurrent = () => {
         const current2 = connections()[id];
-        return !disposed && ctx.get("profileContext") === profileContext && current2 !== void 0 && loginIdentity(current2) === identity2;
+        return !disposed && ctx.get("profileContext") === profileContext && current2 !== void 0 && loginIdentity(current2) === identity;
       };
       const flow = {
         key: recordKeyFor(connection.credentialRecordId),
@@ -7852,7 +4127,7 @@ function registerConnectionFlows(ctx, connections, onLogin) {
           session.signal.throwIfAborted();
           const auth = connectionAuthFrom(ctx, {
             connectionId: id,
-            serviceId: connection.serviceId,
+            serviceId: sdkService,
             credentialRecordId: connection.credentialRecordId,
             isCurrent: () => isCurrent() && !session.signal.aborted
           });
@@ -7860,7 +4135,7 @@ function registerConnectionFlows(ctx, connections, onLogin) {
           models.setProvider(provider);
           const type = connection.authMethod === "oauth" ? "oauth" : "api_key";
           let deviceId;
-          if (connection.serviceId === "openai" && type === "oauth") {
+          if (sdkService === "openai" && type === "oauth") {
             const record = await ctx.credentials.modifyRecord("dsh-pi-login/installation", async (current2) => {
               session.signal.throwIfAborted();
               if (!isCurrent()) throw new Error("stale-connection");
@@ -7869,7 +4144,7 @@ function registerConnectionFlows(ctx, connections, onLogin) {
             });
             deviceId = record?.kind === "grant" ? record.payload.deviceId : void 0;
           }
-          await models.login(connection.serviceId, type, {
+          await models.login(sdkService, type, {
             signal: session.signal,
             notify: (event) => {
               if (isCurrent() && !session.signal.aborted) relay(event, session);
@@ -7886,7 +4161,7 @@ function registerConnectionFlows(ctx, connections, onLogin) {
         }
       };
       const dispose2 = ctx.authorization.registerFlow(flow);
-      registered.set(id, { identity: identity2, dispose: dispose2 });
+      registered.set(id, { identity, dispose: dispose2 });
     }
   };
   const listeners = [
@@ -8004,7 +4279,7 @@ function apply(ctx, config, live) {
     auth,
     authForProfile: (profile2) => live?.authForProfile?.(profile2) ?? (profile2.connectionId === void 0 ? auth : connectionAuthFrom(ctx, {
       connectionId: profile2.connectionId,
-      serviceId: profile2.serviceId,
+      serviceId: profile2.sdkServiceId ?? profile2.serviceId,
       credentialRecordId: profile2.credentialRecordId,
       isCurrent: () => {
         const current = connections()?.[profile2.connectionId];
@@ -8398,7 +4673,7 @@ function codexAccountId(access2) {
     throw new ProviderReadError("auth-required");
   }
 }
-async function readProviderJson(response, { now = Date.now(), maxBytes = 262144 } = {}) {
+async function readProviderJson(response, { now = Date.now(), maxBytes = 262144, allowArray = false } = {}) {
   if (!response.ok) {
     await response.body?.cancel().catch(() => {
     });
@@ -8427,7 +4702,8 @@ async function readProviderJson(response, { now = Date.now(), maxBytes = 262144 
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return object(JSON.parse(new TextDecoder().decode(bytes)));
+    const value = JSON.parse(new TextDecoder().decode(bytes));
+    return allowArray && Array.isArray(value) ? value : object(value);
   } catch (error) {
     throw error instanceof ProviderReadError ? error : new ProviderReadError("error");
   } finally {
@@ -8533,15 +4809,15 @@ function normalizeUsageSnapshot(raw = {}) {
 }
 function fingerprint(connection, credential) {
   if (!credential) return "absent";
-  let identity2;
+  let identity;
   if (credential.type === "oauth" && connection.serviceId === "openai-codex") {
     try {
-      identity2 = codexAccountId(credential.access);
+      identity = codexAccountId(credential.access);
     } catch {
-      identity2 = credential.refresh;
+      identity = credential.refresh;
     }
-  } else identity2 = credential.type === "oauth" ? credential.refresh : credential.key ?? JSON.stringify(credential.env ?? {});
-  return createHash4("sha256").update(`${credential.type}:${identity2 ?? ""}`).digest("hex");
+  } else identity = credential.type === "oauth" ? credential.refresh : credential.key ?? JSON.stringify(credential.env ?? {});
+  return createHash4("sha256").update(`${credential.type}:${identity ?? ""}`).digest("hex");
 }
 var scope = (connection) => JSON.stringify([connection.profileKey, connection.integrationId, connection.serviceId, connection.connectionId, connection.credentialGeneration, connection.authMethod, connection.credentialRecordId, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api, Object.keys(connection.headerRefs ?? {}).some((key) => key.toLowerCase() === "authorization")]);
 var publicIdentity = (connection) => ({ integrationId: connection.integrationId, serviceId: connection.serviceId, connectionId: connection.connectionId });
@@ -8597,9 +4873,9 @@ var AccountUsageManager = class {
       let credential;
       if (entry.provider.requiresCredentials !== false) {
         credential = await withinDeadline(() => this.credentials?.read(connection));
-        const identity2 = fingerprint(connection, credential);
-        if (entry.principal !== void 0 && entry.principal !== identity2 && !entry.refreshing) entry.cache.invalidate();
-        if (!entry.refreshing) entry.principal = identity2;
+        const identity = fingerprint(connection, credential);
+        if (entry.principal !== void 0 && entry.principal !== identity && !entry.refreshing) entry.cache.invalidate();
+        if (!entry.refreshing) entry.principal = identity;
       }
       await entry.cache.get(async (requestSignal) => {
         let effective = credential;
@@ -8646,861 +4922,45 @@ var AccountUsageManager = class {
   }
 };
 
-// src/muse-code-host.mjs
-import { createHash as createHash6 } from "node:crypto";
-import { mkdir as mkdir2, mkdtemp as mkdtemp2, writeFile as writeFile2, readFile as readFile2, lstat as lstat2, rm } from "node:fs/promises";
-import { accessSync, constants } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { join as join2, isAbsolute, delimiter } from "node:path";
-
-// src/muse-code-observations.mjs
-var EFFORTS = /* @__PURE__ */ new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
-var object2 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var invalid3 = () => {
-  throw new MuseCodeError("muse-code-observation-invalid");
-};
-var identifier = (value) => typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value);
-var label3 = (value) => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 200) : invalid3();
-var positive = (value) => Number.isSafeInteger(value) && value > 0;
-var nonnegative = (value) => Number.isSafeInteger(value) && value >= 0;
-var timestamp2 = (value) => nonnegative(value) && value <= 864e13;
-var iso3 = (value) => timestamp2(value) ? new Date(value).toISOString() : invalid3();
-function identity(binding) {
-  if (!object2(binding) || !identifier(binding.connectionId) || !identifier(binding.routeId)) invalid3();
-  return {
-    integrationId: MUSE_CODE_INTEGRATION_ID,
-    serviceId: MUSE_CODE_SERVICE_ID,
-    connectionId: binding.connectionId
-  };
-}
-function normalizeMuseCodeUsage(usage, binding, checkedAt = Date.now()) {
-  const attribution = identity(binding);
-  const checked = iso3(checkedAt);
-  if (usage === void 0) return {
-    ...attribution,
-    source: "last-observed",
-    status: "unobserved",
-    checkedAt: checked,
-    windows: []
-  };
-  if (!object2(usage) || !identifier(usage.tier) || !timestamp2(usage.observedAtMs) || !object2(usage.weekly) || !object2(usage.window) || !nonnegative(usage.weekly.usedPercent) || !timestamp2(usage.weekly.resetsAtMs) || !nonnegative(usage.window.usedPercent) || !timestamp2(usage.window.resetsAtMs) || !positive(usage.window.windowDurationMins) || !Number.isSafeInteger(usage.window.windowDurationMins * 60)) invalid3();
-  return {
-    ...attribution,
-    source: "last-observed",
-    status: "available",
-    sourceObservedAt: iso3(usage.observedAtMs),
-    checkedAt: checked,
-    windows: [
-      {
-        id: "window",
-        scope: "muse-code-subscription-window",
-        usedPercent: usage.window.usedPercent,
-        resetsAt: iso3(usage.window.resetsAtMs),
-        windowSeconds: usage.window.windowDurationMins * 60
-      },
-      {
-        id: "weekly",
-        scope: "muse-code-subscription-weekly",
-        usedPercent: usage.weekly.usedPercent,
-        resetsAt: iso3(usage.weekly.resetsAtMs),
-        windowSeconds: null
-      }
-    ]
-  };
-}
-function normalizeMuseCodeCatalog(result) {
-  if (!object2(result) || !identifier(result.providerId) || !identifier(result.source) || !(result.profileId === null || identifier(result.profileId)) || !Array.isArray(result.models) || result.models.length > 2e3) invalid3();
-  const seen = /* @__PURE__ */ new Set();
-  const models = result.models.map((row) => {
-    if (!object2(row) || !identifier(row.modelId) || !identifier(row.providerId) || !(row.profileId === null || identifier(row.profileId)) || !(row.contextLimit === null || positive(row.contextLimit)) || !(row.outputLimit === null || positive(row.outputLimit)) || typeof row.isActive !== "boolean" || typeof row.isDefault !== "boolean") invalid3();
-    const key = JSON.stringify([row.providerId, row.profileId, row.modelId]);
-    if (seen.has(key)) invalid3();
-    seen.add(key);
-    let reasoningEfforts2 = null;
-    if (row.variants !== void 0 && row.variants !== "unknown") {
-      if (!Array.isArray(row.variants) || row.variants.some((effort) => !EFFORTS.has(effort)) || new Set(row.variants).size !== row.variants.length) invalid3();
-      reasoningEfforts2 = [...row.variants];
-    }
-    if (row.defaultReasoningEffort !== void 0 && (!reasoningEfforts2 || !reasoningEfforts2.includes(row.defaultReasoningEffort))) invalid3();
-    return {
-      modelId: row.modelId,
-      providerId: row.providerId,
-      profileId: row.profileId,
-      label: label3(row.displayLabel),
-      contextLimit: row.contextLimit,
-      outputLimit: row.outputLimit,
-      isActive: row.isActive,
-      isDefault: row.isDefault,
-      reasoningEfforts: reasoningEfforts2,
-      ...row.defaultReasoningEffort !== void 0 ? { defaultReasoningEffort: row.defaultReasoningEffort } : {},
-      entitlement: "unverified",
-      runnable: false
-    };
-  });
-  return { providerId: result.providerId, profileId: result.profileId, source: result.source, models };
-}
-
-// src/muse-code-host.mjs
-var MUSE_CODE_CONTRIBUTOR_TERMS = "https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode";
-var MUSE_CODE_MODELS = Object.freeze(["muse-wonder-1.0", "muse-wonder-full-1.0"]);
-var ID2 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-var object3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-var secret = (value) => typeof value === "string" && value.length > 0 && value.length <= 1024 * 1024;
-var modeKey = (key) => /^(?:[a-z_]+\.)*contributor_mode(?:_enabled)?$/.test(key);
-var opaqueId = (value) => typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value);
-var EFFORTS2 = /* @__PURE__ */ new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
-var fail = (code) => {
-  throw new MuseCodeError(code);
-};
-var dataSignature = (connection) => JSON.stringify([
-  connection.profileKey,
-  connection.integrationId,
-  connection.serviceId,
-  connection.connectionId,
-  connection.credentialRecordId,
-  connection.credentialGeneration
-]);
-var leaseSignature = (connection) => JSON.stringify([dataSignature(connection), connection.generation, connection.museCode]);
-function museCodeModelChoices(catalog, contributor = false) {
-  return MUSE_CODE_MODELS.flatMap((modelId) => {
-    const model = catalog.models.find((row) => row.modelId === modelId);
-    if (!model) return [];
-    const name2 = modelId === "muse-wonder-1.0" ? "Wonder1" : "Wonder Full";
-    return [false, true].map((mode) => ({
-      ...model,
-      id: `${modelId}${mode ? "::contributor" : ""}`,
-      modelId,
-      name: `${name2}${mode ? " Contributor" : ""}`,
-      label: `${name2}${mode ? " Contributor" : ""}`,
-      contributor: mode,
-      runnable: false,
-      sessionSupported: true,
-      isActive: model.isActive && mode === contributor,
-      isDefault: model.isDefault && mode === contributor
-    }));
-  });
-}
-function museCodeCredentialKey(connection) {
-  if (!ID2.test(connection?.credentialRecordId)) fail("muse-code-connection-changed");
-  return `dsh-muse-code/${connection.credentialRecordId}`;
-}
-function validateMuseCodeConnection(connection) {
-  if (connection?.integrationId !== "meta-muse-code" || connection.serviceId !== "muse-code" || connection.authMethod !== "oauth" || !ID2.test(connection.connectionId) || !Number.isSafeInteger(connection.credentialGeneration) || connection.credentialGeneration < 0 || connection.credentialRef || connection.headerRefs && Object.keys(connection.headerRefs).length || connection.profile?.baseURL || connection.profile?.api || connection.profile?.apiKeyEnv || connection.profile?.headers && Object.keys(connection.profile.headers).length) fail("muse-code-connection-changed");
-  museCodeCredentialKey(connection);
-}
-function museCodeEnvironment(home, dataRoot, environment = process.env, platform = process.platform) {
-  const env = {};
-  for (const key of [
-    "PATH",
-    "SystemRoot",
-    "WINDIR",
-    "ComSpec",
-    "PATHEXT",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_EXTRA_CA_CERTS",
-    "HTTPS_PROXY",
-    "HTTP_PROXY",
-    "ALL_PROXY",
-    "NO_PROXY",
-    "https_proxy",
-    "http_proxy",
-    "all_proxy",
-    "no_proxy"
-  ]) {
-    if (typeof environment[key] === "string") env[key] = environment[key];
-  }
-  Object.assign(env, {
-    HOME: home,
-    USERPROFILE: home,
-    XDG_CONFIG_HOME: join2(home, ".config"),
-    XDG_DATA_HOME: dataRoot,
-    XDG_CACHE_HOME: join2(home, ".cache"),
-    TMPDIR: join2(home, "tmp"),
-    TEMP: join2(home, "tmp"),
-    TMP: join2(home, "tmp"),
-    TBH_CREDENTIAL_BACKEND: "file",
-    TBH_DISABLE_TELEMETRY: "1",
-    MUSE_EXPERIMENTAL_SDK_ENABLED: "on"
-  });
-  if (platform === "win32") Object.assign(env, { APPDATA: join2(home, "AppData", "Roaming"), LOCALAPPDATA: join2(home, "AppData", "Local") });
-  return env;
-}
-function resolveMuseBin(environment = process.env, home = homedir2(), platform = process.platform) {
-  if (platform === "win32") return "muse";
-  for (const dir of (environment.PATH ?? "").split(delimiter).filter(Boolean)) {
-    const candidate = join2(dir, "muse");
-    try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-    }
-  }
-  const installed = join2(home, ".local", "bin", "muse");
-  try {
-    accessSync(installed, constants.X_OK);
-    return installed;
-  } catch {
-  }
-  return "muse";
-}
-function createSdkMuseHostFactory({ museBin, sdkLoader = () => Promise.resolve().then(() => (init_src(), src_exports)) } = {}) {
-  return async ({ home, dataRoot, env, signal }) => {
-    let handshake, abort;
-    try {
-      const sdk = await sdkLoader();
-      signal?.throwIfAborted();
-      handshake = sdk.spawnMspConnection({
-        command: museBin ?? resolveMuseBin(),
-        args: ["serve"],
-        cwd: home,
-        env,
-        shutdownTimeoutMs: 5e3
-      });
-      abort = () => {
-        void handshake.close().catch(() => {
-        });
-      };
-      signal?.addEventListener("abort", abort, { once: true });
-      const host = await handshake.initialize({
-        clientInfo: { name: "dsh_muse_code", title: "DS Harness Muse Code", version: "0.6.0" },
-        capabilities: { experimentalApi: true, userInputDialogs: false }
-      });
-      signal?.throwIfAborted();
-      const listeners = /* @__PURE__ */ new Set();
-      host.connection.onNotification((notification) => {
-        for (const listener of listeners) listener(notification);
-      });
-      host.connection.onServerRequest(async () => fail("muse-code-llm-unsupported"));
-      let closed = false;
-      return {
-        initializeResult: host.initializeResult,
-        request: (method, params) => host.connection.request(method, params),
-        command: (method, params) => host.connection.command(method, params, { maxAttempts: 1 }),
-        onNotification(listener) {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-        async close() {
-          if (closed) return;
-          closed = true;
-          signal?.removeEventListener("abort", abort);
-          listeners.clear();
-          await host.close();
-        }
-      };
-    } catch {
-      if (abort) signal?.removeEventListener("abort", abort);
-      await handshake?.close().catch(() => {
-      });
-      fail("muse-code-cli-required");
-    }
-  };
-}
-function museCodeAuthDocument(value) {
-  const meta = value?.providers?.meta;
-  if (!object3(value) || !Number.isSafeInteger(value.schema_version) || value.schema_version < 1 || !object3(meta) || meta.mechanism !== void 0 && meta.mechanism !== "oauth" || !secret(meta.access_token) || meta.api_key !== void 0 && !secret(meta.api_key) || meta.storage === "keychain") fail("muse-code-login-failed");
-  if (meta.api_base_url !== void 0) {
-    let url;
-    try {
-      url = new URL(meta.api_base_url);
-    } catch {
-      fail("muse-code-login-failed");
-    }
-    if (url.origin !== "https://api.meta.ai" || !["/", "/v1", "/v1/"].includes(url.pathname) || url.search || url.hash || url.username || url.password) fail("muse-code-login-failed");
-  }
-  return { ...structuredClone(value), providers: { meta: structuredClone(meta) } };
-}
-function publicAccount(value) {
-  if (!object3(value) || typeof value.state !== "string" || typeof value.credentialRequired !== "boolean") fail("muse-code-protocol-unsupported");
-  return {
-    state: ["loggedOut", "envKey", "apiKey", "accountLogin"].includes(value.state) ? value.state : "unknown",
-    credentialRequired: value.credentialRequired
-  };
-}
-async function bounded(work, signal, timeout = 2e4) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
-  timeoutId.unref?.();
-  const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-  let abort;
-  try {
-    combined.throwIfAborted();
-    const cancelled = new Promise((_, reject) => {
-      abort = () => reject(new MuseCodeError("muse-code-connection-changed"));
-      combined.addEventListener("abort", abort, { once: true });
-    });
-    return await Promise.race([Promise.resolve().then(work), cancelled]);
-  } catch (error) {
-    if (error instanceof MuseCodeError) throw error;
-    if (["methodNotFound", "experimentalRequired", "capabilityRequired"].includes(error?.kind)) fail("muse-code-protocol-unsupported");
-    fail("muse-code-unavailable");
-  } finally {
-    clearTimeout(timeoutId);
-    if (abort) combined.removeEventListener("abort", abort);
-  }
-}
-var MuseCodeHostManager = class {
-  constructor({
-    credentials,
-    privateRoot,
-    openHost = createSdkMuseHostFactory(),
-    isCurrent = () => true,
-    canExecute = (connection) => connection.enabled !== false,
-    environment = process.env,
-    now = Date.now
-  } = {}) {
-    if (!credentials || !isAbsolute(privateRoot ?? "")) fail("muse-code-cli-required");
-    Object.assign(this, { credentials, privateRoot, openHost, isCurrent, canExecute, environment, now });
-    this.live = /* @__PURE__ */ new Map();
-    this.closed = false;
-  }
-  check(connection, signal) {
-    if (this.closed || signal?.aborted || !this.isCurrent(connection)) fail("muse-code-connection-changed");
-    validateMuseCodeConnection(connection);
-  }
-  checkExecution(connection, signal) {
-    this.check(connection, signal);
-    if (!this.canExecute(connection)) fail("muse-code-connection-disabled");
-  }
-  async open(connection, { signal, login = false, exclusive = false, observation = false } = {}) {
-    this.check(connection, signal);
-    const existing = this.live.get(connection.connectionId);
-    if (existing) {
-      if (!observation || existing.exclusive || existing.signature !== leaseSignature(connection)) fail("muse-code-busy");
-      return this.consume(existing, signal, true);
-    }
-    const controller = new AbortController();
-    const combined = controller.signal;
-    const lease = {
-      connection: structuredClone(connection),
-      signature: leaseSignature(connection),
-      exclusive: login || exclusive,
-      controller,
-      consumers: 0,
-      queries: /* @__PURE__ */ new Map(),
-      close: async () => {
-      }
-    };
-    this.live.set(connection.connectionId, lease);
-    let home, host;
-    const close = async () => {
-      controller.abort();
-      try {
-        await host?.close();
-      } catch {
-      } finally {
-        if (home) await rm(home, { recursive: true, force: true }).catch(() => {
-        });
-        if (this.live.get(connection.connectionId) === lease) this.live.delete(connection.connectionId);
-      }
-    };
-    lease.close = close;
-    lease.ready = (async () => {
-      try {
-        const scope2 = createHash6("sha256").update(dataSignature(connection)).digest("hex");
-        const ownedRoot = join2(this.privateRoot, scope2);
-        await mkdir2(ownedRoot, { recursive: true, mode: 448 });
-        this.check(connection, combined);
-        home = await mkdtemp2(join2(ownedRoot, "home-"));
-        const config = join2(home, ".config", "muse"), dataRoot = join2(ownedRoot, "data");
-        await Promise.all([
-          mkdir2(config, { recursive: true, mode: 448 }),
-          mkdir2(dataRoot, { recursive: true, mode: 448 }),
-          mkdir2(join2(home, "tmp"), { recursive: true, mode: 448 })
-        ]);
-        const record = login ? void 0 : await this.credentials.readRecord(museCodeCredentialKey(connection));
-        this.check(connection, combined);
-        let mode = { enabled: false };
-        if (record) {
-          if (record.kind !== "grant" || record.payload?.format !== "muse-code-cli-auth-v1") fail("muse-code-login-required");
-          const document = museCodeAuthDocument(record.payload.authDocument);
-          await writeFile2(join2(config, "auth.json"), JSON.stringify(document), { mode: 384 });
-          mode = record.payload.mode ?? mode;
-        } else if (!login) fail("muse-code-login-required");
-        if (connection.museCode) mode = {
-          enabled: connection.museCode.contributorMode === true
-        };
-        await writeFile2(join2(config, "settings.json"), JSON.stringify({ schema_version: 1 }), { mode: 384 });
-        const opening = Promise.resolve().then(() => this.openHost({
-          home,
-          dataRoot,
-          env: museCodeEnvironment(home, dataRoot, this.environment),
-          signal: combined
-        })).then((opened) => {
-          if (combined.aborted || this.closed || !this.isCurrent(connection)) {
-            void opened.close().catch(() => {
-            });
-            fail("muse-code-connection-changed");
-          }
-          return opened;
-        });
-        host = await bounded(() => opening, combined);
-        this.check(connection, combined);
-        const request = (method, params) => bounded(() => {
-          this.check(connection, combined);
-          return host.request(method, params);
-        }, combined);
-        const schema = await request("settings/readSchema");
-        const values = await request("settings/read");
-        if (schema?.schemaVersion !== 1 || !object3(schema.keys) || values?.schemaVersion !== 1 || !object3(values.values)) fail("muse-code-protocol-unsupported");
-        const keys = Object.keys(schema.keys).filter((key) => modeKey(key) && schema.keys[key]?.type === "boolean" && ["boolean", "undefined"].includes(typeof values.values[key]));
-        if (keys.length !== 1) fail("muse-code-mode-unavailable");
-        const keyPath = keys[0];
-        const applyMode = async (enabled) => {
-          const written = await request("settings/writeValue", { keyPath, value: enabled });
-          if (written?.keyPath !== keyPath || written.effectiveValue !== enabled) fail("muse-code-mode-unavailable");
-          const read = await request("settings/read");
-          if (read?.values?.[keyPath] !== enabled) fail("muse-code-mode-unavailable");
-          return { keyPath, enabled };
-        };
-        mode = await applyMode(login ? false : mode.enabled === true);
-        const account = publicAccount(await request("account/read"));
-        if (!login && account.state !== "accountLogin") fail("muse-code-login-required");
-        return { host, home, config, dataRoot, signal: combined, request, close, applyMode, mode, account };
-      } catch (error) {
-        lease.failure = error instanceof MuseCodeError ? error : new MuseCodeError("muse-code-cli-required");
-        await close();
-        throw lease.failure;
-      }
-    })();
-    void lease.ready.catch(() => {
-    });
-    return this.consume(lease, signal, false);
-  }
-  async consume(lease, signal, observationOnly) {
-    lease.consumers++;
-    const combined = signal ? AbortSignal.any([signal, lease.controller.signal]) : lease.controller.signal;
-    let released = false;
-    const close = async () => {
-      if (released) return;
-      released = true;
-      if (--lease.consumers === 0) await lease.close();
-    };
-    try {
-      const handle = await bounded(() => lease.ready, combined);
-      this.check(lease.connection, combined);
-      const request = (method, params) => bounded(() => {
-        this.check(lease.connection, combined);
-        if (!["model/list", "usage/read"].includes(method)) return handle.host.request(method, params);
-        const key = JSON.stringify([method, params]);
-        if (!lease.queries.has(key)) {
-          const query = bounded(() => handle.host.request(method, params), lease.controller.signal).finally(() => lease.queries.delete(key));
-          lease.queries.set(key, query);
-        }
-        return lease.queries.get(key);
-      }, combined);
-      return { ...handle, signal: combined, request, close, observationOnly };
-    } catch (error) {
-      await close();
-      throw signal?.aborted ? error : lease.failure ?? error;
-    }
-  }
-  async authDocument(handle) {
-    const path = join2(handle.config, "auth.json");
-    const stat = await lstat2(path);
-    if (!stat.isFile() || stat.size > 2 * 1024 * 1024) fail("muse-code-login-failed");
-    try {
-      return museCodeAuthDocument(JSON.parse(await readFile2(path, "utf8")));
-    } catch {
-      fail("muse-code-login-failed");
-    }
-  }
-  async commit(connection, handle, mode = handle.mode) {
-    this.check(connection, handle.signal);
-    const authDocument = await this.authDocument(handle);
-    this.check(connection, handle.signal);
-    await this.credentials.modifyRecord(museCodeCredentialKey(connection), async () => {
-      this.check(connection, handle.signal);
-      return { kind: "grant", payload: { format: "muse-code-cli-auth-v1", authDocument, mode } };
-    });
-    this.check(connection, handle.signal);
-  }
-  async login(connection, { signal, notify = () => {
-  } } = {}) {
-    const handle = await this.open(connection, { signal, login: true });
-    let unwatch;
-    try {
-      const completed = new Promise((resolve2) => {
-        unwatch = handle.host.onNotification((frame) => {
-          if (frame.method === "account/loginCompleted") resolve2(frame.params?.outcome);
-        });
-      });
-      const started = await handle.request("account/loginStart", { type: "deviceCode" });
-      let url;
-      try {
-        url = new URL(started.verificationUrl);
-      } catch {
-        fail("muse-code-login-failed");
-      }
-      if (url.protocol !== "https:" || !["auth.meta.com", "accountscenter.meta.com"].includes(url.hostname) || url.username || url.password || typeof started.userCode !== "string" || !/^[A-Za-z0-9-]{1,40}$/.test(started.userCode)) fail("muse-code-login-failed");
-      this.check(connection, handle.signal);
-      notify({ message: "Sign in with this Muse Code account.", url: url.href, code: started.userCode });
-      const outcome = await bounded(() => completed, handle.signal, 6e5);
-      if (outcome !== "granted") fail("muse-code-login-failed");
-      const account = publicAccount(await handle.request("account/read"));
-      if (account.state !== "accountLogin") fail("muse-code-login-failed");
-      handle.mode = await handle.applyMode(connection.museCode?.contributorMode === true);
-      await this.commit(connection, handle);
-      return { authorized: true, account, contributor: handle.mode.enabled, executionKind: "agent-session", liveVerified: false };
-    } catch (error) {
-      try {
-        await bounded(() => handle.host.request("account/loginCancel"), void 0, 1e3);
-      } catch {
-      }
-      if (error instanceof MuseCodeError) throw error;
-      fail("muse-code-login-failed");
-    } finally {
-      unwatch?.();
-      await handle.close();
-    }
-  }
-  async read(connection, { signal, includeModels = true, includeUsage = true } = {}) {
-    const handle = await this.open(connection, { signal, observation: true });
-    let committed = false;
-    try {
-      const [models, usage] = await Promise.allSettled([
-        includeModels ? handle.request("model/list", {}).then(normalizeMuseCodeCatalog) : void 0,
-        includeUsage ? handle.request("usage/read").then((raw) => normalizeMuseCodeUsage(raw.usage, connection, this.now())) : void 0
-      ]);
-      if (!handle.observationOnly) await this.commit(connection, handle);
-      committed = true;
-      return {
-        account: handle.account,
-        contributor: handle.mode.enabled,
-        executionKind: "agent-session",
-        liveVerified: false,
-        ...includeModels ? models.status === "fulfilled" ? {
-          models: museCodeModelChoices(models.value, handle.mode.enabled),
-          diagnostics: models.value.models.filter((model) => !MUSE_CODE_MODELS.includes(model.modelId)).map((model) => ({ ...model, runnable: false, sessionSupported: false }))
-        } : { models: [], modelsError: models.reason instanceof MuseCodeError ? models.reason.code : "muse-code-observation-failed" } : {},
-        ...includeUsage ? usage.status === "fulfilled" ? { usage: usage.value } : {
-          usage: {
-            integrationId: "meta-muse-code",
-            serviceId: "muse-code",
-            connectionId: connection.connectionId,
-            source: "last-observed",
-            status: "error",
-            windows: []
-          },
-          usageError: usage.reason instanceof MuseCodeError ? usage.reason.code : "muse-code-observation-failed"
-        } : {}
-      };
-    } finally {
-      if (!committed && !handle.observationOnly) await this.commit(connection, handle).catch(() => {
-      });
-      await handle.close();
-    }
-  }
-  async readModels(connection, options = {}) {
-    const result = await this.read(connection, { ...options, includeModels: true, includeUsage: false });
-    if (result.modelsError) throw new MuseCodeError(result.modelsError);
-    return result;
-  }
-  async readUsage(connection, options = {}) {
-    const result = await this.read(connection, { ...options, includeModels: false, includeUsage: true });
-    if (result.usageError) throw new MuseCodeError(result.usageError);
-    return result.usage;
-  }
-  async configure(connection, patch, { signal } = {}) {
-    if (patch.modelId !== void 0 && !MUSE_CODE_MODELS.includes(patch.modelId)) fail("muse-code-model-unavailable");
-    if (patch.contributorMode !== void 0 && typeof patch.contributorMode !== "boolean") fail("muse-code-mode-unavailable");
-    const handle = await this.open(connection, { signal, exclusive: true });
-    try {
-      const next = {
-        contributorMode: connection.museCode?.contributorMode ?? handle.mode.enabled,
-        ...connection.museCode?.modelId ? { modelId: connection.museCode.modelId } : {}
-      };
-      if (patch.contributorMode !== void 0) {
-        await handle.applyMode(patch.contributorMode);
-        next.contributorMode = patch.contributorMode;
-      }
-      const requested = patch.modelId ?? next.modelId;
-      if (requested !== void 0) {
-        const catalog = normalizeMuseCodeCatalog(await handle.request("model/list", {}));
-        if (!catalog.models.some((model) => model.modelId === requested)) fail("muse-code-model-unavailable");
-        next.modelId = requested;
-      }
-      return { museCode: next };
-    } finally {
-      await this.commit(connection, handle).catch(() => {
-      });
-      await handle.close();
-    }
-  }
-  async startAgentSession(connection, { modelId = connection.museCode?.modelId, workspaceRoot, signal } = {}) {
-    this.checkExecution(connection, signal);
-    if (!MUSE_CODE_MODELS.includes(modelId)) fail("muse-code-model-unavailable");
-    if (!isAbsolute(workspaceRoot ?? "")) fail("muse-code-session-failed");
-    const handle = await this.open(connection, { signal });
-    try {
-      const catalog = normalizeMuseCodeCatalog(await handle.request("model/list", {}));
-      const model = catalog.models.find((row) => row.modelId === modelId);
-      if (!model) fail("muse-code-model-unavailable");
-      this.checkExecution(connection, handle.signal);
-      const result = await bounded(() => handle.host.command("session/start", {
-        modelId,
-        providerId: model.providerId,
-        workspaceRoot,
-        approvalMode: "denyUnmatched"
-      }), handle.signal);
-      if (!opaqueId(result?.session?.sessionId) || result.session.modelId !== modelId || result.session.providerId !== model.providerId) fail("muse-code-session-failed");
-      return new MuseCodeAgentSession(this, connection, handle, result.session, model.reasoningEfforts);
-    } catch (error) {
-      await handle.close();
-      if (error instanceof MuseCodeError) throw error;
-      fail("muse-code-session-failed");
-    }
-  }
-  async resumeAgentSession(connection, { sessionId, signal } = {}) {
-    if (!opaqueId(sessionId)) fail("muse-code-session-failed");
-    const handle = await this.open(connection, { signal });
-    try {
-      const result = await bounded(() => handle.host.command("session/resume", { sessionId, excludeItems: false }), handle.signal);
-      if (result?.session?.sessionId !== sessionId || !MUSE_CODE_MODELS.includes(result.session.modelId)) fail("muse-code-session-failed");
-      const catalog = normalizeMuseCodeCatalog(await handle.request("model/list", { sessionId }));
-      const model = catalog.models.find((row) => row.modelId === result.session.modelId && row.providerId === result.session.providerId);
-      if (!model) fail("muse-code-model-unavailable");
-      return new MuseCodeAgentSession(this, connection, handle, result.session, model.reasoningEfforts);
-    } catch (error) {
-      await handle.close();
-      if (error instanceof MuseCodeError) throw error;
-      fail("muse-code-session-failed");
-    }
-  }
-  async closeConnection(connectionId2) {
-    await this.live.get(connectionId2)?.close();
-  }
-  async dispose() {
-    this.closed = true;
-    await Promise.all([...this.live.values()].map((lease) => lease.close()));
-  }
-};
-function publicItem(item) {
-  if (!object3(item) || !opaqueId(item.itemId) || !opaqueId(item.kind)) fail("muse-code-session-failed");
-  return {
-    itemId: item.itemId,
-    kind: item.kind,
-    ...typeof item.status === "string" ? { status: item.status.slice(0, 100) } : {},
-    ...typeof item.text === "string" ? { text: item.text.slice(0, 512 * 1024) } : {},
-    ...typeof item.tool === "string" ? { tool: item.tool.slice(0, 200) } : {},
-    ...typeof item.visibleOutput === "string" ? { output: item.visibleOutput.slice(0, 512 * 1024) } : {}
-  };
-}
-var MuseCodeAgentSession = class {
-  constructor(manager, connection, handle, session, reasoningEfforts2) {
-    this.manager = manager;
-    this.connection = structuredClone(connection);
-    this.handle = handle;
-    this.sessionId = session.sessionId;
-    this.modelId = session.modelId;
-    this.reasoningEfforts = reasoningEfforts2;
-    this.activeTurnId = session.activeTurnId ?? void 0;
-    this.closed = false;
-    this.sending = false;
-  }
-  state() {
-    return {
-      integrationId: "meta-muse-code",
-      serviceId: "muse-code",
-      connectionId: this.connection.connectionId,
-      routeId: this.connection.routeId,
-      sessionId: this.sessionId,
-      modelId: this.modelId,
-      contributor: this.handle.mode.enabled,
-      executionKind: "agent-session",
-      toolOwner: "muse-code",
-      llmCompatible: false,
-      liveVerified: false,
-      activeTurnId: this.activeTurnId
-    };
-  }
-  async *send(text2, { reasoningEffort, tools } = {}) {
-    if (this.closed || this.sending || this.activeTurnId) fail("muse-code-busy");
-    if (typeof text2 !== "string" || !text2.length || text2.length > 512 * 1024) fail("muse-code-session-failed");
-    if (tools !== void 0) fail("muse-code-llm-unsupported");
-    if (reasoningEffort !== void 0 && (!EFFORTS2.has(reasoningEffort) || !this.reasoningEfforts?.includes(reasoningEffort))) fail("muse-code-mode-unavailable");
-    this.manager.checkExecution(this.connection, this.handle.signal);
-    this.sending = true;
-    const events = [], items = /* @__PURE__ */ new Map();
-    let wake, terminal = false, overflow = false, turnId;
-    const unwatch = this.handle.host.onNotification((frame) => {
-      if (frame.params?.sessionId !== this.sessionId) return;
-      if (events.length >= 256) overflow = true;
-      else events.push(frame);
-      wake?.();
-      wake = void 0;
-    });
-    try {
-      const ack = await bounded(() => this.handle.host.command("turn/start", {
-        sessionId: this.sessionId,
-        input: [{ type: "text", text: text2 }],
-        ...reasoningEffort === void 0 ? {} : { reasoningEffort }
-      }), this.handle.signal);
-      if (ack?.status === "accepted" && opaqueId(ack.turnId)) this.activeTurnId = turnId = ack.turnId;
-      if (ack?.status !== "accepted" || !turnId) fail("muse-code-session-failed");
-      if (ack.disposition !== "started") fail("muse-code-busy");
-      yield { type: "started", turnId };
-      while (!terminal) {
-        this.manager.check(this.connection, this.handle.signal);
-        if (overflow) fail("muse-code-session-failed");
-        if (!events.length) await bounded(() => new Promise((resolve2) => {
-          wake = resolve2;
-        }), this.handle.signal, 6e4);
-        while (events.length && !terminal) {
-          const frame = events.shift(), params = frame.params;
-          if (params.turnId !== void 0 && params.turnId !== turnId) continue;
-          if (params.item?.turnId !== void 0 && params.item.turnId !== turnId) continue;
-          if (["item/started", "item/updated", "item/completed"].includes(frame.method) && opaqueId(params.item?.itemId)) {
-            items.set(params.item.itemId, { kind: params.item.kind, turnId: params.item.turnId });
-          }
-          if (frame.method === "item/delta" && typeof params.delta === "string" && opaqueId(params.itemId)) {
-            if ((params.field === void 0 || params.field === "text") && items.get(params.itemId)?.kind === "agentMessage" && items.get(params.itemId)?.turnId === turnId) yield { type: "text-delta", itemId: params.itemId, text: params.delta };
-          } else if (frame.method === "item/completed") {
-            yield { type: "item", item: publicItem(params.item) };
-          } else if (frame.method === "turn/completed") {
-            terminal = true;
-            if (!["completed", "cancelled", "failed"].includes(params.terminal)) fail("muse-code-session-failed");
-            yield {
-              type: "completed",
-              turnId,
-              terminal: params.terminal,
-              ...params.terminal === "failed" ? { error: "muse-code-session-failed" } : {}
-            };
-          }
-        }
-      }
-      await this.manager.commit(this.connection, this.handle);
-    } catch (error) {
-      if (error instanceof MuseCodeError) throw error;
-      fail("muse-code-session-failed");
-    } finally {
-      unwatch();
-      wake = void 0;
-      this.sending = false;
-      if (!terminal && turnId) await this.cancel().catch(() => {
-      });
-      this.activeTurnId = void 0;
-    }
-  }
-  async cancel() {
-    this.manager.check(this.connection, this.handle.signal);
-    if (!this.activeTurnId) return { cancelled: false };
-    await bounded(() => this.handle.host.command("turn/cancel", { sessionId: this.sessionId, turnId: this.activeTurnId }), this.handle.signal);
-    return { cancelled: true };
-  }
-  async history() {
-    this.manager.check(this.connection, this.handle.signal);
-    const result = await this.handle.request("session/read", { sessionId: this.sessionId, excludeItems: false });
-    if (result?.session?.sessionId !== this.sessionId || result.session.modelId !== this.modelId || result.history?.mode !== "inline" || !Array.isArray(result.history.items)) fail("muse-code-session-failed");
-    return result.history.items.map(publicItem);
-  }
-  async close() {
-    if (this.closed) return;
-    this.closed = true;
-    if (this.activeTurnId) await this.cancel().catch(() => {
-    });
-    await this.handle.close();
-  }
-};
-
 // src/muse-code-owner.mjs
-function createMuseCodeOwner({ ctx, connections, privateRoot, isCurrent, onLogin, openHost, environment } = {}) {
-  const bind = (connection) => connection.profileKey !== void 0 ? connection : connections.binding(connection);
-  const current = isCurrent ?? ((connection) => connections.isCurrent(connection));
-  const manager = new MuseCodeHostManager({
-    credentials: ctx.credentials,
-    privateRoot,
-    isCurrent: current,
-    canExecute: (connection) => {
-      try {
-        return connections.lookup(connection.connectionId).enabled !== false;
-      } catch {
-        return false;
-      }
-    },
-    ...openHost ? { openHost } : {},
-    ...environment ? { environment } : {}
-  });
+var ID2 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+var CONTRIBUTOR_TERMS = "https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode";
+function createMuseCodeOwner({ ctx, connections } = {}) {
+  const recordKey = (connection) => {
+    if (!ID2.test(connection?.credentialRecordId ?? "")) throw new ConnectionError("invalid-request");
+    return `llm-pi-ai/${connection.credentialRecordId}`;
+  };
   return {
     integrationId: MUSE_CODE_INTEGRATION_ID,
     label: "Meta",
-    source: MUSE_CODE_EVIDENCE.repository,
-    manager,
+    source: "https://dev.meta.ai/docs/muse-code",
     listServices: () => [{
       serviceId: MUSE_CODE_SERVICE_ID,
       label: "Muse Code",
-      methods: [{ id: "oauth", label: "Muse Code account" }],
+      methods: [{ id: "oauth", label: "Sign in with Meta" }],
       capabilities: { auth: true, models: true, usage: true, settings: true },
-      executionKind: "agent-session",
-      llmCompatible: false,
-      requiresHostCli: true,
-      liveVerified: false,
-      sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS
+      sourceTermsUrl: CONTRIBUTOR_TERMS
     }],
     listConnections: () => Object.entries(connections.raw()).filter(([, connection]) => connection.integrationId === MUSE_CODE_INTEGRATION_ID).map(([connectionId2, connection]) => ({ connectionId: connectionId2, serviceId: connection.serviceId, routeId: connection.routeId })),
-    credentialKey: museCodeCredentialKey,
-    authKey: museCodeCredentialKey,
+    authKey: recordKey,
     routeIdFor: (id) => `muse-${id}`,
-    initialConnection: () => ({ museCode: { contributorMode: false, modelId: "muse-wonder-1.0" } }),
-    validateConnection: validateMuseCodeConnection,
+    validateConnection(connection) {
+      if (connection.serviceId !== MUSE_CODE_SERVICE_ID || connection.authMethod !== "oauth" || !ID2.test(connection.credentialRecordId) || connection.credentialRef || connection.headerRefs && Object.keys(connection.headerRefs).length || connection.profile?.baseURL || connection.profile?.api || connection.profile?.apiKeyEnv) throw new ConnectionError("owner-managed");
+    },
     async describeConnection(connection) {
-      const description = await ctx.credentials.describeRecord(museCodeCredentialKey(connection));
-      return {
-        configured: description.configured === true,
-        writable: description.writable !== false,
-        authStatus: description.configured ? "saved" : "auth-required",
-        executionKind: "agent-session",
-        llmCompatible: false,
-        liveVerified: false,
-        requiresHostCli: true
-      };
+      const description = await ctx.credentials.describeRecord(recordKey(connection));
+      return { configured: description.configured === true, writable: description.writable !== false };
     },
-    async publicConnection(connection) {
-      return {
-        contributor: connection.museCode?.contributorMode === true,
-        sourceTermsUrl: MUSE_CODE_CONTRIBUTOR_TERMS,
-        executionKind: "agent-session",
-        llmCompatible: false,
-        liveVerified: false,
-        requiresHostCli: true
-      };
-    },
-    registerFlow(context, connection, flowIsCurrent = () => current(bind(connection)), flowOnLogin = onLogin) {
-      return context.authorization.registerFlow({
-        key: museCodeCredentialKey(connection),
-        label: connection.displayName,
-        methods: [{ id: "oauth", label: "Muse Code account" }],
-        async run(session) {
-          if (session.method !== "oauth" || !flowIsCurrent()) throw new MuseCodeError("muse-code-connection-changed");
-          session.signal.throwIfAborted();
-          await manager.login(bind(connection), {
-            signal: session.signal,
-            notify: (notice) => {
-              if (flowIsCurrent() && !session.signal.aborted) session.notify(notice);
-            }
-          });
-          if (!flowIsCurrent()) throw new MuseCodeError("muse-code-connection-changed");
-          await flowOnLogin?.(connection.connectionId);
-        }
-      });
-    },
-    read: (connection, options) => manager.read(bind(connection), options),
-    readModels: (connection, options) => manager.readModels(bind(connection), options),
-    readUsage: (connection, options) => manager.readUsage(bind(connection), options),
-    startAgentSession: (connection, options) => manager.startAgentSession(bind(connection), options),
-    resumeAgentSession: (connection, options) => manager.resumeAgentSession(bind(connection), options),
-    configureConnection: (_connection, patch, binding) => manager.configure(binding, patch),
     async deleteCredentials(connection) {
-      await manager.closeConnection(connection.connectionId);
-      await ctx.credentials.deleteRecord(museCodeCredentialKey(connection));
-    },
-    dispose: () => manager.dispose()
+      await ctx.credentials.deleteRecord(recordKey(connection));
+      await ctx.credentials.deleteRecord(`dsh-muse-code/${connection.credentialRecordId}`).catch(() => {
+      });
+    }
   };
 }
 
 // src/external-integrations.mjs
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 var ExternalIntegrationError = class extends Error {
   constructor(code = "external-unavailable") {
     super(["external-unavailable", "external-models-unsupported", "external-provider-unavailable", "external-aborted", "external-route-conflict", "external-profile-changed"].includes(code) ? code : "external-unavailable");
@@ -9508,7 +4968,7 @@ var ExternalIntegrationError = class extends Error {
   }
 };
 var publicText = (value, limit = 200) => typeof value === "string" && value.length > 0 && value.length <= limit && !/[\u0000-\u001f\u007f]/.test(value) ? value : void 0;
-var connectionId = (profileKey, routeId) => `x-${createHash7("sha256").update(JSON.stringify([profileKey, routeId])).digest("hex").slice(0, 32)}`;
+var connectionId = (profileKey, routeId) => `x-${createHash5("sha256").update(JSON.stringify([profileKey, routeId])).digest("hex").slice(0, 32)}`;
 function createExternalIntegrations({ llm, profileKey = "default", generation = () => 1, excludeRoutes = () => [], excludeSettingsNamespaces = ["dsh-pi-login", "llm-pi-ai"], allowModelRead = false, timeout = 2e4 } = {}) {
   const integrationId = "external-host";
   const omittedNamespaces = new Set(excludeSettingsNamespaces);
@@ -9656,16 +5116,209 @@ function createExternalIntegrations({ llm, profileKey = "default", generation = 
   };
 }
 
-// src/index.mjs
-import { join as join3 } from "node:path";
-import { tmpdir } from "node:os";
+// src/muse-code-catalog.mjs
+import { createHash as createHash6 } from "node:crypto";
+var MUSE_CODE_MODELS_URL = "https://api.meta.ai/muse-code/models";
+var MUSE_CODE_KEY_URL = "https://api.meta.ai/muse-code/key";
+var BASE_URL = "https://api.meta.ai/v1";
+var LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+var ID3 = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+var NON_CHAT = /^(?:muse-image|muse-voice|sam-)/;
+var oauth = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
+var principalOf = (credential) => createHash6("sha256").update(credential.refresh).digest("hex");
+var positive = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
+var label3 = (value) => typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 100) : void 0;
+var first = (row, keys) => keys.map((key) => row[key]).find((value) => value !== void 0 && value !== null);
+function rowsOf(body) {
+  const rows = Array.isArray(body) ? body : first(body, ["data", "models", "rows", "items"]);
+  return Array.isArray(rows) ? rows : [];
+}
+function effortsOf(row) {
+  const variants = first(row, ["reasoning_effort_variants", "reasoningEffortVariants", "reasoning_efforts", "reasoningEfforts", "variants"]);
+  if (!Array.isArray(variants)) return void 0;
+  const names = variants.map((item) => typeof item === "string" ? item : item && typeof item === "object" ? first(item, ["effort", "reasoning_effort", "reasoningEffort", "level", "id", "name"]) : void 0);
+  return [...new Set(names.filter((name2) => typeof name2 === "string").map((name2) => name2.toLowerCase()))];
+}
+function parseMuseCatalog(body) {
+  const rows = [];
+  for (const row of rowsOf(body)) {
+    if (!row || typeof row !== "object") continue;
+    const id = first(row, ["id", "model_id", "modelId", "model"]);
+    if (typeof id !== "string" || !ID3.test(id) || NON_CHAT.test(id) || rows.some((entry) => entry.id === id)) continue;
+    if (row.enabled === false || ["hidden", "internal", "disabled"].includes(row.visibility)) continue;
+    const efforts = effortsOf(row);
+    rows.push({
+      id,
+      name: label3(first(row, ["display_label", "displayLabel", "display_name", "displayName", "name"])) ?? id,
+      contextWindow: positive(first(row, ["context_limit", "contextLimit", "context_window", "contextWindow"])) ?? 1048576,
+      maxTokens: positive(first(row, ["output_limit", "outputLimit", "max_output_tokens", "maxTokens"])) ?? 131072,
+      // Muse chat models accept images; the catalog only flags video and image output.
+      input: ["text", "image"],
+      // An absent list keeps Muse's documented minimal-through-max range.
+      efforts: efforts?.length ? efforts.filter((effort) => [...LEVELS, "none"].includes(effort)) : [...LEVELS],
+      contributor: false
+    });
+  }
+  return rows;
+}
+function museModels(rows = []) {
+  return new Map(rows.map((row) => [row.id, {
+    id: row.id,
+    name: row.name,
+    provider: "meta",
+    api: "openai-responses",
+    baseUrl: BASE_URL,
+    reasoning: row.efforts.some((effort) => effort !== "none"),
+    ...row.efforts.some((effort) => effort !== "none") ? { thinkingLevelMap: {
+      off: row.efforts.includes("none") ? "none" : null,
+      ...Object.fromEntries(LEVELS.map((level) => [level, row.efforts.includes(level) ? level : null]))
+    } } : {},
+    input: [...row.input],
+    contextWindow: row.contextWindow,
+    maxTokens: row.maxTokens,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    [MUSE_CONTRIBUTOR]: row.contributor === true
+  }]));
+}
+var MuseCodeCatalogSession = class {
+  constructor({
+    credentials,
+    snapshot = () => void 0,
+    persist = async () => {
+    },
+    refreshAuth,
+    onChange = () => {
+    },
+    onUsage = () => {
+    },
+    fetch: request = (...args) => globalThis.fetch(...args),
+    now = Date.now,
+    ttl = 18e5,
+    timeout = 2e4
+  }) {
+    Object.assign(this, { credentials, snapshot, persist, refreshAuth, onChange, onUsage, fetch: request, now });
+    this.cache = new ProviderCache({ ttl, maxStale: Infinity, timeout, now });
+    this.usageCache = new ProviderCache({ ttl: 3e5, maxStale: 36e5, timeout, now });
+    this.version = 0;
+    this.closed = false;
+  }
+  rows() {
+    return this.cache.peek().value ?? this.snapshot() ?? [];
+  }
+  catalog() {
+    return museModels(this.rows());
+  }
+  state() {
+    const cached = this.cache.peek();
+    return { canRefresh: true, count: this.rows().length, checkedAt: cached.checkedAt, error: cached.error, account: this.account };
+  }
+  changed() {
+    this.version++;
+    if (!this.closed) this.onChange();
+  }
+  invalidate() {
+    this.principal = void 0;
+    this.account = void 0;
+    this.cache.invalidate();
+    this.usageCache.invalidate();
+  }
+  async validate() {
+    const current = await this.credentials.read("meta");
+    if (this.principal && (!oauth(current) || principalOf(current) !== this.principal)) this.invalidate();
+    if (!this.rows().length && oauth(current) && !this.closed) await this.refresh().catch(() => {
+    });
+  }
+  async access(signal) {
+    let current = await this.credentials.read("meta");
+    if (!oauth(current)) throw new ProviderReadError("auth-required");
+    if (!current.access || !Number.isFinite(current.expires) || current.expires <= this.now()) {
+      if (!this.refreshAuth) throw new ProviderReadError("auth-required");
+      await this.refreshAuth(signal);
+      current = await this.credentials.read("meta");
+    }
+    if (!oauth(current) || typeof current.access !== "string" || !current.access) throw new ProviderReadError("auth-required");
+    this.principal = principalOf(current);
+    return current;
+  }
+  async list(credential, mode, signal) {
+    return readProviderJson(await this.fetch(MUSE_CODE_MODELS_URL, {
+      method: "GET",
+      redirect: "error",
+      signal,
+      headers: { accept: "application/json", "x-api-version": "1.0.0", authorization: `Bearer ${credential.access}`, [MUSE_CONTRIBUTOR_HEADER]: mode }
+    }), { now: this.now(), maxBytes: 4 * 1024 * 1024, allowArray: true });
+  }
+  refresh({ force = true, signal } = {}) {
+    if (this.closed) return Promise.reject(new ProviderReadError("aborted"));
+    return this.cache.get(async (requestSignal) => {
+      const credential = await this.access(requestSignal);
+      const principal = principalOf(credential);
+      const standard = parseMuseCatalog(await this.list(credential, "0", requestSignal));
+      if (!standard.length) throw new ProviderReadError("error");
+      const contributor = await this.list(credential, "1", requestSignal).then(parseMuseCatalog, () => []);
+      const offered = new Set(contributor.map((row) => row.id));
+      const rows = standard.map((row) => ({ ...row, contributor: offered.has(row.id) && !row.id.endsWith("-contributor") }));
+      const current = await this.credentials.read("meta");
+      if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError("account-changed");
+      return rows;
+    }, { force, signal }).then(async (rows) => {
+      if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) await this.persist(rows).catch(() => {
+      });
+      this.changed();
+      return this.state();
+    });
+  }
+  /** The CLI's key mint also reports the subscription and its quota. */
+  usage({ signal, force = false } = {}) {
+    return this.usageCache.get(async (requestSignal) => {
+      const current = await this.credentials.read("meta");
+      if (!oauth(current)) throw new ProviderReadError("auth-required");
+      const principal = principalOf(current);
+      const body = await readProviderJson(await this.fetch(MUSE_CODE_KEY_URL, {
+        method: "POST",
+        redirect: "error",
+        signal: requestSignal,
+        body: "{}",
+        headers: { accept: "application/json", "content-type": "application/json", "x-api-version": "1.0.0", authorization: `Bearer ${current.refresh}` }
+      }), { now: this.now() });
+      this.account = { active: typeof body.is_subs_active === "boolean" ? body.is_subs_active : null, tierName: label3(body.subs_tier_name) };
+      if (typeof body.api_key === "string" && body.api_key) {
+        await this.credentials.modify("meta", async (stored) => oauth(stored) && principalOf(stored) === principal ? { ...stored, access: body.api_key, expires: this.now() + 864e5 } : stored).catch(() => {
+        });
+      }
+      this.onUsage();
+      return { source: "internal-http", sourceObservedAt: new Date(this.now()).toISOString(), status: "available", windows: parseMuseUsage(body) };
+    }, { force, signal });
+  }
+  dispose() {
+    this.closed = true;
+    this.cache.dispose();
+    this.usageCache.dispose();
+  }
+};
+function museCatalogProvider(session) {
+  return {
+    session,
+    presentation() {
+      const { count: count2, account } = session.state();
+      return {
+        ...account?.tierName ? { status: { message: account.active === false ? "metaSubscriptionInactive" : "metaSubscriptionActive", detail: account.tierName } } : {},
+        notes: count2 ? [] : ["museCatalogEmpty"]
+      };
+    },
+    errorCodes: { "auth-required": "catalog-login-required", "rate-limited": "catalog-rate-limited", "account-changed": "catalog-account-changed" },
+    errors: { "catalog-login-required": "museLoginRequired", "catalog-rate-limited": "metaRateLimited", "catalog-account-changed": "metaAccountChanged", "catalog-refresh-failed": "museCatalogFailed" },
+    // The SDK's Meta OAuth supplies and renews the key; nothing to override.
+    authorizeModel: async () => void 0
+  };
+}
 
 // src/meta-catalog.mjs
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 var META_CATALOG_GRANT = /* @__PURE__ */ Symbol("dsh-pi-login/meta-catalog-grant");
-var LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-var principalOf = (credential) => createHash8("sha256").update(credential.refresh).digest("hex");
-var oauth = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
+var LEVELS2 = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+var principalOf2 = (credential) => createHash7("sha256").update(credential.refresh).digest("hex");
+var oauth2 = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
 var fullModel = (id) => /^muse-wonder-full(?:-|$)/.test(id);
 var cleanLabel = (value) => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 100) : void 0;
 var positive2 = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
@@ -9687,7 +5340,7 @@ function learnedModel(row, profile2, principal) {
   const input = row.input ?? row.modalities?.input;
   const offeredInput = Array.isArray(input) ? input.filter((value) => value === "text" || value === "image") : [];
   const map = row.thinkingLevelMap;
-  const thinking = map && typeof map === "object" && !Array.isArray(map) ? Object.fromEntries(LEVELS.map((level) => [level, typeof map[level] === "string" && map[level].length > 0 ? map[level] : null])) : void 0;
+  const thinking = map && typeof map === "object" && !Array.isArray(map) ? Object.fromEntries(LEVELS2.map((level) => [level, typeof map[level] === "string" && map[level].length > 0 ? map[level] : null])) : void 0;
   const hasReasoning = row.reasoning === true && thinking && Object.values(thinking).some((value) => value !== null);
   const verified = Boolean(context && output && offeredInput.length && (row.reasoning === false || hasReasoning));
   return {
@@ -9750,7 +5403,7 @@ var MetaCatalogSession = class {
   }
   async validate() {
     const profile2 = this.profile();
-    const signature = createHash8("sha256").update(JSON.stringify({
+    const signature = createHash7("sha256").update(JSON.stringify({
       baseURL: profile2.baseURL,
       api: profile2.api,
       apiKeyEnv: profile2.apiKeyEnv,
@@ -9762,7 +5415,7 @@ var MetaCatalogSession = class {
     this.signature = signature;
     if (!this.principal) return;
     const current = await this.credentials.read("meta");
-    if (!oauth(current) || principalOf(current) !== this.principal) this.invalidate();
+    if (!oauth2(current) || principalOf2(current) !== this.principal) this.invalidate();
   }
   catalog(provider) {
     const learned = this.catalogCache.peek().value;
@@ -9790,14 +5443,14 @@ var MetaCatalogSession = class {
     checkProfile(this.profile());
     await this.validate();
     const credential = await this.credentials.read("meta");
-    if (!oauth(credential)) throw new ProviderReadError("auth-required");
-    const principal = principalOf(credential);
+    if (!oauth2(credential)) throw new ProviderReadError("auth-required");
+    const principal = principalOf2(credential);
     this.principal = principal;
     try {
       return await this.entitlementCache.get(async (requestSignal) => {
         let result;
         await this.credentials.modify("meta", async (current2) => {
-          if (!oauth(current2) || principalOf(current2) !== principal) throw new ProviderReadError("account-changed");
+          if (!oauth2(current2) || principalOf2(current2) !== principal) throw new ProviderReadError("account-changed");
           const body = await this.readJson(await this.fetch("https://api.meta.ai/muse-code/key", {
             method: "POST",
             redirect: "error",
@@ -9824,7 +5477,7 @@ var MetaCatalogSession = class {
           return { ...standard, access: body.api_key, expires: this.now() + 864e5 };
         });
         const current = await this.credentials.read("meta");
-        if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError("account-changed");
+        if (this.closed || requestSignal.aborted || !oauth2(current) || principalOf2(current) !== principal) throw new ProviderReadError("account-changed");
         checkProfile(this.profile());
         if (result.account.active !== true && this.catalogCache.value?.size) {
           this.catalogCache.value = void 0;
@@ -9852,10 +5505,10 @@ var MetaCatalogSession = class {
   async ensureCredentials({ signal } = {}) {
     await this.validate();
     const current = await this.credentials.read("meta");
-    if (!oauth(current)) throw new ProviderReadError("auth-required");
+    if (!oauth2(current)) throw new ProviderReadError("auth-required");
     if (!current.access || !Number.isFinite(current.expires) || current.expires <= this.now()) await this.contract({ force: true, signal });
     const next = await this.credentials.read("meta");
-    if (!oauth(next) || typeof next.access !== "string" || !Number.isFinite(next.expires) || next.expires <= this.now()) throw new ProviderReadError("auth-required");
+    if (!oauth2(next) || typeof next.access !== "string" || !Number.isFinite(next.expires) || next.expires <= this.now()) throw new ProviderReadError("auth-required");
     return next;
   }
   async usage(options = {}) {
@@ -9888,7 +5541,7 @@ var MetaCatalogSession = class {
       const contract = await this.contract({ signal: requestSignal });
       if (contract.account.active !== true) return /* @__PURE__ */ new Map();
       const credential = await this.ensureCredentials({ signal: requestSignal }), principal = this.principal;
-      if (!oauth(credential) || principalOf(credential) !== principal) throw new ProviderReadError("account-changed");
+      if (!oauth2(credential) || principalOf2(credential) !== principal) throw new ProviderReadError("account-changed");
       const body = await this.readJson(await this.fetch("https://api.meta.ai/v1/models", {
         method: "GET",
         redirect: "error",
@@ -9897,7 +5550,7 @@ var MetaCatalogSession = class {
       }));
       if (!Array.isArray(body.data) || body.has_more === true || body.next_page !== void 0 && body.next_page !== null) throw new ProviderReadError("error");
       const current = await this.credentials.read("meta");
-      if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError("account-changed");
+      if (this.closed || requestSignal.aborted || !oauth2(current) || principalOf2(current) !== principal) throw new ProviderReadError("account-changed");
       if (this.entitlementCache.peek().value?.account.active !== true) throw new ProviderReadError("auth-required");
       checkProfile(this.profile());
       const baseline = this.baseline("meta"), learned2 = /* @__PURE__ */ new Map(), profile2 = this.profile();
@@ -9932,7 +5585,7 @@ var MetaCatalogSession = class {
     await this.validate();
     const current = await this.credentials.read("meta");
     const contract = this.entitlementCache.peek();
-    if (!grant || !oauth(current) || principalOf(current) !== grant.principal || this.principal !== grant.principal || !this.catalogCache.peek().value?.has(model.id) || contract.value?.account.active !== true || contract.error === "auth-required") {
+    if (!grant || !oauth2(current) || principalOf2(current) !== grant.principal || this.principal !== grant.principal || !this.catalogCache.peek().value?.has(model.id) || contract.value?.account.active !== true || contract.error === "auth-required") {
       throw new MetaCatalogError("meta-refresh-required");
     }
     if (typeof current.access !== "string" || !Number.isFinite(current.expires) || current.expires <= this.now()) throw new MetaCatalogError("meta-refresh-required");
@@ -10048,51 +5701,52 @@ function apply2(ctx, config, options = {}) {
     });
   };
   registry.register({ integrationId: "pi", label: "Pi", source: "@earendil-works/pi-ai", listServices: piServices, listConnections: () => Object.values(manager.raw()) });
-  const muse = createMuseCodeOwner({
-    ctx,
-    connections: manager,
-    privateRoot: join3(ctx.get("profileContext")?.dir ?? join3(tmpdir(), "dsh-muse-code", registry.profileKey), ".dsh-muse-code"),
-    onLogin: async (id) => {
-      const connection = manager.lookup(id);
-      manager.markVerified(id);
-      usage.invalidate(id);
-      if (!connection.enabled) await manager.update(id, { enabled: true }, manager.section()?.revision);
-    },
-    ...options.muse
-  });
+  const muse = createMuseCodeOwner({ ctx, connections: manager });
   registry.register(muse);
   registry.register(external.descriptor);
   ctx.on("dsh-pi-login/register-integration", (owner) => registry.register(owner));
-  const museFlows = /* @__PURE__ */ new Map();
-  const syncMuseFlows = () => {
-    for (const [id, flow] of museFlows) {
-      const current = config.connections.get()[id];
-      if (!current || flow.identity !== JSON.stringify([current.credentialRecordId, current.credentialGeneration, current.displayName])) {
-        flow.dispose();
-        museFlows.delete(id);
-      }
-    }
-    for (const [id, connection] of Object.entries(config.connections.get())) {
-      if (connection.integrationId !== "meta-muse-code" || museFlows.has(id)) continue;
-      const value = { ...connection, connectionId: id };
-      const binding = manager.binding(value);
-      const dispose = muse.registerFlow(ctx, value, () => manager.isCurrent(binding));
-      museFlows.set(id, { identity: JSON.stringify([connection.credentialRecordId, connection.credentialGeneration, connection.displayName]), dispose });
-    }
-  };
-  ctx.on("dsh-pi-login/connections-updated", syncMuseFlows);
   const sessionIdentity = (connection) => JSON.stringify([connection.serviceId, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api]);
   const authFor = (connection) => {
     const binding = manager.binding(connection);
-    return connectionAuthFrom(ctx, { ...binding, isCurrent: () => manager.isCurrent(binding) });
+    return connectionAuthFrom(ctx, { ...binding, serviceId: sdkServiceOf(connection) ?? connection.serviceId, isCurrent: () => manager.isCurrent(binding) });
+  };
+  const refreshAuth = async (connection, signal) => {
+    const service = sdkServiceOf(connection) ?? connection.serviceId;
+    const auth = authFor(connection);
+    const models = createModels(auth);
+    models.setProvider(catalogProvider(service));
+    await models.getAuth(service, { signal });
+    return auth.credentials.read(service);
   };
   const catalogsFor = (connection) => {
     const id = connection.connectionId;
-    const identity2 = sessionIdentity(connection);
+    const identity = sessionIdentity(connection);
     const previous = sessions.get(id);
-    if (previous?.identity === identity2) return previous.catalogs;
+    if (previous?.identity === identity) return previous.catalogs;
     previous?.catalogs.dispose();
-    const meta = connection.serviceId === "meta" ? new MetaCatalogSession({
+    if (connection.integrationId === MUSE_CODE_INTEGRATION_ID) {
+      const binding = manager.binding(connection);
+      const museSession = new MuseCodeCatalogSession({
+        credentials: authFor(connection).credentials,
+        snapshot: () => {
+          try {
+            return manager.lookup(id).museCatalog;
+          } catch {
+            return void 0;
+          }
+        },
+        persist: (rows) => manager.saveMuseCatalog(binding, rows),
+        refreshAuth: (signal) => refreshAuth(manager.lookup(id), signal),
+        onChange: () => {
+          revision++;
+          ctx.emit("dsh-pi-login/catalog-updated");
+        }
+      });
+      const catalogs2 = new ProviderCatalogs({ [connection.serviceId]: museCatalogProvider(museSession) });
+      sessions.set(id, { identity, catalogs: catalogs2, muse: museSession });
+      return catalogs2;
+    }
+    const meta = connection.serviceId === "meta" && connection.integrationId === "pi" ? new MetaCatalogSession({
       credentials: authFor(connection).credentials,
       profile: () => {
         const current = manager.lookup(id);
@@ -10105,7 +5759,7 @@ function apply2(ctx, config, options = {}) {
       }
     }) : void 0;
     const catalogs = new ProviderCatalogs(meta ? { meta: metaCatalogProvider(meta) } : {});
-    sessions.set(id, { identity: identity2, catalogs, meta });
+    sessions.set(id, { identity, catalogs, meta });
     return catalogs;
   };
   const usage = new AccountUsageManager({
@@ -10114,21 +5768,17 @@ function apply2(ctx, config, options = {}) {
         catalogsFor(connection);
         return sessions.get(connection.connectionId).meta;
       } }),
-      "meta-muse-code/muse-code": {
-        source: "last-observed",
-        requiresCredentials: false,
-        read: ({ connection, signal }) => muse.readUsage(connection, { signal })
+      [`${MUSE_CODE_INTEGRATION_ID}/muse-code`]: {
+        source: "internal-http",
+        read: ({ connection, signal, force }) => {
+          catalogsFor(connection);
+          return sessions.get(connection.connectionId).muse.usage({ signal, force });
+        }
       }
     },
     credentials: {
-      read: (connection) => authFor(connection).credentials.read(connection.serviceId),
-      refresh: async (connection, _record, signal) => {
-        const auth = authFor(connection);
-        const models = createModels(auth);
-        models.setProvider(catalogProvider(connection.serviceId));
-        await models.getAuth(connection.serviceId, { signal });
-        return auth.credentials.read(connection.serviceId);
-      }
+      read: (connection) => authFor(connection).credentials.read(sdkServiceOf(connection) ?? connection.serviceId),
+      refresh: (connection, _record, signal) => refreshAuth(connection, signal)
     }
   });
   const runtime = apply(ctx, config, {
@@ -10143,6 +5793,8 @@ function apply2(ctx, config, options = {}) {
       catalogsFor(connection).onLogin(connection.serviceId);
       usage.invalidate(id);
       if (!connection.enabled) await manager.update(id, { enabled: true }, manager.section()?.revision);
+      if (connection.integrationId === MUSE_CODE_INTEGRATION_ID) void catalogsFor(manager.lookup(id)).refresh(connection.serviceId).catch(() => {
+      });
     },
     authorizeModel: (route, model, profile2) => {
       if (!profile2.connectionId) return legacyCatalogs.authorizeModel(route, model, profile2);
@@ -10154,10 +5806,7 @@ function apply2(ctx, config, options = {}) {
     connections: manager,
     usage,
     registry,
-    syncFlows: () => {
-      runtime.syncFlows();
-      syncMuseFlows();
-    },
+    syncFlows: () => runtime.syncFlows(),
     catalogs: legacyCatalogs,
     catalogsFor,
     catalog: (provider, profile2, connectionId2) => {
@@ -10183,9 +5832,6 @@ function apply2(ctx, config, options = {}) {
     external.dispose();
     usage.dispose();
     legacyCatalogs.dispose();
-    for (const flow of museFlows.values()) flow.dispose();
-    museFlows.clear();
-    void muse.dispose();
     for (const value of sessions.values()) value.catalogs.dispose();
     sessions.clear();
   }, "AI connections: owned lifetime");

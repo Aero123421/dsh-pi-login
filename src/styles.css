@@ -96,3 +96,4 @@ button.dsh-pi-row-main:hover { background: var(--dsw-alias-bg-layer-1); }
 @media (prefers-reduced-motion: reduce) {
   .dsh-pi-login *, .dsh-pi-login *::before { transition: none !important; animation: none !important; }
 }
+.dsh-pi-empty-models { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 8px 0 12px; }

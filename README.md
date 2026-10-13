@@ -66,13 +66,15 @@ GitHubから導入した場合は正式Releaseのタグへ更新します。配�
 
 managerがない、profileが読み取り専用、導入元が開発用ディレクトリや独自ファイルの場合は、理由と手動更新先を表示します。GitHub APIの取得失敗や互換性不明を「最新版」と扱いません。切断時は操作IDで照合し、結果不明のまま導入を再送しません。配布物の検証ファイルと機密情報を含まない操作記録はprofileの`.dsh-pi-login-updates/`へ保存します。profileが参照するtgzを消さないでください。
 
-## 更新と検証
+## Meta Muse Code
 
-Meta Muse Codeでは、接続追加でサービス「Muse Code」を選び、「追加してログイン」でログインします。Hostに公式`muse` CLIとアカウント・設定管理に対応するMSPが必要です。SDK `@muse-code/sdk` `1.4.7`はプラグインに固定しています。CLIがない・protocolが対応していない場合は、その理由を表示します。
+MetaのMuse Code契約は、接続追加でサービス「Muse Code」を選び、「追加してログイン」でMetaアカウントを承認すると使えます。公式`muse` CLIは不要です。ログイン（端末コード）とAPIキーの発行・自動更新は公式CLIと同じ方式で、Pi SDKのMetaプロバイダーが行います。
 
-行の「モデル」で、Wonder1、Wonder1 Contributor、Wonder Full、Wonder Full Contributorの4つから1つを選びます。選ぶとすぐ保存します。Hostの一覧に返るモデルごとに通常版とContributor版を表示します。選んだ項目に合わせて、実モデルIDとContributor設定をまとめて保存し、公式Hostへの書き込みと読み戻しを照合します。[モデル選択とSDKへの対応](docs/models.md#muse-codeのログインとcontributor)
+行の「モデル」を開くと、そのアカウントのMuse Code用モデル一覧（`/muse-code/models`）を読み込みます。Wonder、Wonder Fullなど一覧にあるモデルと、それぞれのContributor版を個別のスイッチでオンにでき、オンにしたモデルはチャットやエージェントのモデル選択に出ます。Contributor版は、Metaが内容を学習に使う代わりに利用枠が増えるモードで、最初はオフです。選んだモデルに合わせて、リクエストごとに`x-tbh-contributor-mode`を送ります。読み込んだ一覧は接続に保存するので、再起動後も使えます。利用状況は契約の利用枠を表示します。
 
-Muse Codeは独立したエージェントセッションです。これらのモデルはDSHの通常のチャットモデル一覧には追加しません。専用セッションAPIの開始・turn・cancel・履歴再取得・resumeを実装していますが、DSHの通常LLMとのtool実行橋渡しと実CLIでの生成は未検証です。CLIの一時認証領域をプロファイル・接続・認証世代で分け、保存先は接続専用のHost Credentialsです。実アカウントのログイン、Wonder1／Fullの生成、Contributor枠・課金は未検証です。
+一覧の項目名とContributorヘッダーの値は、公式CLI 1.4.7の実装から読み取ったもので、実アカウントでの生成・Contributor利用枠・課金は未検証です。0.6.xの（CLI経由の）Muse Code接続は再ログインが必要です。[モデル選択の詳細](docs/models.md#meta-muse-code)
+
+## Meta Model API（Pi経由）のMuseモデル
 
 Muse Wonder（`muse-wonder-1.0`）に対応しています。Metaの既存の接続方法で使えます。行の「モデル」で確認してください。SDK未収録のため、プラグイン側でモデル情報を補完しています。[モデル情報と根拠](docs/models.md)
 

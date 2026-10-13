@@ -1,6 +1,7 @@
 import { buildBaseOptions } from '@earendil-works/pi-ai/api/simple-options'
 import type { Api, Model, Models, SimpleStreamOptions, TranscriptContext } from '@earendil-works/pi-ai'
 import { catalogProvider, PiAiCatalogError } from './catalog.ts'
+import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_HEADER } from '../catalog-metadata.mjs'
 
 // Exact IDs advertised by OpenAI's Fast pricing and Codex speed documentation.
 // Keep this small table with SDK updates; unknown IDs and gateways stay ordinary.
@@ -20,6 +21,7 @@ export function supportsFastTier(provider: string, model: Model<Api>): boolean {
 }
 
 export function fastModelId(model: string): string { return `${model}::fast` }
+export function contributorModelId(model: string): string { return `${model}::contributor` }
 
 export interface ModelChoice {
   id: string
@@ -29,6 +31,10 @@ export interface ModelChoice {
   discovered?: boolean
   capabilityUnverified?: boolean
   serviceTier?: 'default' | 'priority'
+  /** Muse Code Contributor mode: Meta may train on this choice's content. */
+  contributor?: boolean
+  /** Per-choice request headers; credentials never travel here. */
+  headers?: Readonly<Record<string, string>>
 }
 
 /** Shared by settings and the adapter; Fast choices require an explicit opt-in. */
@@ -36,12 +42,25 @@ export function modelChoices(provider: string, models: readonly Model<Api>[], pr
   disabledModels?: readonly string[]
   enabledFastModels?: readonly string[]
   enabledDiscoveredModels?: readonly string[]
+  enabledContributorModels?: readonly string[]
   models?: readonly { id: string }[]
 }, discoveredIds: ReadonlySet<string> = new Set()): ModelChoice[] {
   const ids = new Set(models.map(model => model.id))
   const configuredIds = new Set(profile.models?.map(model => model.id) ?? [])
   return models.flatMap(model => {
     const supported = supportsFastTier(provider, model)
+    const muse = (model as unknown as Record<symbol, boolean | undefined>)[MUSE_CONTRIBUTOR]
+    if (muse !== undefined) {
+      // A Muse Code request always states its mode, so a Standard choice
+      // never inherits the account's Contributor default.
+      const standard: ModelChoice = { id: model.id, name: model.name, model,
+        enabled: !profile.disabledModels?.includes(model.id), headers: { [MUSE_CONTRIBUTOR_HEADER]: '0' } }
+      if (!muse) return [standard]
+      const id = contributorModelId(model.id)
+      if (ids.has(id)) throw new PiAiCatalogError(`Contributor model ID "${id}" conflicts with a configured model`)
+      return [standard, { id, name: `${model.name} Contributor`, model, contributor: true,
+        enabled: profile.enabledContributorModels?.includes(id) === true, headers: { [MUSE_CONTRIBUTOR_HEADER]: '1' } }]
+    }
     const ordinary: ModelChoice = {
       id: model.id, name: model.name, model,
       enabled: !profile.disabledModels?.includes(model.id) && (!discoveredIds.has(model.id) || profile.enabledDiscoveredModels?.includes(model.id) === true || configuredIds.has(model.id)),

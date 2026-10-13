@@ -98,6 +98,8 @@ export interface PiAiProviderProfile {
   enabledFastModels?: string[]
   /** Account-discovered models are disabled until explicitly selected. */
   enabledDiscoveredModels?: string[]
+  /** Contributor-mode choices are disabled until explicitly selected. */
+  enabledContributorModels?: string[]
   /** Credential reference (environment-variable name) resolved per request through `ctx.credentials`. */
   apiKeyEnv?: string
   /** Name shown by configuration surfaces; defaults to the route key. */
@@ -194,6 +196,8 @@ export interface PiAiProviderProfile {
 export interface ResolvedPiAiProviderProfile
   extends Omit<PiAiProviderProfile, 'apiKeyEnv' | 'retryPolicy' | 'models' | 'displayName'> {
   serviceId?: string
+  /** The Pi SDK provider serving this connection when it differs from its service ID. */
+  sdkServiceId?: string
   integrationId?: string
   connectionId?: string
   credentialRecordId?: string
@@ -270,7 +274,21 @@ export interface Connection {
   integrationLabel?: string
   serviceLabel?: string
   profile: PiAiProviderProfile
+  /** Retired CLI-era selection, accepted so older settings still load. */
   museCode?: { contributorMode?: boolean, modelId?: string }
+  /** Last Muse Code account catalog, so its models survive a restart. */
+  museCatalog?: MuseCatalogRow[]
+}
+
+/** One persisted Muse Code catalog entry; no account data or credentials. */
+export interface MuseCatalogRow {
+  id: string
+  name: string
+  contextWindow: number
+  maxTokens: number
+  input: Array<'text' | 'image'>
+  efforts: string[]
+  contributor: boolean
 }
 
 /** Plain options accepted by the provider resolver. */
@@ -373,6 +391,7 @@ const profile = z.object({
   disabledModels: z.array(z.string()),
   enabledFastModels: z.array(z.string()),
   enabledDiscoveredModels: z.array(z.string()),
+  enabledContributorModels: z.array(z.string()),
   apiKeyEnv: z.string().role('credential-ref'),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
@@ -412,6 +431,11 @@ export const Config = z.object({
     enabled: z.boolean().default(true), legacyRoute: z.boolean(),
     integrationLabel: z.string(), serviceLabel: z.string(), profile,
     museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
+    museCatalog: z.array(z.object({
+      id: z.string().required(), name: z.string().required(),
+      contextWindow: z.natural().required(), maxTokens: z.natural().required(),
+      input: z.array(z.union(['text', 'image'])), efforts: z.array(z.string()), contributor: z.boolean(),
+    })),
   })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile(),
 })

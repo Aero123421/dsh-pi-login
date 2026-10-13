@@ -86,7 +86,7 @@ Account Usageは生成のtoken/cost記録とは別のreadonly snapshotです。`
 
 0.6.0のtgzは実DSH `0.2.1-alpha.2`の独立した空profileへの導入・起動、実行版0.6.0、update manager対応、認証済みRPCでの接続追加・実Credentials保存・認証をコピーしない複製・削除、再起動後の移行記録とprofile世代更新を確認しました。この開発環境では`api.github.com`へのproxy CONNECTが403で拒否されるため、live Release照合は未検証です。通常の`test:install`はこれを失敗として扱います。明示した`DSH_TEST_OFFLINE_RELEASE=1`では`blocked/network`だけを許容し、導入・CRUD・再起動と取得失敗の表示を検証します。「最新版」の判定には変換しません。CIとRelease workflowはオフライン指定を使わず、live Release照合まで成功することを要求します。起動ログに一時的なブラウザ認証URLが含まれる場合があるため、生ログを公開成果物へ含めません。
 
-Muse Code ownerは公式CLI／SDKの独立したMSP経路です。接続ごとのCredentialsと一時file backendでログインを行い、Wonder1、Wonder1 Contributor、Wonder Full、Wonder Full Contributorをモデル一覧で選択します。プラグイン内のContributor選択IDをbase model IDとboolean設定へ変換し、公式settings schemaと書き込み・読み戻しを確認します。専用session APIは開始・turn・cancel・履歴・resumeを提供しますが、通常のDSH LLM routeへは登録せず、tool bridge・実CLI・実アカウントでの生成と課金は未検証です。[選択IDの対応と残る確認](models.md#muse-codeのログインとcontributor)
+Muse Code接続はPi SDKのMetaプロバイダーでログイン・生成し、モデル一覧（`/muse-code/models`）とContributorヘッダーだけを専用に扱います（`src/muse-code-catalog.mjs`）。結合確認は`scripts/runtime-check.mjs`の「Meta Muse Code」で、一覧の両モード取得・保存・Hostへのroute登録・SDK送信時のヘッダーを検証します。[詳細](models.md#meta-muse-code)
 
 ## Thinking effort / Fastの実運用確認
 
