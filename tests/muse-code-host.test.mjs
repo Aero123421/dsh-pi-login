@@ -23,10 +23,11 @@ async function fixture(t, options = {}) {
     async readRecord(key) { return structuredClone(records.get(key)) },
     async modifyRecord(key, mutate) { const next = await mutate(structuredClone(records.get(key))); records.set(key, next); return next },
   }
-  const modePath = 'fixture.contributor_mode'
+  // Shape served by the official Muse Code 1.4.7 CLI: hidden, absent until written.
+  const modePath = 'contributor_mode_enabled'
   const openHost = async spec => {
     const config = join(spec.home, '.config', 'muse')
-    let account = { state: 'loggedOut', credentialRequired: true }, mode = true, closed = false
+    let account = { state: 'loggedOut', credentialRequired: true }, mode, closed = false
     try { JSON.parse(await readFile(join(config, 'auth.json'), 'utf8')); account = { state: 'accountLogin', credentialRequired: true, label: 'Account' } } catch {}
     const listeners = new Set()
     const sessions = sessionStores.get(spec.dataRoot) ?? new Map()
@@ -40,8 +41,8 @@ async function fixture(t, options = {}) {
         requests.push({ method, params, home: spec.home })
         if (options.onRequest) await options.onRequest(method, params, spec)
         switch (method) {
-          case 'settings/readSchema': return { schemaVersion: 1, keys: options.noMode ? {} : { [modePath]: { type: 'boolean' } } }
-          case 'settings/read': return { schemaVersion: 1, values: { [modePath]: mode } }
+          case 'settings/readSchema': return { schemaVersion: 1, keys: options.noMode ? {} : { [modePath]: { hidden: true, type: 'boolean' }, model: { type: 'string' } } }
+          case 'settings/read': return { schemaVersion: 1, values: { 'tools.artifact.enabled': true, ...mode === undefined ? {} : { [modePath]: mode } } }
           case 'settings/writeValue':
             mode = options.refuseContributor && params.value ? false : params.value
             return { keyPath: params.keyPath, effectiveValue: mode }
@@ -71,7 +72,7 @@ async function fixture(t, options = {}) {
             return { session: session.value, history: params.excludeItems === false
               ? { mode: 'inline', items: session.items } : { mode: 'none', items: null } }
           }
-          default: throw Object.assign(new Error('raw SDK secret error'), { code: -32601 })
+          default: throw Object.assign(new Error('raw SDK secret error'), { code: -32601, kind: 'methodNotFound' })
         }
       },
       async command(method, params) {
@@ -192,7 +193,7 @@ test('four model choices preserve native base ids and select Contributor without
   assert.ok(view.models.every(model => model.runnable === false && model.sessionSupported === true && model.entitlement === 'unverified'))
   assert.equal(view.usage.sourceObservedAt, new Date(1_700_000_000_000).toISOString())
   assert.doesNotMatch(JSON.stringify(view), /identity-|api_key|user_email|must-not-return/)
-  assert.ok(f.requests.filter(request => request.method === 'settings/writeValue').every(request => request.params.keyPath === 'fixture.contributor_mode'))
+  assert.ok(f.requests.filter(request => request.method === 'settings/writeValue').every(request => request.params.keyPath === 'contributor_mode_enabled'))
   Object.assign(connection, await f.manager.configure(connection, { modelId: rows[0].modelId, contributorMode: rows[0].contributor }))
   assert.equal((await f.manager.readModels(connection)).contributor, false)
   assert.doesNotMatch(JSON.stringify(f.records.get('dsh-muse-code/c-a').payload), /consent|Consent|timestamp|termsUrl/)
@@ -207,6 +208,13 @@ test('an unknown Contributor key or host refusal cannot silently enable a mode',
   await refused.manager.login(binding())
   await assert.rejects(refused.manager.configure(binding(), { modelId: 'muse-wonder-1.0', contributorMode: true }), code('muse-code-mode-unavailable'))
   assert.equal(refused.records.get('dsh-muse-code/c-a').payload.mode.enabled, false)
+})
+
+test('host errors are reported as missing protocol only when the CLI lacks the method', async t => {
+  const missing = await fixture(t, { onRequest: method => { if (method === 'settings/readSchema') throw Object.assign(new Error('raw'), { code: -32601, kind: 'experimentalRequired' }) } })
+  await assert.rejects(missing.manager.login(binding()), code('muse-code-protocol-unsupported'))
+  const failing = await fixture(t, { onRequest: method => { if (method === 'account/read') throw Object.assign(new Error('raw'), { code: -32603, kind: 'internal' }) } })
+  await assert.rejects(failing.manager.login(binding()), code('muse-code-unavailable'))
 })
 
 test('missing Full and unknown native catalog rows cannot create local Full choices or alter the native catalog', async t => {

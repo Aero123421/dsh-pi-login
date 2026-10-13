@@ -67,8 +67,8 @@ const museOwner = host.createMuseCodeOwner({ ctx, connections: manager, privateR
    async request(method, params) {
     museRequests.push({ method, params })
     switch (method) {
-     case 'settings/readSchema': return { schemaVersion: 1, keys: { 'fixture.contributor_mode': { type: 'boolean' } } }
-     case 'settings/read': return { schemaVersion: 1, values: { 'fixture.contributor_mode': mode } }
+     case 'settings/readSchema': return { schemaVersion: 1, keys: { 'contributor_mode_enabled': { type: 'boolean' } } }
+     case 'settings/read': return { schemaVersion: 1, values: { 'contributor_mode_enabled': mode } }
      case 'settings/writeValue': mode = params.value; return { keyPath: params.keyPath, effectiveValue: mode }
      case 'account/read': return account
      case 'account/loginStart':
@@ -184,11 +184,12 @@ try {
  page.setDefaultTimeout(10000)
  await page.goto(ctx.connection.authenticatedUrl(base))
  assert.ok(page.url().startsWith(base)); assert.equal(await page.title(), 'Pi login test fixture')
- await page.getByRole('heading', { name: 'AI接続・利用状況' }).waitFor()
+ await page.getByRole('heading', { name: 'AI接続', exact: true }).waitFor()
  await page.getByText('個人Pro', { exact: true }).waitFor()
  assert.equal(await page.locator('vite-error-overlay, #webpack-dev-server-client-overlay').count(), 0)
  assert.equal(await page.locator('.dsh-pi-card').count(), 0)
- assert.equal(await page.getByRole('heading', { name: /^Piプラグイン/ }).count(), 1)
+ assert.equal(await page.getByText(/^Piプラグイン/).count(), 1)
+ assert.equal(await page.getByRole('tab').count(), 0)
  assert.equal(usageCalls, 0)
  for (const width of [390, 768, 1440]) {
   await page.setViewportSize({ width, height: 900 })
@@ -211,7 +212,8 @@ try {
    })
    assert.ok(contrast.every(value => value >= 4.5), `Text contrast below AA at ${width}/${theme}: ${contrast}`)
    const addTarget = await page.getByRole('button', { name: '接続を追加', exact: true }).boundingBox()
-   assert.ok(addTarget.width >= 44 && addTarget.height >= 44)
+   // WCAG 2.2 target size; touch screens get 44px via pointer: coarse.
+   assert.ok(addTarget.width >= 24 && addTarget.height >= 24)
    await page.screenshot({ path: artifact(`connections-${width}-${theme}.png`), fullPage: true })
   }
  }
@@ -219,16 +221,15 @@ try {
  await page.setViewportSize({ width: 1000, height: 900 })
  const settingsButton = name => page.getByRole('button', { name: `接続設定: ${name}`, exact: true })
  const modelsButton = name => page.getByRole('button', { name: `モデルを管理: ${name}`, exact: true })
- // A single OAuth control in settings opens the existing official login dialog.
- await settingsButton('個人Pro').click()
- await page.getByRole('button', { name: 'ログイン', exact: true }).click()
+ const row = name => page.locator('.dsh-pi-connection-row').filter({ has: settingsButton(name) })
+ // A signed-out OAuth row offers sign-in directly; signing in turns the connection on.
+ await row('個人Pro').getByRole('button', { name: 'ログイン', exact: true }).click()
  await page.getByRole('link', { name: 'ブラウザで続ける' }).waitFor()
  await page.getByLabel('認証コードを入力').fill('browser-fixture-secret')
  await page.getByRole('button', { name: '続ける', exact: true }).click()
- await page.getByText('ログインしました', { exact: true }).waitFor()
  assert.equal(await page.getByText('browser-fixture-secret', { exact: true }).count(), 0)
- await page.getByRole('button', { name: '接続を有効にする', exact: true }).click()
- await page.getByText('接続を有効にしました。', { exact: true }).waitFor()
+ await page.getByText('ログインしました。この接続を使えます。', { exact: true }).waitFor()
+ await page.getByRole('button', { name: 'モデルを選ぶ', exact: true }).waitFor()
  await page.keyboard.press('Escape')
  await page.getByRole('dialog').waitFor({ state: 'hidden' })
  assert.equal(settingsValue.connections['c-personal'].enabled, true)
@@ -273,8 +274,16 @@ try {
  await page.getByRole('button', { name: '入力を表示', exact: true }).click()
  assert.equal(await keyInput.getAttribute('type'), 'text')
  await page.getByRole('button', { name: '入力を隠す', exact: true }).click()
- await page.getByRole('button', { name: '保存', exact: true }).click()
+ await page.getByRole('button', { name: '追加', exact: true }).click()
  await page.getByText('接続設定を保存しました。', { exact: true }).waitFor()
+ // The row switch turns a connection off and on without opening settings.
+ const addedSwitch = page.getByRole('switch', { name: 'この接続を使う: 追加API', exact: true })
+ assert.equal(await addedSwitch.getAttribute('aria-checked'), 'true')
+ await addedSwitch.click()
+ await page.waitForFunction(() => document.querySelector('[aria-label="この接続を使う: 追加API"]')?.getAttribute('aria-checked') === 'false')
+ assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '追加API').enabled, false)
+ await addedSwitch.click()
+ await page.waitForFunction(() => document.querySelector('[aria-label="この接続を使う: 追加API"]')?.getAttribute('aria-checked') === 'true')
  await settingsButton('追加API').click()
  assert.equal(await page.getByLabel('APIキー', { exact: true }).inputValue(), '')
  await page.getByLabel('接続名', { exact: true }).fill('追加API改')
@@ -292,28 +301,26 @@ try {
  assert.equal(await page.getByText('new-private-fixture-key', { exact: true }).count(), 0)
  // A custom origin requires Host trust and gives a specific actionable error.
  await settingsButton('追加API改').click()
+ await page.getByText('詳細設定', { exact: true }).click()
  await page.getByLabel('接続先URL（任意）', { exact: true }).fill('https://untrusted.example/v1')
  await page.getByRole('button', { name: '保存', exact: true }).click()
  await page.getByText('この接続先はホストで許可されていません。ホストの許可リストに追加してから保存してください。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
  // Real Muse owner and HostManager use the mocked official MSP commands.
- await modelsButton('Muse Code個人').click()
- await page.getByText('先にこのMuse Code接続にログインしてください。', { exact: true }).waitFor()
- await page.keyboard.press('Escape')
- await settingsButton('Muse Code個人').click()
- await page.getByRole('button', { name: 'ログイン', exact: true }).click()
+ assert.equal(await modelsButton('Muse Code個人').count(), 0)
+ await row('Muse Code個人').getByRole('button', { name: 'ログイン', exact: true }).click()
  await page.getByRole('link', { name: 'ブラウザで続ける', exact: true }).waitFor()
  await page.getByText('ABCD-EFGH', { exact: true }).waitFor()
- await page.getByText('ログインしました', { exact: true }).waitFor()
- await page.getByRole('button', { name: '接続を有効にする', exact: true }).click()
- await page.getByText('接続を有効にしました。', { exact: true }).waitFor()
+ await page.getByText('ログインしました。この接続を使えます。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
+ assert.equal(settingsValue.connections['c-muse-code'].enabled, true)
  assert.equal((await ctx.credentials.describeRecord('dsh-muse-code/c-muse-code')).configured, true)
  assert.equal((await ctx.credentials.describeRecord('llm-pi-ai/c-muse-code')).configured, false)
+ // Each pick differs from the current one, since picking saves immediately.
  const variants = [
-  { name: 'Wonder1', modelId: 'muse-wonder-1.0', contributor: false },
   { name: 'Wonder1 Contributor', modelId: 'muse-wonder-1.0', contributor: true },
   { name: 'Wonder Full', modelId: 'muse-wonder-full-1.0', contributor: false },
+  { name: 'Wonder1', modelId: 'muse-wonder-1.0', contributor: false },
   { name: 'Wonder Full Contributor', modelId: 'muse-wonder-full-1.0', contributor: true },
  ]
  const updatePayloads = []
@@ -325,32 +332,30 @@ try {
  await page.route('**/api/dsh-pi-login/connection-update', captureMuseSelection)
  for (const variant of variants) {
   await modelsButton('Muse Code個人').click()
-  const modelChoice = page.getByRole('button', { name: 'Muse Codeのモデル', exact: true })
-  await modelChoice.waitFor()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('radio', { name: 'Wonder1', exact: true }).waitFor()
   await page.getByText('一覧にあるモデルです。この契約での生成権限は未確認です。', { exact: true }).waitFor()
-  assert.equal(await page.getByRole('switch').count(), 0)
-  assert.equal(await page.getByRole('checkbox').count(), 0)
+  assert.equal(await dialog.getByRole('switch').count(), 0)
+  assert.equal(await dialog.getByRole('checkbox').count(), 0)
   assert.equal(await page.getByRole('link', { name: /Contributor/ }).count(), 0)
-  await modelChoice.click()
-  assert.equal(await page.getByRole('menuitem').count(), 4)
-  for (const choice of variants) await page.getByRole('menuitem', { name: `${choice.name} · Muse Code個人`, exact: true }).waitFor()
-  await page.getByRole('menuitem', { name: `${variant.name} · Muse Code個人`, exact: true }).click()
-  assert.equal(await page.getByRole('button', { name: '保存', exact: true }).isDisabled(), false)
-  await page.getByRole('button', { name: '保存', exact: true }).click()
+  assert.equal(await dialog.getByRole('radio').count(), 4)
+  for (const choice of variants) await dialog.getByRole('radio', { name: choice.name, exact: true }).waitFor()
+  await dialog.getByRole('radio', { name: variant.name, exact: true }).check()
   await page.getByText('Muse Codeのモデルを保存しました。', { exact: true }).waitFor()
   assert.equal(settingsValue.connections['c-muse-code'].museCode.modelId, variant.modelId)
   assert.equal(settingsValue.connections['c-muse-code'].museCode.contributorMode, variant.contributor)
   assert.deepEqual(updatePayloads.at(-1), { modelId: variant.modelId, contributorMode: variant.contributor })
   await page.keyboard.press('Escape')
   await modelsButton('Muse Code個人').click()
-  await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).waitFor()
-  assert.equal(await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).innerText(), `${variant.name} · Muse Code個人`)
+  const reopened = page.getByRole('dialog').getByRole('radio', { name: variant.name, exact: true })
+  await reopened.waitFor()
+  await page.waitForFunction(name => [...document.querySelectorAll('[role="dialog"] input[type="radio"]')].some(input => input.checked && input.parentElement.textContent === name), variant.name)
   await page.keyboard.press('Escape')
-  await page.locator('.dsh-pi-connection-row').filter({ has: page.getByText('Muse Code個人', { exact: true }) }).getByText(variant.name, { exact: true }).waitFor()
+  await row('Muse Code個人').locator('.dsh-pi-row-meta').filter({ hasText: new RegExp(`· ${variant.name}$`) }).waitFor()
  }
  await page.unroute('**/api/dsh-pi-login/connection-update', captureMuseSelection)
  await modelsButton('Muse Code個人').click()
- await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).waitFor()
+ await page.getByRole('dialog').getByRole('radio', { name: 'Wonder1', exact: true }).waitFor()
  for (const width of [390, 768, 1440]) {
   await page.setViewportSize({ width, height: 900 })
   for (const theme of ['light', 'dark']) {
@@ -362,10 +367,6 @@ try {
  const museDialog = await page.getByRole('dialog').boundingBox()
  assert.ok(museDialog.y >= 24 && museDialog.y + museDialog.height <= 736)
  await page.screenshot({ path: artifact('muse-models-mobile.png') })
- await page.getByRole('button', { name: 'Muse Codeのモデル', exact: true }).click()
- await page.getByRole('menuitem', { name: 'Wonder Full Contributor · Muse Code個人', exact: true }).waitFor()
- await page.screenshot({ path: artifact('muse-model-choices-mobile.png') })
- await page.keyboard.press('Escape')
  assert.ok(museRequests.some(request => request.method === 'settings/writeValue' && request.params.value === true))
  assert.ok(!museRequests.some(request => request.method === 'turn/start'))
  assert.ok(!museRequests.some(request => request.method === 'usage/read'), 'Muse model settings must not fetch usage')
@@ -374,16 +375,13 @@ try {
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
  await page.setViewportSize({ width: 1000, height: 900 })
  await page.getByRole('button', { name: '接続を追加', exact: true }).click()
- await page.getByRole('button', { name: '連携', exact: true }).click()
- await page.getByRole('menuitem', { name: museOwner.label, exact: true }).click()
- assert.equal(await page.getByRole('button', { name: 'サービス', exact: true }).count(), 0)
+ await page.getByRole('button', { name: 'サービス', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'Muse Code', exact: true }).click()
  assert.equal(await page.getByLabel('APIキー', { exact: true }).count(), 0)
  await page.getByLabel('接続名', { exact: true }).fill('Muse Code会社')
- await page.getByRole('button', { name: '保存', exact: true }).click()
+ await page.getByRole('button', { name: '追加してログイン', exact: true }).click()
  await page.getByRole('link', { name: 'ブラウザで続ける', exact: true }).waitFor()
- await page.getByText('ログインしました', { exact: true }).waitFor()
- await page.getByRole('button', { name: '接続を有効にする', exact: true }).click()
- await page.getByText('接続を有効にしました。', { exact: true }).waitFor()
+ await page.getByText('ログインしました。この接続を使えます。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
  const secondMuse = Object.values(settingsValue.connections).find(connection => connection.displayName === 'Muse Code会社')
  const firstMuseRecord = await ctx.credentials.readRecord('dsh-muse-code/c-muse-code')
@@ -421,13 +419,12 @@ try {
  }
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
  await page.setViewportSize({ width: 1000, height: 900 })
- // Usage only fetches when explicitly opened, without rebuilding model choices.
- await page.getByRole('tab', { name: '利用状況', exact: true }).click()
- assert.equal(usageCalls, 0)
- await page.getByRole('button', { name: '利用状況: 個人Pro', exact: true }).click()
+ // Usage loads inside an account's settings only, without rebuilding model choices.
+ const usageBefore = usageCalls
+ await settingsButton('個人Pro').click()
  await page.getByText('42% 使用', { exact: true }).waitFor()
  await page.getByText('無制限', { exact: true }).waitFor()
- assert.equal(usageCalls, 1)
+ assert.equal(usageCalls, usageBefore + 1)
  const beforeUsage = structuredClone(settingsValue.connections)
  for (const status of ['stale', 'auth-required', 'unobserved', 'error', 'rate-limited']) {
   usageStatus = status
@@ -440,17 +437,11 @@ try {
  await page.setViewportSize({ width: 390, height: 900 })
  await page.screenshot({ path: artifact('usage-mobile.png') })
  await page.keyboard.press('Escape')
- // Keyboard tab arrows, search/filter, and 50 connections remain responsive.
- const connectionsTab = page.getByRole('tab', { name: '接続とモデル', exact: true })
- await page.getByRole('tab', { name: '利用状況', exact: true }).focus()
- await page.keyboard.press('ArrowLeft')
- assert.equal(await connectionsTab.getAttribute('aria-selected'), 'true')
- assert.equal(await connectionsTab.evaluate(element => element === document.activeElement), true)
+ // Search and 50 connections remain responsive.
  for (let index = 0; index < 43; index++) settingsValue.connections[`c-bulk-${index}`] = fixture('example', `大量接続${index}`, 'api-key', `bulk-${index}`)
  assert.equal(Object.keys(settingsValue.connections).length, 50)
  revision++
  await page.evaluate(() => testRuntime.ctx.emit('connection/reset'))
- await page.locator('details').filter({ has: page.getByText('Pi / Example API', { exact: true }) }).locator('summary').click()
  await page.getByText('大量接続42', { exact: true }).waitFor()
  const searchStarted = Date.now()
  await page.getByRole('textbox', { name: '接続を検索', exact: true }).fill('大量接続42')
@@ -458,11 +449,6 @@ try {
  assert.ok(Date.now() - searchStarted < 1000, 'Searching 50 connections exceeded one second')
  await page.screenshot({ path: artifact('connections-50-filtered-mobile.png') })
  await page.getByRole('textbox', { name: '接続を検索', exact: true }).fill('')
- await page.getByRole('button', { name: '接続状態', exact: true }).click()
- await page.getByRole('menuitem', { name: '未接続', exact: true }).click()
- assert.equal(await page.getByText('会社API', { exact: true }).count(), 0)
- await page.getByRole('button', { name: '接続状態', exact: true }).click()
- await page.getByRole('menuitem', { name: 'すべて', exact: true }).click()
  await page.screenshot({ path: artifact('connections-50-mobile.png'), fullPage: true })
  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
  // Plugin updates have independent request state and one shared footer.
@@ -485,7 +471,7 @@ try {
  assert.equal(await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).isDisabled(), true)
  await page.screenshot({ path: artifact('plugin-update-restart-mobile.png') })
  await page.evaluate(async () => { await testRuntime.locale.setLocale('en'); document.documentElement.lang = 'en' })
- await page.getByRole('heading', { name: 'AI connections & usage' }).waitFor()
+ await page.getByRole('heading', { name: 'AI connections', exact: true }).waitFor()
  await page.evaluate(() => testRuntime.dispose())
  assert.equal(await page.locator('style[data-dsh-pi-login]').count(), 0)
  assert.deepEqual(errors, []); assert.deepEqual(consoleErrors, [])

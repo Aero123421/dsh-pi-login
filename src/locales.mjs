@@ -252,3 +252,25 @@ Object.assign(ja, { museEntitlementUnverified: '一覧にあるモデルです�
 
 Object.assign(en, { museModelSaved: 'Muse Code model saved.', museWonderOne: 'Wonder1', museWonderFull: 'Wonder Full' })
 Object.assign(ja, { museModelSaved: 'Muse Codeのモデルを保存しました。', museWonderOne: 'Wonder1', museWonderFull: 'Wonder Full' })
+
+// Simplified connections UI (0.6.1).
+Object.assign(en, {
+  title: 'AI connections', addAndSignIn: 'Add and sign in', add: 'Add', advanced: 'Advanced',
+  chooseModels: 'Choose models', modelsShort: 'Models', modelsOn: '{count} on',
+  modelsHint: 'Models you turn on are available in chats and agents while this connection is on.',
+  signedInReady: 'Signed in. This connection is ready to use.', statusOff: 'Off',
+  keySavedPlaceholder: 'Saved. Enter a new key to replace it.',
+  emptyConnections: 'No connections yet. Add one to sign in or use an API key.',
+  deleted: 'Connection deleted.', cloned: 'Settings duplicated. The copy starts off and needs its own sign-in.',
+  lastObservedShort: 'From an earlier response',
+})
+Object.assign(ja, {
+  title: 'AI接続', addAndSignIn: '追加してログイン', add: '追加', advanced: '詳細設定',
+  chooseModels: 'モデルを選ぶ', modelsShort: 'モデル', modelsOn: '{count}件オン',
+  modelsHint: 'オンにしたモデルは、この接続がオンのときチャットとエージェントで使えます。',
+  signedInReady: 'ログインしました。この接続を使えます。', statusOff: 'オフ',
+  keySavedPlaceholder: '保存済み。変更するときだけ入力',
+  emptyConnections: '接続はまだありません。「接続を追加」からログインまたはAPIキーを設定してください。',
+  deleted: '接続を削除しました。', cloned: '設定を複製しました。複製はオフ・未ログインで作成されます。',
+  lastObservedShort: '以前の応答から',
+})
