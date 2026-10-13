@@ -30,6 +30,15 @@ npm run pack:plugin
 
 環境にChromiumがある場合は`DSH_TEST_CHROMIUM=/usr/bin/chromium npm run test:browser`を使えます。画面証拠をチェックアウト外に保存する場合は`DSH_TEST_ARTIFACT_DIR=/tmp/dsh-ui-evidence`を指定します。
 
+`test:install`はNode.js 22.19.0以上、DSH CLI `0.2.1-alpha.2`、pnpm `11.28.5`をPATHに必要とします。公式CLIの`dsh plugin`はpnpmへ委譲します。以下はユーザーのhomeやglobal環境を変更せずに検証用CLIを用意する方法です。pnpmの版は固定した公式ソースの`packageManager`に合わせています。
+
+```sh
+npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.2 pnpm@11.28.5
+PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install
+```
+
+CLI依存の導入と配布tgzの追加ではbuild scriptsを許可しません。CLIやpnpmが見つからない場合は、段階・終了コード・安全なエラー分類を表示し、rawの設定出力は公開しません。
+
 runtimeテストの設定保存先とLLM登録先はテスト用サービスです。ブラウザテストは日本語を登録したテスト画面で行い、日本語プラグインやフォントは読み込みません。実アカウントは使用しません。
 
 GitHub Actionsにも同じチェックを設定しています（`.github/workflows/ci.yml`）。配布ファイル、チェックサム、スクリーンショットは`artifacts`に出力します。

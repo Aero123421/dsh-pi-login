@@ -13,7 +13,8 @@ async function run(args) {
   await writeFile(join(home,'install.log'),(result.stdout ?? '')+(result.stderr ?? ''))
   const stage = args.includes('--dump-config') ? 'profile-bootstrap' : 'plugin-install'
   const stderr = result.stderr ?? ''
-  const code = result.error?.code ?? stderr.match(/\b(?:ERR_[A-Z0-9_]+|EACCES|EPERM|ENOENT|ENOTDIR)\b/)?.[0] ?? 'CLI_FAILED'
+  const pnpmMissing = stderr.includes('dsh: pnpm was not found; install pnpm and make it available on PATH.')
+  const code = result.error?.code ?? (pnpmMissing ? 'PNPM_NOT_FOUND' : stderr.match(/\b(?:ERR_[A-Z0-9_]+|EACCES|EPERM|ENOENT|ENOTDIR)\b/)?.[0] ?? 'CLI_FAILED')
   const errorClass = stderr.match(/^(?:Error|TypeError|SyntaxError|RangeError|ReferenceError)(?=[: \[])/m)?.[0]
   const frame = stderr.split('\n').find(line => /^\s+at\s/.test(line))?.trim().replace(/https?:\/\/[^\s)]+/g, '[remote-url]')
   console.error('DSH bootstrap diagnostic: '+JSON.stringify({ stage, status: result.status, signal: result.signal, code, errorClass, frame }))
