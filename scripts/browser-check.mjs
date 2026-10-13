@@ -266,11 +266,16 @@ try {
  await page.screenshot({ path: artifact('pi-generic-refresh-desktop.png') })
  await page.getByRole('button', { name: '閉じる', exact: true }).last().click()
  // Plugin updates use one shared footer and independent request state.
+ const updateProfileKey = 'a'.repeat(64)
+ let acceptedUpdateId
+ await page.route('**/api/dsh-pi-login/update-status', async route => {
+  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: acceptedUpdateId ? 'installing' : 'idle', profileKey: updateProfileKey, requestId: acceptedUpdateId } } } })
+ })
  let releaseCheckCount = 0, finishReleaseCheck
  await page.route('**/api/dsh-pi-login/update-check', async route => {
   releaseCheckCount++
   await new Promise(resolve => { finishReleaseCheck = resolve })
-  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'available', runtimeVersion: '0.5.0', candidate: { id: 'fixture-release', version: '0.6.0', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } } } } })
+  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'available', profileKey: updateProfileKey, runtimeVersion: '0.5.1', candidate: { id: 'fixture-release', version: '0.6.0', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } } } } })
  })
  await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).click()
  await page.getByText('更新を確認中…', { exact: true }).waitFor()
@@ -285,10 +290,12 @@ try {
  let begins = 0
  await page.route('**/api/dsh-pi-login/update-begin', async route => {
   begins++
+  assert.equal(route.request().postDataJSON().payload.profileKey, updateProfileKey)
+  acceptedUpdateId = route.request().postDataJSON().payload.requestId
   await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'installing', requestId: route.request().postDataJSON().payload.requestId, version: '0.6.0' } } } })
  })
  await page.route('**/api/dsh-pi-login/update-reconcile', async route => {
-  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'restart-required', runtimeVersion: '0.5.0', version: '0.6.0' } } } })
+  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'restart-required', profileKey: updateProfileKey, requestId: acceptedUpdateId, runtimeVersion: '0.5.1', version: '0.6.0' } } } })
  })
  await page.getByRole('button', { name: 'プラグインを更新する', exact: true }).click()
  await page.getByText('導入しました。現在の作業を終えてからDSHを再起動して適用してください。', { exact: true }).waitFor()

@@ -36,9 +36,9 @@ export function applyLoginUI(ctx, options = {}) {
             try {
               if (method === 'update-status') value = await updates.status()
               else if (method === 'update-check') value = await updates.check()
-              else if (method === 'update-begin') value = await updates.begin(payload.candidateId, payload.requestId)
+              else if (method === 'update-begin') value = await updates.begin(payload.candidateId, payload.requestId, payload.profileKey)
               else value = await updates.reconcile(payload.requestId)
-            } catch (error) { throw new LoginError(error.message === 'busy' ? 'busy' : 'update-failed') }
+            } catch (error) { throw new LoginError(['busy', 'profile'].includes(error.message) ? error.message : 'update-failed') }
           } else {
             const mutation = ['start', 'answer', 'enable', 'set-model', 'set-provider', 'use-login'].includes(method)
             if (mutation && updates.running) throw new LoginError('busy')

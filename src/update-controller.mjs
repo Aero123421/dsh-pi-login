@@ -1,17 +1,58 @@
 const STORAGE = 'dsh-pi-login:update'
 export class UpdateController {
   constructor(connection, storage) {
-    if (storage === undefined) { try { storage = globalThis.sessionStorage } catch {} }
-    this.connection = connection; this.storage = storage; this.listeners = new Set()
-    this.state = { status: 'idle' }; this.generation = 0; this.closed = false; this.timer = null
-    try { this.requestId = storage?.getItem(STORAGE) || undefined } catch {}
+    if (storage === undefined) {
+      try {
+        storage = globalThis.sessionStorage
+      } catch {
+        /* Storage is optional; the Host journals admitted requests. */
+      }
+    }
+    this.connection = connection
+    this.storage = storage
+    this.listeners = new Set()
+    this.state = { status: 'blocked', reason: 'manager-unavailable' }
+    this.generation = 0
+    this.closed = false
+    this.timer = null
+    this.profileKey = undefined
+    this.requestId = undefined
   }
   getSnapshot = () => this.state
-  subscribe = listener => { this.listeners.add(listener); return () => this.listeners.delete(listener) }
-  publish(state) { if (this.closed) return; this.state = state; for (const listener of this.listeners) listener() }
+  subscribe = listener => {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+  storageKey() {
+    return this.profileKey ? `${STORAGE}:${this.profileKey}` : undefined
+  }
+  selectProfile(key) {
+    const next = typeof key === 'string' && /^[a-f0-9]{64}$/.test(key) ? key : undefined
+    if (next === this.profileKey) return
+    this.profileKey = next
+    this.requestId = undefined
+    if (next) {
+      try {
+        this.requestId = this.storage?.getItem(this.storageKey()) || undefined
+      } catch {
+        /* Optional storage. */
+      }
+    }
+  }
+  publish(state) {
+    if (this.closed) return
+    if (state.profileKey) this.selectProfile(state.profileKey)
+    this.state = state
+    for (const listener of this.listeners) listener()
+  }
   async call(method, payload = {}) {
+    if (!this.connection) return { status: 'blocked', reason: 'manager-unavailable' }
     const result = await this.connection.rpc.call('/api', `dsh-pi-login/update-${method}`, payload)
-    if (!result.ok) { const error = new Error(result.error.code); error.rejected = true; throw error }
+    if (!result.ok) {
+      const error = new Error(result.error.code)
+      error.rejected = true
+      throw error
+    }
     return result.value
   }
   async load() {
@@ -19,41 +60,102 @@ export class UpdateController {
     const generation = ++this.generation
     clearTimeout(this.timer)
     try {
-      const state = await this.call(this.requestId ? 'reconcile' : 'status', this.requestId ? { requestId: this.requestId } : {})
+      const status = await this.call('status')
       if (this.closed || generation !== this.generation) return
-      if (state.requestId) { this.requestId = state.requestId; try { this.storage?.setItem(STORAGE, state.requestId) } catch {} }
+      this.selectProfile(status.profileKey)
+      if (status.requestId) this.requestId = status.requestId
+      const state = this.requestId
+        ? await this.call('reconcile', { requestId: this.requestId, profileKey: this.profileKey })
+        : status
+      if (this.closed || generation !== this.generation) return
+      if (state.requestId) {
+        this.requestId = state.requestId
+        try {
+          this.storage?.setItem(this.storageKey(), state.requestId)
+        } catch {
+          /* Storage is optional; the Host journals admitted requests. */
+        }
+      }
       this.publish(state)
-      if (['preparing', 'installing'].includes(state.status)) this.timer = setTimeout(() => { void this.load() }, 800)
-    } catch { if (generation === this.generation) this.publish({ ...this.state, status: this.requestId ? 'unknown' : 'blocked', reason: 'network' }) }
+      if (['preparing', 'installing'].includes(state.status))
+        this.timer = setTimeout(() => {
+          void this.load()
+        }, 800)
+    } catch {
+      if (generation === this.generation)
+        this.publish({ ...this.state, status: this.requestId ? 'unknown' : 'blocked', reason: 'network' })
+    }
   }
   async check() {
-    if (this.closed || ['checking', 'preparing', 'installing', 'starting', 'unknown'].includes(this.state.status)) return
+    if (
+      this.closed ||
+      ['checking', 'preparing', 'installing', 'starting', 'unknown'].includes(this.state.status)
+    )
+      return
     const generation = ++this.generation
     this.publish({ ...this.state, status: 'checking' })
     try {
       const state = await this.call('check')
       if (generation === this.generation) this.publish(state)
-    } catch { if (generation === this.generation) this.publish({ ...this.state, status: 'blocked', reason: 'network' }) }
-  }
-  async begin() {
-    if (this.closed || this.state.status !== 'available') return
-    const candidate = this.state.candidate, generation = ++this.generation
-    this.requestId = crypto.randomUUID()
-    try { this.storage?.setItem(STORAGE, this.requestId) } catch {}
-    this.publish({ ...this.state, status: 'starting' })
-    try {
-      const state = await this.call('begin', { candidateId: candidate.id, requestId: this.requestId })
-      if (typeof state.requestId !== 'string') throw new Error('invalid request')
-      this.requestId = state.requestId
-      try { this.storage?.setItem(STORAGE, state.requestId) } catch {}
-      if (generation === this.generation) { this.publish({ ...this.state, ...state }); await this.load() }
-    } catch (error) {
-      if (error.rejected) {
-        this.requestId = undefined
-        try { this.storage?.removeItem(STORAGE) } catch {}
-      }
-      if (generation === this.generation) this.publish({ ...this.state, status: error.rejected ? 'failed' : 'unknown', reason: error.message.endsWith('/busy') ? 'busy' : 'network' })
+    } catch {
+      if (generation === this.generation) this.publish({ ...this.state, status: 'blocked', reason: 'network' })
     }
   }
-  dispose() { this.closed = true; this.generation++; clearTimeout(this.timer); this.listeners.clear() }
+  async begin() {
+    if (this.closed || !this.profileKey || this.state.status !== 'available') return
+    const candidate = this.state.candidate,
+      generation = ++this.generation
+    this.requestId = crypto.randomUUID()
+    try {
+      this.storage?.setItem(this.storageKey(), this.requestId)
+    } catch {
+      /* Storage is optional; the Host journals admitted requests. */
+    }
+    this.publish({ ...this.state, status: 'starting' })
+    try {
+      const state = await this.call('begin', {
+        candidateId: candidate.id,
+        requestId: this.requestId,
+        profileKey: this.profileKey,
+      })
+      if (this.closed || generation !== this.generation) return
+      if (typeof state.requestId !== 'string') throw new Error('invalid request')
+      this.requestId = state.requestId
+      try {
+        this.storage?.setItem(this.storageKey(), state.requestId)
+      } catch {
+        /* Storage is optional; the Host journals admitted requests. */
+      }
+      if (generation === this.generation) {
+        this.publish({ ...this.state, ...state })
+        await this.load()
+      }
+    } catch (error) {
+      if (this.closed || generation !== this.generation) return
+      if (error.rejected) {
+        this.requestId = undefined
+        try {
+          this.storage?.removeItem(this.storageKey())
+        } catch {
+          /* Storage is optional; the Host journals admitted requests. */
+        }
+      }
+      if (generation === this.generation)
+        this.publish({
+          ...this.state,
+          status: error.rejected ? 'failed' : 'unknown',
+          reason: error.message.endsWith('/busy')
+            ? 'busy'
+            : error.message.endsWith('/profile')
+              ? 'profile'
+              : 'network',
+        })
+    }
+  }
+  dispose() {
+    this.closed = true
+    this.generation++
+    clearTimeout(this.timer)
+    this.listeners.clear()
+  }
 }

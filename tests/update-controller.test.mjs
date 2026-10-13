@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { UpdateController } from '../src/update-controller.mjs'
+const profileKey = 'a'.repeat(64)
 const tick = () => new Promise(resolve => setImmediate(resolve))
 function storage() { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) } }
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
@@ -9,11 +10,11 @@ test('lost begin response retains operation id before RPC and reconnect never re
   const saved = storage(), calls = []
   const connection = { rpc: { call: async (_path, method, payload) => {
     calls.push({ method, payload })
-    if (method.endsWith('begin')) { assert.equal(saved.getItem('dsh-pi-login:update'), payload.requestId); throw new Error('disconnected') }
-    return { ok: true, value: { status: 'unknown', requestId: payload.requestId } }
+    if (method.endsWith('begin')) { assert.equal(saved.getItem('dsh-pi-login:update:' + profileKey), payload.requestId); throw new Error('disconnected') }
+    return { ok: true, value: method.endsWith('status') ? { status: 'idle', profileKey } : { status: 'unknown', profileKey, requestId: payload.requestId } }
   } } }
   const old = new UpdateController(connection, saved)
-  old.publish({ status: 'available', candidate: { id: '7', version: '0.6.0' } })
+  old.publish({ status: 'available', profileKey, candidate: { id: '7', version: '0.6.0' } })
   const first = old.begin(), duplicate = old.begin(); await Promise.all([first, duplicate])
   assert.equal(old.state.status, 'unknown'); old.dispose()
   const next = new UpdateController(connection, saved)
@@ -33,7 +34,7 @@ test('connection reset and disposal suppress stale check replies', async () => {
 })
 test('explicit host refusal is failed rather than unknown or success', async () => {
   const controller = new UpdateController({ rpc: { call: async () => ({ ok: false, error: { code: 'dsh-pi-login/busy' } }) } }, storage())
-  controller.publish({ status: 'available', candidate: { id: '7' } }); await controller.begin()
+  controller.publish({ status: 'available', profileKey, candidate: { id: '7' } }); await controller.begin()
   assert.equal(controller.state.status, 'failed'); assert.equal(controller.state.reason, 'busy'); controller.dispose()
 })
 
@@ -41,13 +42,120 @@ test('authoritative begin refusal clears the rejected id and reconnect discovers
   const saved = storage(), calls = []
   const controller = new UpdateController({ rpc: { call: async (_path, method, payload) => {
     calls.push({ method, payload })
-    return method.endsWith('begin') ? { ok: false, error: { code: 'dsh-pi-login/busy' } } : { ok: true, value: { status: 'restart-required', requestId: 'accepted-operation', runtimeVersion: '0.5.0' } }
+    return method.endsWith('begin') ? { ok: false, error: { code: 'dsh-pi-login/busy' } } : { ok: true, value: { status: 'restart-required', profileKey, requestId: 'accepted-operation', runtimeVersion: '0.5.0' } }
   } } }, saved)
-  controller.publish({ status: 'available', candidate: { id: '7' } }); await controller.begin()
-  assert.equal(saved.getItem('dsh-pi-login:update'), undefined)
+  controller.publish({ status: 'available', profileKey, candidate: { id: '7' } }); await controller.begin()
+  assert.equal(saved.getItem('dsh-pi-login:update:' + profileKey), undefined)
   await controller.load()
-  assert.equal(calls.at(-1).method, 'dsh-pi-login/update-status')
+  assert.equal(calls.at(-1).method, 'dsh-pi-login/update-reconcile')
   assert.equal(controller.state.status, 'restart-required')
   assert.equal(controller.requestId, 'accepted-operation')
+  controller.dispose()
+})
+
+const candidate = { id: 'release', version: '0.6.0' }
+test('same origin profile switch never reconciles another profile and retains original lost receipt', async () => {
+  const saved = storage(),
+    calls = []
+  let current = profileKey
+  const other = 'b'.repeat(64)
+  const connection = {
+    rpc: {
+      call: async (_base, method, payload) => {
+        calls.push({ method, payload })
+        if (method.endsWith('begin')) throw new Error('lost response')
+        return {
+          ok: true,
+          value: method.endsWith('status')
+            ? { status: 'idle', profileKey: current }
+            : { status: 'unknown', profileKey: current, requestId: payload.requestId },
+        }
+      },
+    },
+  }
+  const controller = new UpdateController(
+    connection, saved,
+  )
+  controller.publish({ status: 'available', candidate, profileKey })
+  await controller.begin()
+  const original = controller.requestId
+  current = other
+  await controller.load()
+  assert.equal(controller.state.status, 'idle')
+  assert.equal(controller.requestId, undefined)
+  assert.equal(calls.filter(call => call.method.endsWith('reconcile')).length, 0)
+  current = profileKey
+  await controller.load()
+  assert.equal(calls.at(-1).payload.requestId, original)
+  assert.equal(calls.at(-1).payload.profileKey, profileKey)
+  assert.equal(controller.state.status, 'unknown')
+  controller.dispose()
+})
+
+test('late begin response from previous profile cannot overwrite current receipt', async () => {
+  let finish
+  const saved = storage(),
+    other = 'b'.repeat(64)
+  const controller = new UpdateController(
+    {
+      rpc: {
+        call: async (_base, method, payload) => {
+          if (method.endsWith('begin'))
+            return new Promise(resolve => {
+              finish = () =>
+                resolve({ ok: true, value: { status: 'installing', profileKey, requestId: payload.requestId } })
+            })
+          return { ok: true, value: { status: 'idle', profileKey: other } }
+        },
+      },
+    },
+    saved,
+  )
+  controller.publish({ status: 'available', candidate, profileKey })
+  const begin = controller.begin()
+  await new Promise(resolve => setImmediate(resolve))
+  await controller.load()
+  finish()
+  await begin
+  assert.equal(controller.profileKey, other)
+  assert.equal(controller.requestId, undefined)
+  assert.equal(controller.state.status, 'idle')
+  assert.equal(saved.getItem('dsh-pi-login:update:' + other), undefined)
+  controller.dispose()
+})
+
+test('authoritative active server operation replaces old browser receipt', async () => {
+  const saved = storage(),
+    calls = [],
+    old = crypto.randomUUID(),
+    current = crypto.randomUUID()
+  saved.setItem('dsh-pi-login:update:' + profileKey, old)
+  const controller = new UpdateController(
+    {
+      rpc: {
+        call: async (_base, method, payload) => {
+          calls.push({ method, payload })
+          return {
+            ok: true,
+            value: {
+              status: 'installing',
+              profileKey,
+              requestId: method.endsWith('status') ? current : payload.requestId,
+            },
+          }
+        },
+      },
+    },
+    saved,
+  )
+  await controller.load()
+  assert.equal(controller.requestId, current)
+  assert.equal(calls.at(-1).payload.requestId, current)
+  assert.equal(controller.state.status, 'installing')
+  assert.equal(saved.getItem('dsh-pi-login:update:' + profileKey), current)
+  assert.equal(
+    calls.some(call => call.method.endsWith('begin')),
+    false,
+  )
   controller.dispose()
 })
