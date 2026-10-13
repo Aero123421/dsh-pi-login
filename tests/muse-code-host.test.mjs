@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, writeFile, readFile, rm, access, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
-import { MuseCodeHostManager, museCodeEnvironment, museCodeCredentialKey, museCodeAuthDocument } from '../src/muse-code-host.mjs'
+import { MuseCodeHostManager, museCodeEnvironment, museCodeCredentialKey, museCodeAuthDocument, resolveMuseBin } from '../src/muse-code-host.mjs'
 
 const binding = (id = 'c-a') => ({ connectionId: id, credentialRecordId: id, credentialGeneration: 1,
   integrationId: 'meta-muse-code', serviceId: 'muse-code', routeId: `muse-${id}`, authMethod: 'oauth',
@@ -140,6 +140,19 @@ async function fixture(t, options = {}) {
   t.after(async () => { await manager.dispose(); await rm(privateRoot, { recursive: true, force: true }) })
   return { manager, records, hosts, requests, privateRoot, credentials, set current(value) { current = value } }
 }
+
+test('the official CLI is found on PATH or in the installer default when the app has no shell PATH', async t => {
+  const root = await mkdtemp(join(process.cwd(), 'work', 'muse-bin-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const onPath = join(root, 'path'), home = join(root, 'home')
+  await mkdir(onPath, { recursive: true }); await mkdir(join(home, '.local', 'bin'), { recursive: true })
+  await writeFile(join(home, '.local', 'bin', 'muse'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.equal(resolveMuseBin({ PATH: '/usr/bin:/bin' }, home, 'darwin'), join(home, '.local', 'bin', 'muse'))
+  await writeFile(join(onPath, 'muse'), '#!/bin/sh\n', { mode: 0o755 })
+  assert.equal(resolveMuseBin({ PATH: onPath }, home, 'linux'), join(onPath, 'muse'))
+  assert.equal(resolveMuseBin({ PATH: '' }, join(root, 'nobody'), 'darwin'), 'muse')
+  assert.equal(resolveMuseBin({ PATH: onPath }, home, 'win32'), 'muse')
+})
 
 test('Muse child homes, data roots and ambient credentials are isolated on every platform', () => {
   const env = museCodeEnvironment('/owned/temp', '/owned/data', { PATH: '/bin', META_API_KEY: 'wrong',

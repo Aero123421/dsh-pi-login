@@ -31,6 +31,14 @@ function time(value, dateOnly = false) {
   catch { return date.toLocaleString() }
 }
 
+// A password-type field makes browsers treat the input before it as a username
+// and offer saved passwords. Mask with CSS instead where the engine supports it.
+const CSS_MASK = typeof CSS !== 'undefined' && CSS.supports?.('-webkit-text-security', 'disc') === true
+const noAutofill = { autoComplete: 'off', autoCapitalize: 'off', autoCorrect: 'off', spellCheck: false, 'data-1p-ignore': '', 'data-lpignore': 'true', 'data-form-type': 'other' }
+function secretProps(hidden) {
+  return { ...noAutofill, type: hidden && !CSS_MASK ? 'password' : 'text', className: hidden && CSS_MASK ? 'dsh-pi-masked' : undefined }
+}
+
 function Choice({ label, value, options, onChange, disabled }) {
   const [open, setOpen] = useState(false)
   const id = useId()
@@ -62,7 +70,7 @@ function Prompt({ prompt, ticket, controller, t, onFailure }) {
     {prompt.kind === 'select'
       ? <Choice label={prompt.message || t('selection')} value={value} options={prompt.options} onChange={setValue} disabled={busy} />
       : <><label htmlFor={id}>{prompt.message || t(prompt.kind === 'secret' ? 'secret' : 'answer')}</label>
-        <Input id={id} data-modal-autofocus type={prompt.kind === 'secret' && !visible ? 'password' : 'text'} autoComplete="off" spellCheck={false}
+        <Input id={id} data-modal-autofocus {...(prompt.kind === 'secret' ? secretProps(!visible) : noAutofill)}
           value={value} placeholder={prompt.placeholder} onChange={event => setValue(event.target.value)} />
         {prompt.kind === 'secret' ? <div className="dsh-pi-inline-actions"><Button size="sm" onClick={() => setVisible(!visible)} aria-pressed={visible}>{t(visible ? 'hideSecret' : 'showSecret')}</Button>
           <Button size="sm" onClick={async () => { try { setValue(await navigator.clipboard.readText()); setPasteError(false) } catch { setPasteError(true) } }}>{t('paste')}</Button></div> : null}</>}
@@ -357,7 +365,7 @@ function SecretField({ value, onChange, t, disabled, saved }) {
   const id = useId()
   return <div className="dsh-pi-field"><label htmlFor={id}>{t('apiKey')}</label>
     <div className="dsh-pi-secret">
-      <Input id={id} type={visible ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={value} disabled={disabled} placeholder={saved ? t('keySavedPlaceholder') : ''} onChange={event => onChange(event.target.value)} />
+      <Input id={id} {...secretProps(!visible)} value={value} disabled={disabled} placeholder={saved ? t('keySavedPlaceholder') : ''} onChange={event => onChange(event.target.value)} />
       <Button size="sm" disabled={disabled} aria-pressed={visible} onClick={() => setVisible(!visible)}>{t(visible ? 'hideSecret' : 'showSecret')}</Button>
       <Button size="sm" disabled={disabled} onClick={async () => { try { onChange(await navigator.clipboard.readText()); setPasteError(false) } catch { setPasteError(true) } }}>{t('paste')}</Button>
     </div>
@@ -415,11 +423,11 @@ function AddDialog({ state, controller, t, onClose, onLogin, onSaved }) {
     {unavailable ? <p role="status">{t(service.unavailableReason === 'muse-code-bridge-unverified' ? `serviceUnavailable_${service.unavailableReason}` : 'serviceUnavailable')}</p> : null}
     {methods.length > 1 ? <Choice label={t('method')} value={method} options={methods.map(item => ({ id: item.id, label: t(item.id === 'oauth' ? 'oauth' : 'apiKey') }))} disabled={busy} onChange={value => { setAuthMethod(value); setApiKey('') }} /> : null}
     <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label>
-      <Input id={`${fieldId}-name`} data-modal-autofocus maxLength={80} value={displayName} disabled={busy} placeholder={serviceLabel(service ?? {}) ?? t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
+      <Input id={`${fieldId}-name`} {...noAutofill} data-modal-autofocus maxLength={80} value={displayName} disabled={busy} placeholder={serviceLabel(service ?? {}) ?? t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
     {method === 'api-key' ? <>
       <SecretField value={apiKey} onChange={setApiKey} t={t} disabled={busy} />
       <details className="dsh-pi-advanced"><summary>{t('advanced')}</summary>
-        <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} type="url" value={endpointUrl} disabled={busy} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
+        <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} {...noAutofill} type="url" value={endpointUrl} disabled={busy} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
         {service?.apis?.length ? <Choice label={t('protocol')} value={api || service.apis[0]} options={service.apis.map(value => ({ id: value, label: value }))} disabled={busy} onChange={setApi} /> : null}
       </details></> : <p className="dsh-pi-muted">{t('oauthHint')}</p>}
     {error ? <p role="alert">{t(error)}</p> : null}
@@ -480,13 +488,13 @@ function ConnectionDialog({ entry, state, controller, t, onClose, onLogin, onSav
     {entry.configured && entry.capabilities?.usage !== false ? <UsagePanel entry={entry} controller={controller} t={t} /> : null}
     <section className="dsh-pi-section" aria-label={t('connectionSettings')}>
       <h4>{t('connectionSettings')}</h4>
-      <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label><Input id={`${fieldId}-name`} maxLength={80} value={displayName} disabled={busy || !writable} placeholder={t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
+      <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label><Input id={`${fieldId}-name`} {...noAutofill} maxLength={80} value={displayName} disabled={busy || !writable} placeholder={t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
       {methods.length > 1 ? <Choice label={t('method')} value={authMethod} options={methods.map(method => ({ id: method.id, label: t(method.id === 'oauth' ? 'oauth' : 'apiKey') }))} disabled={busy || !writable} onChange={value => { setAuthMethod(value); setApiKey(''); setConfirm(undefined) }} /> : null}
       {methodChanged ? <p role="alert">{t('methodChangeWarning')}</p> : null}
       {authMethod === 'api-key' ? <>
         <SecretField value={apiKey} onChange={setApiKey} t={t} disabled={busy || !writable} saved={entry.configured && !methodChanged} />
         <details className="dsh-pi-advanced" open={entry.profile?.baseURL ? true : undefined}><summary>{t('advanced')}</summary>
-          <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} type="url" value={endpointUrl} disabled={busy || !writable} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
+          <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} {...noAutofill} type="url" value={endpointUrl} disabled={busy || !writable} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
           {service?.apis?.length ? <Choice label={t('protocol')} value={api || service.apis[0]} options={service.apis.map(value => ({ id: value, label: value }))} disabled={busy || !writable} onChange={setApi} /> : null}
         </details></> : null}
     </section>

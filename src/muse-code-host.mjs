@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, writeFile, readFile, lstat, rm } from 'node:fs/promises'
-import { join, isAbsolute } from 'node:path'
+import { accessSync, constants } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, isAbsolute, delimiter } from 'node:path'
 import { MuseCodeError } from './muse-code.mjs'
 import { normalizeMuseCodeCatalog, normalizeMuseCodeUsage } from './muse-code-observations.mjs'
 
@@ -67,14 +69,29 @@ export function museCodeEnvironment(home, dataRoot, environment = process.env, p
   return env
 }
 
+/**
+ * Desktop apps started outside a shell (macOS Finder, Dock) do not inherit the
+ * shell PATH, so also try the official installer's default `~/.local/bin`.
+ */
+export function resolveMuseBin(environment = process.env, home = homedir(), platform = process.platform) {
+  if (platform === 'win32') return 'muse'
+  for (const dir of (environment.PATH ?? '').split(delimiter).filter(Boolean)) {
+    const candidate = join(dir, 'muse')
+    try { accessSync(candidate, constants.X_OK); return candidate } catch {}
+  }
+  const installed = join(home, '.local', 'bin', 'muse')
+  try { accessSync(installed, constants.X_OK); return installed } catch {}
+  return 'muse'
+}
+
 /** Actual official SDK factory. No paid request happens at spawn/handshake. */
-export function createSdkMuseHostFactory({ museBin = 'muse', sdkLoader = () => import('@muse-code/sdk') } = {}) {
+export function createSdkMuseHostFactory({ museBin, sdkLoader = () => import('@muse-code/sdk') } = {}) {
   return async ({ home, dataRoot, env, signal }) => {
     let handshake, abort
     try {
       const sdk = await sdkLoader()
       signal?.throwIfAborted()
-      handshake = sdk.spawnMspConnection({ command: museBin, args: ['serve'], cwd: home, env,
+      handshake = sdk.spawnMspConnection({ command: museBin ?? resolveMuseBin(), args: ['serve'], cwd: home, env,
         shutdownTimeoutMs: 5000 })
       abort = () => { void handshake.close().catch(() => {}) }
       signal?.addEventListener('abort', abort, { once: true })

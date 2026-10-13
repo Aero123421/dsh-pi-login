@@ -43,6 +43,7 @@ button.dsh-pi-row-main:hover { background: var(--dsw-alias-bg-layer-1); }
 .dsh-pi-choice-button > span { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dsh-pi-secret { display: flex; align-items: center; gap: 4px; }
 .dsh-pi-secret > :first-child { flex: 1 1 auto; min-width: 0; }
+.dsh-pi-masked input { -webkit-text-security: disc; }
 .dsh-pi-advanced { margin-bottom: 14px; }
 .dsh-pi-advanced summary { cursor: pointer; color: var(--dsw-alias-label-secondary); margin-bottom: 8px; width: fit-content; }
 .dsh-pi-danger { display: flex; justify-content: flex-start; }
