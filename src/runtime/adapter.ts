@@ -93,6 +93,8 @@ export interface PiAiAdapterOptions {
    * every request no matter how often the human signed in.
    */
   auth: PiAiAuthInjection
+  /** Pin the account key for models learned from a subscription catalog. */
+  authorizeModel?: (provider: string, model: Model<Api>, profile: ResolvedPiAiProviderProfile) => Promise<{ apiKey: string, headers?: Readonly<Record<string, string>> } | undefined>
   /** Resolve the optional durable attachment service at request time. */
   resolveAttachments?: () => AttachmentStore | undefined
   /** Bridge one attachment reference into the current model-tool execution world. */
@@ -357,7 +359,9 @@ export class PiAiAdapter extends LlmAdapter {
       model,
       options.reasoningEffort ?? profile.reasoning,
     )
-    const apiKey = await this.config.resolveApiKey(options.provider, profile)
+    const explicitKey = await this.config.resolveApiKey(options.provider, profile)
+    const accountAuthorization = await this.config.authorizeModel?.(options.provider, model, profile)
+    const apiKey = accountAuthorization?.apiKey ?? explicitKey
 
     const consumer = new AbortController()
     const upstream = options.signal === undefined
@@ -397,7 +401,7 @@ export class PiAiAdapter extends LlmAdapter {
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
-        headers: requestHeaders(profile.headers),
+        headers: { ...requestHeaders(profile.headers), ...accountAuthorization?.headers },
       }
       const events = choice.serviceTier !== undefined
         ? streamWithTier(snapshot.models, model, context, streamOptions, choice.serviceTier)

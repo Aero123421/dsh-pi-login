@@ -13,6 +13,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { Api, Model } from '@earendil-works/pi-ai'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
 import { assertUsableApiKey, LlmError, resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigurableProvider } from '@deepseek-ai/dsh-llm'
@@ -104,10 +105,16 @@ function directoryEntries(
 }
 
 /** Register one generic pi-ai adapter for all configured provider routes. */
-export function apply(ctx: Context, config: Config): void {
+export function apply(ctx: Context, config: Config, live?: {
+  catalog: (provider: string) => ReadonlyMap<string, Model<Api>> | undefined
+  revision: () => number
+  authorizeModel: NonNullable<import('./adapter.ts').PiAiAdapterOptions['authorizeModel']>
+  onLogin: (provider: string) => void
+}): void {
   ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
   const settingsNs = NS
   let lastRaw: ReturnType<Config['providers']['get']> | undefined
+  let lastCatalogRevision: number | undefined
   let memoized: ReadonlyMap<string, ResolvedPiAiProviderProfile> | undefined
   /**
    * The resolved profiles for the current configuration, memoized by the raw
@@ -120,10 +127,12 @@ export function apply(ctx: Context, config: Config): void {
    */
   const profiles = (): ReadonlyMap<string, ResolvedPiAiProviderProfile> => {
     const raw = config.providers.get()
-    if (raw === lastRaw && memoized !== undefined) return memoized
-    const next = resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred')
+    const revision = live?.revision()
+    if (raw === lastRaw && revision === lastCatalogRevision && memoized !== undefined) return memoized
+    const next = resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred', live?.catalog)
     for (const [provider, profile] of Object.entries(raw)) if (profile.enabled === false) next.delete(provider)
     lastRaw = raw
+    lastCatalogRevision = revision
     memoized = next
     return next
   }
@@ -172,6 +181,7 @@ export function apply(ctx: Context, config: Config): void {
     profiles,
     resolveApiKey,
     auth,
+    authorizeModel: live?.authorizeModel,
     resolveAttachments: () => ctx.get('attachments'),
     resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(
       attachments,
@@ -190,7 +200,7 @@ export function apply(ctx: Context, config: Config): void {
   // Scoped to the authorization seam rather than injected outright, because a
   // composition without it (headless, ACP) simply has no surface to sign in
   // from, while everything else this plugin does still works.
-  ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth) })
+  ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth, live?.onLogin) })
   // The full installed catalog is configurable from the moment the plugin
   // mounts — dormant or not — so configuration surfaces can offer every
   // pi-ai provider before any route exists. Hand-declared routes join it as
@@ -265,6 +275,8 @@ export function apply(ctx: Context, config: Config): void {
     registeredFacts = facts
   }
   ensureRegistrationFacts()
+
+  ctx.on('dsh-pi-login/catalog-updated', () => { ensureRegistrationFacts(); ensureDirectory() })
 
   ctx.on('loader/volatile-update', () => {
     try { ensureRegistrationFacts(); ensureDirectory() }

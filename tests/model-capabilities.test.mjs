@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { resolveRouteModels } from '../src/runtime/catalog.ts'
 import { getSupportedThinkingLevels } from '../src/runtime/models.ts'
+import { supplementCatalog } from '../src/runtime/catalog-additions.ts'
 import { modelChoices, fastModelId, streamWithTier, supportsFastTier } from '../src/runtime/fast.ts'
 
 const meta = {
@@ -11,6 +12,55 @@ const meta = {
   defaultMaxTokens: 32768,
   defaultInput: ['text'],
 }
+
+test('Muse Wonder is selectable with its own capabilities and respects configured lists', () => {
+  const wonder = resolveRouteModels(meta).models.find(model => model.id === 'muse-wonder-1.0')
+  assert.ok(wonder)
+  assert.equal(wonder.name, 'Muse Wonder')
+  assert.equal(wonder.contextWindow, 1048576)
+  assert.equal(wonder.maxTokens, 131072)
+  assert.deepEqual(wonder.input, ['text', 'image'])
+  assert.deepEqual(getSupportedThinkingLevels(wonder), ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+  assert.equal(modelChoices('meta', [wonder], {}).find(choice => choice.id === wonder.id)?.enabled, true)
+  assert.equal(modelChoices('meta', [wonder], { disabledModels: [wonder.id] })[0].enabled, false)
+  assert.deepEqual(resolveRouteModels({ ...meta, models: [{ id: 'muse-spark-1.3' }] }).models.map(model => model.id), ['muse-spark-1.3'])
+  const override = resolveRouteModels({ ...meta, modelOverrides: { [wonder.id]: { reasoningEfforts: { high: 'high' } } } }).models.find(model => model.id === wonder.id)
+  assert.deepEqual(getSupportedThinkingLevels(override), ['high'])
+})
+
+test('SDK entries supersede additions and other providers do not acquire Meta models', () => {
+  const current = resolveRouteModels(meta).models.find(model => model.id === 'muse-wonder-1.0')
+  const future = { ...current, contextWindow: 2097152, cost: { input: 2, output: 3, cacheRead: 1, cacheWrite: 0 } }
+  assert.equal(supplementCatalog('meta', [future]).get(future.id), future)
+  assert.equal(supplementCatalog('openai', []).has(current.id), false)
+})
+
+test('Muse Wonder uses the real Meta provider and SDK Responses payload for every effort', async () => {
+  const { buildProvider } = await import('../src/runtime/provider.ts')
+  const model = resolveRouteModels(meta).models.find(model => model.id === 'muse-wonder-1.0')
+  const provider = buildProvider({ provider: 'meta', displayName: 'Meta', models: [model], namesCredential: false })
+  assert.ok(provider.auth.oauth)
+  assert.ok(provider.auth.apiKey)
+  const context = { messages: [{ role: 'user', content: [{ type: 'text', text: 'Describe this image' }, { type: 'image', data: 'aGVsbG8=', mimeType: 'image/png' }], timestamp: 0 }] }
+  for (const reasoning of getSupportedThinkingLevels(model)) {
+    let payload, target
+    const events = [
+      { type: 'response.created', response: { id: 'resp_wonder' } },
+      { type: 'response.completed', response: { id: 'resp_wonder', status: 'completed', output: [], usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 } } },
+    ].map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+    const result = await provider.streamSimple(model, context, {
+      apiKey: 'fixture-meta-key', reasoning, maxTokens: 1000, maxRetries: 0,
+      onPayload: value => { payload = structuredClone(value) },
+      fetch: async url => { target = String(url); return new Response(events, { headers: { 'content-type': 'text/event-stream' } }) },
+    }).result()
+    assert.equal(result.stopReason, 'stop')
+    assert.equal(target, 'https://api.meta.ai/v1/responses')
+    assert.equal(payload.model, 'muse-wonder-1.0')
+    assert.equal(payload.reasoning.effort, reasoning)
+    assert.equal(payload.max_output_tokens, 1000)
+    assert.ok(payload.input.flatMap(message => message.content ?? []).some(part => part.type === 'input_image'))
+  }
+})
 
 test('Muse Spark Max availability inherits directly from Pi catalog', () => {
   const models = resolveRouteModels(meta).models

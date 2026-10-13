@@ -11,7 +11,7 @@
  */
 import type { Volatile } from '@deepseek-ai/cordis'
 
-import type { CacheRetention, ChatTemplateKwargValue, ModelThinkingLevel, Provider, ThinkingBudgets, Transport } from '@earendil-works/pi-ai'
+import type { Api, Model, CacheRetention, ChatTemplateKwargValue, ModelThinkingLevel, Provider, ThinkingBudgets, Transport } from '@earendil-works/pi-ai'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import type { CredentialRef } from '@deepseek-ai/dsh-credentials'
@@ -40,6 +40,7 @@ import type {
 } from './catalog.ts'
 import { buildProvider, supportedProtocols } from './provider.ts'
 import { modelChoices } from './fast.ts'
+import { DISCOVERED_MODEL } from '../catalog-metadata.mjs'
 import type { ModelChoice } from './fast.ts'
 
 /** Default maximum idle interval while an adapter stream read is outstanding. */
@@ -95,6 +96,8 @@ export interface PiAiProviderProfile {
   disabledModels?: string[]
   /** Fast choice IDs explicitly enabled in model selectors. Ordinary choices stay independent. */
   enabledFastModels?: string[]
+  /** Account-discovered models are disabled until explicitly selected. */
+  enabledDiscoveredModels?: string[]
   /** Credential reference (environment-variable name) resolved per request through `ctx.credentials`. */
   apiKeyEnv?: string
   /** Name shown by configuration surfaces; defaults to the route key. */
@@ -335,6 +338,7 @@ const profile = z.object({
   enabled: z.boolean().default(true),
   disabledModels: z.array(z.string()),
   enabledFastModels: z.array(z.string()),
+  enabledDiscoveredModels: z.array(z.string()),
   apiKeyEnv: z.string().role('credential-ref'),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
@@ -422,6 +426,7 @@ function assertValidHeaders(provider: string, headers: Readonly<Record<string, s
 export function resolveProfiles(
   providers: Readonly<Record<string, PiAiProviderProfile>> | undefined,
   validation: 'strict' | 'deferred' = 'strict',
+  catalogs?: (provider: string) => ReadonlyMap<string, Model<Api>> | undefined,
 ): Map<string, ResolvedPiAiProviderProfile> {
   if (Array.isArray(providers)) {
     throw new Error('llm-pi-ai: providers is now a dict keyed by provider route, not an array of profiles')
@@ -486,9 +491,10 @@ export function resolveProfiles(
         defaultInput,
         defaultContextWindow: source.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
         defaultMaxTokens: source.defaultMaxTokens ?? DEFAULT_MAX_TOKENS,
-      }, validation)
+      }, validation, catalogs?.(provider))
       catalogError = catalog.modelErrors.values().next().value
-      choices = modelChoices(provider, catalog.models, source)
+      const discovered = new Set(catalog.models.filter(model => model[DISCOVERED_MODEL as keyof typeof model]).map(model => model.id))
+      choices = modelChoices(provider, catalog.models, source, discovered)
       const enabledIds = new Set(choices.filter(choice => choice.enabled).map(choice => choice.model.id))
       piProvider = buildProvider({
         provider,

@@ -10,9 +10,12 @@
 - `legacyImported`で既存設定の初回取り込みを記録。
 - OpenAI OAuthにインストールIDを渡し、`dsh-pi-login/installation`に保存。
 - Device Codeの有効期限通知をプラグインの待機制限に反映。
-- MuseのThinking effortは、インストール済みPi SDKのカタログをそのまま継承。独自のモデル名ハードコードは追加しない。
+- SDK収録済みのMuseモデルは、Thinking effortを含めてPiカタログを継承。SDK未収録のMuse Wonderは[根拠付きの補完カタログ](../../docs/models.md)に追加し、SDK収録後はSDK側の情報を優先。
+- Museログインの契約確認と認証済みモデル一覧の再取得を追加。新しい候補は明示的に選択し、設定したモデル一覧とON/OFFを維持。実行時に取得元のアカウントを確認し、通常のAPIキーへ切り替えない。
 - OpenAI/OpenAI Codexの対応モデルを通常版とFast版の別項目として公開。モデルID・認証・能力は共通で、選択した項目に応じて`service_tier=default`／`priority`を送信。
 - Fast版のON/OFFを`enabledFastModels`で保存。設定画面と実行側の一覧は共通の選択処理から生成。
 - 履歴の選択IDとAPIモデルIDを分けて保存し、通常版とFast版を切り替えてもPiの推論署名を再利用。
 
 [Fastの実装と参照ソース](../../docs/fast.md)
+
+- モデル一覧の再取得は`ProviderCatalogs`にプロバイダーごとのセッションを登録し、画面・RPC・一覧の検証・ログイン後の破棄・実行時認証を共通経路で扱う。Museの契約確認、専用ヘッダーと説明文はMeta側の登録処理に置く。新モデルの選択判定には共通の`DISCOVERED_MODEL`タグを使用する。

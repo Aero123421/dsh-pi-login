@@ -122,11 +122,29 @@ function ModelsDialog({ entry, controller, t, onClose }) {
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
+  const [refreshError, setRefreshError] = useState('')
+  const refreshAbort = useRef()
+  const generation = useRef(0)
   useEffect(() => {
     const abort = new AbortController()
     void controller.call('models', { key: entry.key }, abort.signal).then(setSnapshot, () => { if (!abort.signal.aborted) setError(true) })
-    return () => abort.abort()
+    return () => { abort.abort(); refreshAbort.current?.abort(); generation.current++ }
   }, [entry.key])
+  async function reload() {
+    const request = ++generation.current
+    refreshAbort.current?.abort()
+    const abort = new AbortController(); refreshAbort.current = abort
+    setBusy(true); setRefreshError(''); setError(false)
+    try {
+      const next = await controller.call('refresh-models', { key: entry.key }, abort.signal)
+      if (!abort.signal.aborted && request === generation.current) setSnapshot(next)
+    } catch (error) {
+      if (!abort.signal.aborted && request === generation.current) {
+        const code = error.message.split('/').pop()
+        setRefreshError(snapshot?.refresh?.errors?.[code] ?? 'catalogRefreshFailed')
+      }
+    } finally { if (!abort.signal.aborted && request === generation.current) setBusy(false) }
+  }
   async function toggle(model, enabled) {
     setBusy(true); setError(false)
     try {
@@ -142,13 +160,19 @@ function ModelsDialog({ entry, controller, t, onClose }) {
   return <Modal open title={`${entry.label} · ${t('models')}`} description={t('modelsHint')} closeLabel={t('close')} onClose={onClose}
     className="dsh-pi-login dsh-pi-models-dialog" footer={<Button variant="outline" onClick={onClose}>{t('close')}</Button>}>
     <Input icon={<IconSearchOutlineRegular size={16} />} aria-label={t('searchModels')} placeholder={t('searchModels')} data-modal-autofocus value={search} onChange={event => setSearch(event.target.value)} />
+    {snapshot?.refresh?.canRefresh ? <>
+      <Button variant="outline" size="sm" disabled={busy || !entry.writable} onClick={() => { void reload() }}>{t(busy ? 'loading' : 'reloadModels')}</Button>
+      {snapshot.refresh.status ? <p role="status">{t(snapshot.refresh.status.message)}{snapshot.refresh.status.detail ? ` · ${snapshot.refresh.status.detail}` : ''}</p> : null}
+      {snapshot.refresh.notes.map(note => <p key={note} className="dsh-pi-muted">{t(note)}</p>)}
+    </> : snapshot ? <p className="dsh-pi-muted">{t('catalogRefreshUnsupported')}</p> : null}
+    {refreshError ? <p role="alert">{t(refreshError)}</p> : null}
     {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
     {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
     {snapshot && !entry.managed ? <p className="dsh-pi-muted">{t('activateFirst')}</p> : null}
     {snapshot?.models.some(model => model.fast) ? <p className="dsh-pi-muted">{t('fastWarning')}</p> : null}
     <div className="dsh-pi-model-list">
       {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
-        <div className="dsh-pi-model-label"><span>{model.name}</span><span className="dsh-pi-model-id">{model.id}</span></div>
+        <div className="dsh-pi-model-label"><span>{model.name}</span><span className="dsh-pi-model-id">{model.id}</span>{model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
         <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={busy || !entry.writable || !entry.managed} onChange={enabled => { void toggle(model.id, enabled) }} />
       </div>)}
       {models?.length === 0 ? <p className="dsh-pi-muted">{t('noResults')}</p> : null}

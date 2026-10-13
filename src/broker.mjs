@@ -1,3 +1,4 @@
+import { CatalogRefreshError } from './provider-catalogs.mjs'
 import { randomUUID } from 'node:crypto'
 
 const KEY_PATTERN = /^llm-pi-ai\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
@@ -28,7 +29,7 @@ function publicNotice(notice) {
 
 /** Private tickets keep login prompts out of shared tab state. */
 export class PiLoginBroker {
-  constructor(authorization, credentials, settings, { timeoutMs = 600000, expiryGraceMs = 60000, retentionMs = 60000, catalog } = {}) {
+  constructor(authorization, credentials, settings, { timeoutMs = 600000, expiryGraceMs = 60000, retentionMs = 60000, catalog, catalogs } = {}) {
     this.authorization = authorization
     this.credentials = credentials
     this.settings = settings
@@ -36,6 +37,7 @@ export class PiLoginBroker {
     this.expiryGraceMs = expiryGraceMs
     this.retentionMs = retentionMs
     this.catalog = catalog
+    this.catalogs = catalogs
     this.attempts = new Map()
     this.closed = false
   }
@@ -61,14 +63,18 @@ export class PiLoginBroker {
     const provider = key.slice('llm-pi-ai/'.length)
     const section = this.section()
     const profile = section?.value?.providers?.[provider] ?? {}
+    const models = this.catalog(provider, profile)
     return { revision: section?.revision, enabled: Object.hasOwn(section?.value?.providers ?? {}, provider) && profile.enabled !== false,
-      models: this.catalog(provider, profile).map(model => ({
+      refresh: this.catalogs?.state(provider, models) ?? { canRefresh: false },
+      models: models.map(model => ({
         id: model.id, name: model.name, enabled: model.enabled ?? !profile.disabledModels?.includes(model.id),
         fast: model.serviceTier === 'priority',
+        ...model.discovered ? { discovered: true, capabilityUnverified: model.capabilityUnverified === true } : {},
       })) }
   }
 
   async setModel(key, model, enabled, revision) {
+    await this.validateModels(key)
     if (typeof enabled !== 'boolean' || !Number.isSafeInteger(revision)) throw new LoginError('invalid-request')
     const current = this.models(key)
     const choice = current.models.find(entry => entry.id === model)
@@ -77,12 +83,33 @@ export class PiLoginBroker {
     const provider = key.slice('llm-pi-ai/'.length)
     const profile = this.section().value?.providers?.[provider]
     if (!profile) throw new LoginError('not-enabled')
-    const field = choice.fast ? 'enabledFastModels' : 'disabledModels'
+    const field = choice.fast ? 'enabledFastModels' : choice.discovered ? 'enabledDiscoveredModels' : 'disabledModels'
     const selected = new Set(profile[field] ?? [])
-    if (choice.fast ? enabled : !enabled) selected.add(model)
+    if (choice.fast || choice.discovered ? enabled : !enabled) selected.add(model)
     else selected.delete(model)
-    await this.settings.update(NS, { providers: { [provider]: { [field]: [...selected] } } }, revision)
+    const changes = { [field]: [...selected] }
+    if (choice.discovered) {
+      const disabled = new Set(profile.disabledModels ?? [])
+      if (enabled) disabled.delete(model); else disabled.add(model)
+      changes.disabledModels = [...disabled]
+    }
+    await this.settings.update(NS, { providers: { [provider]: changes } }, revision)
     return { saved: true }
+  }
+
+  provider(key) {
+    if (!KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key)) throw new LoginError('invalid-request')
+    return key.slice('llm-pi-ai/'.length)
+  }
+
+  async validateModels(key) { await this.catalogs?.validate(this.provider(key)) }
+
+  async refreshModels(key) {
+    const provider = this.provider(key)
+    if (this.closed) throw new LoginError('unavailable')
+    if (!this.catalogs) throw new LoginError('catalog-refresh-unsupported')
+    try { await this.catalogs.refresh(provider); return this.models(key) }
+    catch (error) { throw new LoginError(error instanceof CatalogRefreshError ? error.code : 'catalog-refresh-failed') }
   }
 
   async setProvider(key, enabled, revision) {
@@ -257,7 +284,8 @@ export async function dispatch(broker, method, payload) {
     case 'answer': return broker.answer(payload.ticket, payload.id, payload.value)
     case 'cancel': return broker.cancel(payload.ticket)
     case 'enable': return broker.enable(payload.key)
-    case 'models': return broker.models(payload.key)
+    case 'models': await broker.validateModels(payload.key); return broker.models(payload.key)
+    case 'refresh-models': return broker.refreshModels(payload.key)
     case 'set-model': return broker.setModel(payload.key, payload.model, payload.enabled, payload.revision)
     case 'set-provider': return broker.setProvider(payload.key, payload.enabled, payload.revision)
     case 'use-login': return broker.useLogin(payload.key)

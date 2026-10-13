@@ -185,7 +185,7 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  apply({authorization:fixture.authorization,credentials:fixture.credentials,settings:fixture.settings,effect:body=>{effects.push(body())},connection:{fetch:{register:route=>routes.set(route.path,route)}}})
  t.after(async()=>{for(const effect of effects.reverse())await effect?.();await fixture.broker.dispose()})
  const route=routes.get('/api/dsh-pi-login/start')
- assert.equal(routes.size,10)
+ assert.equal(routes.size,11)
  const call=payload=>route.fetch(new Request('http://localhost/api/dsh-pi-login/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}))
  assert.equal((await call({})).status,400)
  const response=await call({type:'client-request',rpcId:'test-id',method:'dsh-pi-login/start',payload:{key:'other/credential',method:'oauth'}})

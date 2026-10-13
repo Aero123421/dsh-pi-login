@@ -44,6 +44,73 @@ var __callDispose = (stack, error, hasError) => {
   return next();
 };
 
+// src/provider-catalogs.mjs
+var ERROR_CODES = /* @__PURE__ */ new Set(["catalog-login-required", "catalog-key-override", "catalog-settings-incompatible", "catalog-account-changed", "catalog-rate-limited", "catalog-refresh-failed", "catalog-refresh-unsupported"]);
+var copyKey = (value) => typeof value === "string" && /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(value) ? value : void 0;
+var CatalogRefreshError = class extends Error {
+  constructor(code) {
+    super(ERROR_CODES.has(code) ? code : "catalog-refresh-failed");
+    this.code = this.message;
+  }
+};
+var ProviderCatalogs = class {
+  constructor(providers = {}) {
+    this.providers = new Map(Object.entries(providers));
+    this.pending = /* @__PURE__ */ new Map();
+    this.closed = false;
+  }
+  revision() {
+    return [...this.providers.values()].reduce((sum, { session }) => sum + (session.version ?? 0), 0);
+  }
+  catalog(provider) {
+    return this.providers.get(provider)?.session.catalog?.(provider);
+  }
+  validate(provider) {
+    return this.providers.get(provider)?.session.validate?.();
+  }
+  onLogin(provider) {
+    this.providers.get(provider)?.session.invalidate?.();
+  }
+  authorizeModel(provider, model, profile2) {
+    return this.providers.get(provider)?.authorizeModel?.(model, profile2);
+  }
+  state(provider, models = []) {
+    const entry = this.providers.get(provider);
+    if (!entry?.session.refresh) return { canRefresh: false };
+    const view = entry.presentation?.(models) ?? {};
+    const message = copyKey(view.status?.message);
+    const detail = typeof view.status?.detail === "string" ? view.status.detail.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 100) : void 0;
+    return {
+      canRefresh: true,
+      ...message ? { status: { message, ...detail ? { detail } : {} } } : {},
+      notes: (Array.isArray(view.notes) ? view.notes : []).map(copyKey).filter(Boolean).slice(0, 10),
+      errors: Object.fromEntries(Object.entries(entry.errors ?? {}).flatMap(([code, key]) => ERROR_CODES.has(code) && copyKey(key) ? [[code, key]] : []))
+    };
+  }
+  refresh(provider) {
+    if (this.closed) return Promise.reject(new CatalogRefreshError("catalog-refresh-failed"));
+    const entry = this.providers.get(provider);
+    if (!entry?.session.refresh) return Promise.reject(new CatalogRefreshError("catalog-refresh-unsupported"));
+    if (this.pending.has(provider)) return this.pending.get(provider);
+    const pending = Promise.resolve().then(() => {
+      if (this.closed) throw new CatalogRefreshError("catalog-refresh-failed");
+      return entry.session.refresh();
+    }).then(() => {
+      if (this.closed) throw new CatalogRefreshError("catalog-refresh-failed");
+    }).catch((error) => {
+      if (error instanceof CatalogRefreshError) throw error;
+      const code = entry.errorCodes?.[error?.code];
+      throw new CatalogRefreshError(code ?? "catalog-refresh-failed");
+    }).finally(() => this.pending.delete(provider));
+    this.pending.set(provider, pending);
+    return pending;
+  }
+  dispose() {
+    this.closed = true;
+    for (const { session } of this.providers.values()) session.dispose?.();
+  }
+};
+
 // src/broker.mjs
 import { randomUUID } from "node:crypto";
 var KEY_PATTERN = /^llm-pi-ai\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
@@ -73,7 +140,7 @@ function publicNotice(notice) {
   return result;
 }
 var PiLoginBroker = class {
-  constructor(authorization, credentials, settings, { timeoutMs = 6e5, expiryGraceMs = 6e4, retentionMs = 6e4, catalog } = {}) {
+  constructor(authorization, credentials, settings, { timeoutMs = 6e5, expiryGraceMs = 6e4, retentionMs = 6e4, catalog, catalogs } = {}) {
     this.authorization = authorization;
     this.credentials = credentials;
     this.settings = settings;
@@ -81,6 +148,7 @@ var PiLoginBroker = class {
     this.expiryGraceMs = expiryGraceMs;
     this.retentionMs = retentionMs;
     this.catalog = catalog;
+    this.catalogs = catalogs;
     this.attempts = /* @__PURE__ */ new Map();
     this.closed = false;
   }
@@ -109,18 +177,22 @@ var PiLoginBroker = class {
     const provider = key.slice("llm-pi-ai/".length);
     const section = this.section();
     const profile2 = section?.value?.providers?.[provider] ?? {};
+    const models = this.catalog(provider, profile2);
     return {
       revision: section?.revision,
       enabled: Object.hasOwn(section?.value?.providers ?? {}, provider) && profile2.enabled !== false,
-      models: this.catalog(provider, profile2).map((model) => ({
+      refresh: this.catalogs?.state(provider, models) ?? { canRefresh: false },
+      models: models.map((model) => ({
         id: model.id,
         name: model.name,
         enabled: model.enabled ?? !profile2.disabledModels?.includes(model.id),
-        fast: model.serviceTier === "priority"
+        fast: model.serviceTier === "priority",
+        ...model.discovered ? { discovered: true, capabilityUnverified: model.capabilityUnverified === true } : {}
       }))
     };
   }
   async setModel(key, model, enabled, revision) {
+    await this.validateModels(key);
     if (typeof enabled !== "boolean" || !Number.isSafeInteger(revision)) throw new LoginError("invalid-request");
     const current = this.models(key);
     const choice = current.models.find((entry) => entry.id === model);
@@ -129,12 +201,37 @@ var PiLoginBroker = class {
     const provider = key.slice("llm-pi-ai/".length);
     const profile2 = this.section().value?.providers?.[provider];
     if (!profile2) throw new LoginError("not-enabled");
-    const field = choice.fast ? "enabledFastModels" : "disabledModels";
+    const field = choice.fast ? "enabledFastModels" : choice.discovered ? "enabledDiscoveredModels" : "disabledModels";
     const selected = new Set(profile2[field] ?? []);
-    if (choice.fast ? enabled : !enabled) selected.add(model);
+    if (choice.fast || choice.discovered ? enabled : !enabled) selected.add(model);
     else selected.delete(model);
-    await this.settings.update(NS, { providers: { [provider]: { [field]: [...selected] } } }, revision);
+    const changes = { [field]: [...selected] };
+    if (choice.discovered) {
+      const disabled = new Set(profile2.disabledModels ?? []);
+      if (enabled) disabled.delete(model);
+      else disabled.add(model);
+      changes.disabledModels = [...disabled];
+    }
+    await this.settings.update(NS, { providers: { [provider]: changes } }, revision);
     return { saved: true };
+  }
+  provider(key) {
+    if (!KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key)) throw new LoginError("invalid-request");
+    return key.slice("llm-pi-ai/".length);
+  }
+  async validateModels(key) {
+    await this.catalogs?.validate(this.provider(key));
+  }
+  async refreshModels(key) {
+    const provider = this.provider(key);
+    if (this.closed) throw new LoginError("unavailable");
+    if (!this.catalogs) throw new LoginError("catalog-refresh-unsupported");
+    try {
+      await this.catalogs.refresh(provider);
+      return this.models(key);
+    } catch (error) {
+      throw new LoginError(error instanceof CatalogRefreshError ? error.code : "catalog-refresh-failed");
+    }
   }
   async setProvider(key, enabled, revision) {
     if (typeof enabled !== "boolean" || !Number.isSafeInteger(revision) || !KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key)) throw new LoginError("invalid-request");
@@ -307,7 +404,10 @@ async function dispatch(broker, method, payload) {
     case "enable":
       return broker.enable(payload.key);
     case "models":
+      await broker.validateModels(payload.key);
       return broker.models(payload.key);
+    case "refresh-models":
+      return broker.refreshModels(payload.key);
     case "set-model":
       return broker.setModel(payload.key, payload.model, payload.enabled, payload.revision);
     case "set-provider":
@@ -323,7 +423,7 @@ async function dispatch(broker, method, payload) {
 function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options);
   ctx.effect(() => () => broker.dispose(), "dsh-pi-login: private attempts");
-  for (const method of ["list", "start", "state", "answer", "cancel", "enable", "models", "set-model", "set-provider", "use-login"]) {
+  for (const method of ["list", "start", "state", "answer", "cancel", "enable", "models", "refresh-models", "set-model", "set-provider", "use-login"]) {
     const endpoint = `dsh-pi-login/${method}`;
     ctx.connection.fetch.register({
       path: `/api/${endpoint}`,
@@ -577,6 +677,40 @@ import { deepEqualJson } from "@deepseek-ai/dsh-util-values";
 
 // src/runtime/catalog.ts
 import { builtinProviders, getAllBuiltinModels, getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+
+// src/runtime/catalog-additions.ts
+var additions = [{
+  id: "muse-wonder-1.0",
+  name: "Muse Wonder",
+  provider: "meta",
+  api: "openai-responses",
+  baseUrl: "https://api.meta.ai/v1",
+  reasoning: true,
+  input: ["text", "image"],
+  contextWindow: 1048576,
+  maxTokens: 131072,
+  thinkingLevelMap: {
+    off: null,
+    minimal: "minimal",
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
+    max: "max"
+  },
+  // Meta has not published rates. As with hand-declared models, zero means
+  // unknown here; the Harness does not report spend from this metadata.
+  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+}];
+function supplementCatalog(provider, installed) {
+  const catalog = new Map(installed.map((model) => [model.id, model]));
+  for (const model of additions) {
+    if (model.provider === provider && !catalog.has(model.id)) catalog.set(model.id, model);
+  }
+  return catalog;
+}
+
+// src/runtime/catalog.ts
 var NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 var MODALITY_GATE = {
   text: true,
@@ -649,7 +783,7 @@ function catalogProviderIds() {
 function catalogModels(provider) {
   if (!catalogProviders().has(provider)) return /* @__PURE__ */ new Map();
   const models = getBuiltinModels(provider);
-  return new Map(models.map((model) => [model.id, model]));
+  return supplementCatalog(provider, models);
 }
 var COMPLETIONS_COMPAT_GATE = {
   supportsStore: "offer",
@@ -822,9 +956,9 @@ function resolveModelCompat(provider, entry, route, base, api) {
   const inherited = base?.api === api ? base.compat : void 0;
   return { compat: { ...inherited, ...configured } };
 }
-function resolveRouteModels(request, validation = "strict") {
+function resolveRouteModels(request, validation = "strict", installed) {
   const { provider } = request;
-  const defaults = catalogModels(provider);
+  const defaults = installed ?? catalogModels(provider);
   const providerBaseUrl = catalogProvider(provider)?.baseUrl;
   const configured = request.models ?? [];
   const overrides = request.modelOverrides ?? {};
@@ -1043,15 +1177,17 @@ function supportsFastTier(provider, model) {
 function fastModelId(model) {
   return `${model}::fast`;
 }
-function modelChoices(provider, models, profile2) {
+function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ */ new Set()) {
   const ids = new Set(models.map((model) => model.id));
+  const configuredIds = new Set(profile2.models?.map((model) => model.id) ?? []);
   return models.flatMap((model) => {
     const supported = supportsFastTier(provider, model);
     const ordinary = {
       id: model.id,
       name: model.name,
       model,
-      enabled: !profile2.disabledModels?.includes(model.id),
+      enabled: !profile2.disabledModels?.includes(model.id) && (!discoveredIds.has(model.id) || profile2.enabledDiscoveredModels?.includes(model.id) === true || configuredIds.has(model.id)),
+      ...discoveredIds.has(model.id) ? { discovered: true } : {},
       ...supported ? { serviceTier: "default" } : {}
     };
     if (!supported) return [ordinary];
@@ -1077,6 +1213,9 @@ function streamWithTier(models, model, context, options, serviceTier) {
   if (model.api === "openai-codex-responses") return models.stream(model, context, full);
   throw new Error("Fast choices require an OpenAI Responses API");
 }
+
+// src/catalog-metadata.mjs
+var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
 
 // src/runtime/config.ts
 var DEFAULT_STREAM_IDLE_TIMEOUT_MS = 3e5;
@@ -1157,6 +1296,7 @@ var profile = z.object({
   enabled: z.boolean().default(true),
   disabledModels: z.array(z.string()),
   enabledFastModels: z.array(z.string()),
+  enabledDiscoveredModels: z.array(z.string()),
   apiKeyEnv: z.string().role("credential-ref"),
   displayName: z.string(),
   api: z.union(supportedProtocols()),
@@ -1210,7 +1350,7 @@ function assertValidHeaders(provider, headers) {
     }
   }
 }
-function resolveProfiles(providers, validation = "strict") {
+function resolveProfiles(providers, validation = "strict", catalogs) {
   if (Array.isArray(providers)) {
     throw new Error("llm-pi-ai: providers is now a dict keyed by provider route, not an array of profiles");
   }
@@ -1264,9 +1404,10 @@ function resolveProfiles(providers, validation = "strict") {
         defaultInput,
         defaultContextWindow: source.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,
         defaultMaxTokens: source.defaultMaxTokens ?? DEFAULT_MAX_TOKENS
-      }, validation);
+      }, validation, catalogs?.(provider));
       catalogError = catalog.modelErrors.values().next().value;
-      choices = modelChoices(provider, catalog.models, source);
+      const discovered = new Set(catalog.models.filter((model) => model[DISCOVERED_MODEL]).map((model) => model.id));
+      choices = modelChoices(provider, catalog.models, source, discovered);
       const enabledIds = new Set(choices.filter((choice) => choice.enabled).map((choice) => choice.model.id));
       piProvider = buildProvider({
         provider,
@@ -1845,7 +1986,9 @@ var PiAiAdapter = class extends LlmAdapter {
         model,
         options.reasoningEffort ?? profile2.reasoning
       );
-      const apiKey = await this.config.resolveApiKey(options.provider, profile2);
+      const explicitKey = await this.config.resolveApiKey(options.provider, profile2);
+      const accountAuthorization = await this.config.authorizeModel?.(options.provider, model, profile2);
+      const apiKey = accountAuthorization?.apiKey ?? explicitKey;
       const consumer = new AbortController();
       const upstream = options.signal === void 0 ? consumer.signal : AbortSignal.any([options.signal, consumer.signal]);
       const streamIdleTimeoutMs = profile2.streamIdleTimeoutMs;
@@ -1879,7 +2022,7 @@ var PiAiAdapter = class extends LlmAdapter {
           signal: watchdog.signal,
           // Profile headers are deployment-owned; attribution names are
           // Harness-owned and therefore win collisions.
-          headers: requestHeaders(profile2.headers)
+          headers: { ...requestHeaders(profile2.headers), ...accountAuthorization?.headers }
         };
         const events = choice.serviceTier !== void 0 ? streamWithTier(snapshot.models, model, context, streamOptions, choice.serviceTier) : snapshot.models.streamSimple(model, context, streamOptions);
         const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model)[Symbol.asyncIterator]();
@@ -2239,8 +2382,8 @@ import { randomUUID as randomUUID2 } from "node:crypto";
 import { isCredentialKeySegment as isCredentialKeySegment2 } from "@deepseek-ai/dsh-credentials";
 function loginMethods(provider) {
   const methods = [];
-  const oauth = provider?.auth.oauth;
-  if (oauth !== void 0) methods.push({ id: "oauth", label: oauth.loginLabel ?? oauth.name });
+  const oauth2 = provider?.auth.oauth;
+  if (oauth2 !== void 0) methods.push({ id: "oauth", label: oauth2.loginLabel ?? oauth2.name });
   const apiKey = provider?.auth.apiKey;
   if (apiKey?.login !== void 0) methods.push({ id: "api-key", label: apiKey.name });
   return methods;
@@ -2296,7 +2439,7 @@ function restate(prompt) {
       };
   }
 }
-function registerPiAiFlows(ctx, auth) {
+function registerPiAiFlows(ctx, auth, onLogin) {
   for (const providerId of catalogProviderIds()) {
     const provider = catalogProvider(providerId);
     const [first, ...rest] = loginMethods(provider);
@@ -2331,6 +2474,7 @@ function registerPiAiFlows(ctx, auth) {
           },
           prompt: (prompt) => session.prompt(restate(prompt))
         }, deviceId === void 0 ? void 0 : { getDeviceId: () => deviceId });
+        onLogin?.(providerId);
       }
     });
   }
@@ -2366,19 +2510,22 @@ function directoryEntries(profiles, settingsNs) {
   for (const [provider, profile2] of profiles) declare(provider, profile2.displayName, profile2.catalogError);
   return [...entries.values()];
 }
-function apply(ctx, config) {
+function apply(ctx, config, live) {
   ctx.inject(["settings"], (child) => {
     child.effect(() => child.settings.configure({ auto: false }, ctx.fiber));
   });
   const settingsNs = NS2;
   let lastRaw;
+  let lastCatalogRevision;
   let memoized;
   const profiles = () => {
     const raw = config.providers.get();
-    if (raw === lastRaw && memoized !== void 0) return memoized;
-    const next = resolveProfiles(structuredClone(raw), "deferred");
+    const revision = live?.revision();
+    if (raw === lastRaw && revision === lastCatalogRevision && memoized !== void 0) return memoized;
+    const next = resolveProfiles(structuredClone(raw), "deferred", live?.catalog);
     for (const [provider, profile2] of Object.entries(raw)) if (profile2.enabled === false) next.delete(provider);
     lastRaw = raw;
+    lastCatalogRevision = revision;
     memoized = next;
     return next;
   };
@@ -2409,6 +2556,7 @@ function apply(ctx, config) {
     profiles,
     resolveApiKey,
     auth,
+    authorizeModel: live?.authorizeModel,
     resolveAttachments: () => ctx.get("attachments"),
     resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(
       attachments,
@@ -2422,7 +2570,7 @@ function apply(ctx, config) {
     }
   });
   ctx.inject(["authorization"], (authorized) => {
-    registerPiAiFlows(authorized, auth);
+    registerPiAiFlows(authorized, auth, live?.onLogin);
   });
   let directory;
   let directoryFacts;
@@ -2468,6 +2616,10 @@ function apply(ctx, config) {
     registeredFacts = facts;
   };
   ensureRegistrationFacts();
+  ctx.on("dsh-pi-login/catalog-updated", () => {
+    ensureRegistrationFacts();
+    ensureDirectory();
+  });
   ctx.on("loader/volatile-update", () => {
     try {
       ensureRegistrationFacts();
@@ -2489,13 +2641,291 @@ function apply(ctx, config) {
   });
 }
 
+// src/meta-catalog.mjs
+import { createHash } from "node:crypto";
+var META_CATALOG_GRANT = /* @__PURE__ */ Symbol("dsh-pi-login/meta-catalog-grant");
+var MAX_BYTES = 4 * 1024 * 1024;
+var LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+var principalOf = (credential) => createHash("sha256").update(credential.refresh).digest("hex");
+var oauth = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
+var fullModel = (id) => /^muse-wonder-full(?:-|$)/.test(id);
+var cleanLabel = (value) => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 100) : void 0;
+var positive = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
+var MetaCatalogError = class extends Error {
+  constructor(code) {
+    super(code);
+    this.code = code;
+  }
+};
+function checkProfile(profile2) {
+  if (profile2.apiKeyEnv !== void 0) throw new MetaCatalogError("meta-key-override");
+  if (profile2.baseURL !== void 0 && profile2.baseURL.replace(/\/+$/, "") !== "https://api.meta.ai/v1" || profile2.api !== void 0 && profile2.api !== "openai-responses" || Object.keys(profile2.headers ?? {}).some((name2) => name2.toLowerCase() === "authorization")) {
+    throw new MetaCatalogError("meta-settings-incompatible");
+  }
+}
+async function readJson(response) {
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new MetaCatalogError(response.status === 429 ? "meta-rate-limited" : response.status === 401 || response.status === 403 ? "meta-login-required" : "meta-refresh-failed");
+  }
+  const declared = Number(response.headers.get("content-length"));
+  if (declared > MAX_BYTES) {
+    await response.body?.cancel();
+    throw new MetaCatalogError("meta-refresh-failed");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new MetaCatalogError("meta-refresh-failed");
+  let size = 0;
+  const chunks = [];
+  try {
+    for (; ; ) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_BYTES) throw new MetaCatalogError("meta-refresh-failed");
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const parsed = JSON.parse(new TextDecoder().decode(bytes));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new MetaCatalogError("meta-refresh-failed");
+    return parsed;
+  } finally {
+    await reader.cancel().catch(() => {
+    });
+  }
+}
+function learnedModel(row, profile2, principal) {
+  const context = positive(row.contextWindow ?? row.context_window ?? row.context_length ?? row.limit?.context);
+  const output = positive(row.maxTokens ?? row.max_tokens ?? row.max_output_tokens ?? row.limit?.output);
+  const input = row.input ?? row.modalities?.input;
+  const offeredInput = Array.isArray(input) ? input.filter((value) => value === "text" || value === "image") : [];
+  const map = row.thinkingLevelMap;
+  const thinking = map && typeof map === "object" && !Array.isArray(map) ? Object.fromEntries(LEVELS.map((level) => [level, typeof map[level] === "string" && map[level].length > 0 ? map[level] : null])) : void 0;
+  const hasReasoning = row.reasoning === true && thinking && Object.values(thinking).some((value) => value !== null);
+  const verified = Boolean(context && output && offeredInput.length && (row.reasoning === false || hasReasoning));
+  return {
+    id: row.id,
+    name: cleanLabel(row.name ?? row.display_name) || (row.id === "muse-wonder-full-1.0" ? "Muse Wonder Full" : row.id),
+    provider: "meta",
+    api: "openai-responses",
+    baseUrl: "https://api.meta.ai/v1",
+    // ID-only listings use explicit conservative route defaults. No guessed
+    // image/effort capabilities; absent reasoning leaves the API's default.
+    contextWindow: context ?? profile2.defaultContextWindow ?? 262144,
+    maxTokens: output ?? profile2.defaultMaxTokens ?? 32768,
+    input: offeredInput.length ? offeredInput : ["text"],
+    reasoning: Boolean(hasReasoning),
+    ...hasReasoning ? { thinkingLevelMap: thinking } : {},
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    [META_CATALOG_GRANT]: Object.freeze({ principal, verified }),
+    [DISCOVERED_MODEL]: Object.freeze({ verified })
+  };
+}
+var MetaCatalogSession = class {
+  constructor({ credentials, profile: profile2, baseline, onChange = () => {
+  }, fetch: request = (...args) => globalThis.fetch(...args) }) {
+    this.credentials = credentials;
+    this.profile = profile2;
+    this.baseline = baseline;
+    this.onChange = onChange;
+    this.fetch = request;
+    this.version = 0;
+    this.controller = new AbortController();
+    this.closed = false;
+  }
+  state() {
+    return { canRefresh: true, account: this.account, checkedAt: this.checkedAt, discoveredCount: this.learned?.size ?? 0 };
+  }
+  invalidate() {
+    this.principal = void 0;
+    this.learned = void 0;
+    this.account = void 0;
+    this.checkedAt = void 0;
+    this.version++;
+    if (!this.closed) this.onChange();
+  }
+  async validate() {
+    if (!this.principal) return;
+    const current = await this.credentials.read("meta");
+    if (!oauth(current) || principalOf(current) !== this.principal) this.invalidate();
+  }
+  catalog(provider) {
+    if (provider !== "meta" || !this.learned) return void 0;
+    const catalog = new Map(this.baseline("meta"));
+    for (const [id, model] of this.learned) if (!catalog.has(id) || fullModel(id)) catalog.set(id, model);
+    return catalog;
+  }
+  refresh() {
+    if (this.closed) return Promise.reject(new MetaCatalogError("meta-refresh-failed"));
+    if (this.pending) return this.pending;
+    this.pending = this.runRefresh().catch((error) => {
+      if (error instanceof MetaCatalogError) throw error;
+      throw new MetaCatalogError("meta-refresh-failed");
+    }).finally(() => {
+      this.pending = void 0;
+    });
+    return this.pending;
+  }
+  async runRefresh() {
+    checkProfile(this.profile());
+    await this.validate();
+    const credential = await this.credentials.read("meta");
+    if (!oauth(credential)) throw new MetaCatalogError("meta-login-required");
+    const principal = principalOf(credential);
+    const signal = AbortSignal.any([this.controller.signal, AbortSignal.timeout(2e4)]);
+    let account;
+    const refreshed = await this.credentials.modify("meta", async (current2) => {
+      if (!oauth(current2) || principalOf(current2) !== principal) throw new MetaCatalogError("meta-account-changed");
+      const body2 = await readJson(await this.fetch("https://api.meta.ai/muse-code/key", {
+        method: "POST",
+        redirect: "error",
+        signal,
+        headers: { accept: "application/json", "content-type": "application/json", "x-api-version": "1.0.0", authorization: `Bearer ${current2.refresh}` },
+        body: "{}"
+      }));
+      account = {
+        active: typeof body2.is_subs_active === "boolean" ? body2.is_subs_active : null,
+        tierName: cleanLabel(body2.subs_tier_name),
+        tierId: cleanLabel(body2.subs_tier_id)
+      };
+      if (account.active !== true) return { ...current2, dshPiSubscription: account };
+      if (typeof body2.api_key !== "string" || body2.api_key.length === 0) throw new MetaCatalogError("meta-login-required");
+      return { ...current2, access: body2.api_key, expires: Date.now() + 864e5, dshPiSubscription: account };
+    });
+    if (this.closed) throw new MetaCatalogError("meta-refresh-failed");
+    checkProfile(this.profile());
+    if (account.active !== true) {
+      this.principal = principal;
+      this.learned = /* @__PURE__ */ new Map();
+      this.account = account;
+      this.checkedAt = Date.now();
+      this.version++;
+      this.onChange();
+      return this.state();
+    }
+    const body = await readJson(await this.fetch("https://api.meta.ai/v1/models", {
+      method: "GET",
+      redirect: "error",
+      signal,
+      headers: { accept: "application/json", "x-api-version": "1.0.0", authorization: `Bearer ${refreshed.access}` }
+    }));
+    if (!Array.isArray(body.data) || body.has_more === true || body.next_page !== void 0 && body.next_page !== null) throw new MetaCatalogError("meta-refresh-failed");
+    const current = await this.credentials.read("meta");
+    if (this.closed || !oauth(current) || principalOf(current) !== principal) throw new MetaCatalogError("meta-account-changed");
+    checkProfile(this.profile());
+    const baseline = this.baseline("meta");
+    const learned = /* @__PURE__ */ new Map();
+    const profile2 = this.profile();
+    for (const row of body.data) {
+      if (!row || typeof row.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(row.id) || baseline.has(row.id) && !fullModel(row.id) || learned.has(row.id)) continue;
+      const input = row.input ?? row.modalities?.input;
+      if (Array.isArray(input) && !input.some((value) => value === "text" || value === "image")) continue;
+      if (["image", "classifier", "embedding", "audio"].includes(row.type)) continue;
+      if (account.active !== true) continue;
+      learned.set(row.id, baseline.has(row.id) ? { ...baseline.get(row.id), [META_CATALOG_GRANT]: Object.freeze({ principal, verified: true }), [DISCOVERED_MODEL]: Object.freeze({ verified: true }) } : learnedModel(row, profile2, principal));
+    }
+    this.principal = principal;
+    this.learned = learned;
+    this.account = account;
+    this.checkedAt = Date.now();
+    this.version++;
+    this.onChange();
+    return this.state();
+  }
+  async keyForModel(provider, model, profile2) {
+    if (provider !== "meta") return void 0;
+    const grant = model[META_CATALOG_GRANT];
+    if (!grant && !fullModel(model.id)) return void 0;
+    checkProfile(profile2);
+    const current = await this.credentials.read("meta");
+    if (!grant || !oauth(current) || principalOf(current) !== grant.principal || this.principal !== grant.principal || !this.learned?.has(model.id) || current.dshPiSubscription?.active !== true) {
+      throw new MetaCatalogError("meta-refresh-required");
+    }
+    if (typeof current.access !== "string" || current.expires <= Date.now()) throw new MetaCatalogError("meta-refresh-required");
+    return current.access;
+  }
+  dispose() {
+    this.closed = true;
+    this.controller.abort();
+    this.invalidate();
+  }
+};
+
+// src/meta-catalog-provider.mjs
+import { LlmError as LlmError8 } from "@deepseek-ai/dsh-llm";
+function metaCatalogProvider(session) {
+  return {
+    session,
+    presentation(models) {
+      const { account } = session.state();
+      return {
+        ...account ? { status: { message: account.active === true ? "metaSubscriptionActive" : account.active === false ? "metaSubscriptionInactive" : "metaSubscriptionUnknown", detail: account.tierName } } : {},
+        notes: ["metaReloadHint", ...models.some((model) => model.id.includes("contributor")) ? ["metaContributorHint"] : []]
+      };
+    },
+    errorCodes: {
+      "meta-login-required": "catalog-login-required",
+      "meta-key-override": "catalog-key-override",
+      "meta-settings-incompatible": "catalog-settings-incompatible",
+      "meta-account-changed": "catalog-account-changed",
+      "meta-rate-limited": "catalog-rate-limited"
+    },
+    errors: {
+      "catalog-login-required": "metaLoginRequired",
+      "catalog-key-override": "metaKeyOverride",
+      "catalog-settings-incompatible": "metaSettingsIncompatible",
+      "catalog-account-changed": "metaAccountChanged",
+      "catalog-rate-limited": "metaRateLimited"
+    },
+    async authorizeModel(model, profile2) {
+      try {
+        const apiKey = await session.keyForModel("meta", model, profile2);
+        return apiKey === void 0 ? void 0 : { apiKey, headers: { "x-api-version": "1.0.0" } };
+      } catch (error) {
+        if (!(error instanceof MetaCatalogError)) throw error;
+        const messages = {
+          "meta-refresh-required": "Reload your Muse account model list before using this model. Your login or available models may have changed.",
+          "meta-key-override": "This model requires your saved Muse login. Remove the API-key reference or choose saved credentials.",
+          "meta-settings-incompatible": "This Muse model requires the standard Meta endpoint and no Authorization header override."
+        };
+        throw new LlmError8(messages[error.code] ?? "Could not verify access to this Muse model. Reload your account model list.", error.code);
+      }
+    }
+  };
+}
+
 // src/index.mjs
 var inject = ["llm", "authorization", "credentials", "connection", "settings"];
 var name = "dsh-pi-login";
 function apply2(ctx, config) {
-  apply(ctx, config);
+  const meta = new MetaCatalogSession({
+    credentials: credentialStoreFrom(ctx),
+    profile: () => config.providers.get().meta ?? {},
+    baseline: catalogModels,
+    onChange: () => ctx.emit("dsh-pi-login/catalog-updated")
+  });
+  const catalogs = new ProviderCatalogs({ meta: metaCatalogProvider(meta) });
+  ctx.effect(() => () => catalogs.dispose(), "Pi: provider catalog lifetime");
+  apply(ctx, config, {
+    catalog: (provider) => catalogs.catalog(provider),
+    revision: () => catalogs.revision(),
+    onLogin: (provider) => catalogs.onLogin(provider),
+    authorizeModel: (provider, model, profile2) => catalogs.authorizeModel(provider, model, profile2)
+  });
   applyLoginUI(ctx, {
-    catalog: (provider, profile2) => modelChoices(provider, resolveRouteModels({ defaultInput: DEFAULT_INPUT, defaultContextWindow: DEFAULT_CONTEXT_WINDOW, defaultMaxTokens: DEFAULT_MAX_TOKENS, provider, ...profile2 }, "deferred").models, profile2)
+    catalogs,
+    catalog: (provider, profile2) => {
+      const learned = catalogs.catalog(provider);
+      const models = resolveRouteModels({ defaultInput: DEFAULT_INPUT, defaultContextWindow: DEFAULT_CONTEXT_WINDOW, defaultMaxTokens: DEFAULT_MAX_TOKENS, provider, ...profile2 }, "deferred", learned).models;
+      const discovered = new Set(models.filter((model) => model[DISCOVERED_MODEL]).map((model) => model.id));
+      return modelChoices(provider, models, profile2, discovered).map((choice) => ({ ...choice, capabilityUnverified: choice.discovered && !choice.model[DISCOVERED_MODEL]?.verified }));
+    }
   });
   let alive = true;
   ctx.effect(() => () => {
@@ -2513,7 +2943,9 @@ function apply2(ctx, config) {
 }
 export {
   Config,
+  DISCOVERED_MODEL,
   PiAiAdapter,
+  ProviderCatalogs,
   apply2 as apply,
   applyLoginUI,
   inject,

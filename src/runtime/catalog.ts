@@ -10,6 +10,7 @@
  */
 
 import { builtinProviders, getAllBuiltinModels, getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import { supplementCatalog } from './catalog-additions.ts'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type {
   AnthropicMessagesCompat,
@@ -207,14 +208,14 @@ export function catalogProviderIds(): readonly string[] {
 }
 
 /**
- * The installed catalog models for one route, indexed by model id.
+ * Installed models plus documented SDK catalog additions, indexed by model id.
  * @param provider - provider route key.
  * @returns catalog models by id; empty for a route {@link catalogProvider} does not return.
  */
 export function catalogModels(provider: string): Map<string, Model<Api>> {
   if (!catalogProviders().has(provider)) return new Map()
   const models = getBuiltinModels(provider as BuiltinProvider) as Model<Api>[]
-  return new Map(models.map(model => [model.id, model]))
+  return supplementCatalog(provider, models)
 }
 
 /**
@@ -854,9 +855,10 @@ export interface RouteCatalog {
 export function resolveRouteModels(
   request: RouteCatalogRequest,
   validation: 'strict' | 'deferred' = 'strict',
+  installed?: ReadonlyMap<string, Model<Api>>,
 ): RouteCatalog {
   const { provider } = request
-  const defaults = catalogModels(provider)
+  const defaults = installed ?? catalogModels(provider)
   const providerBaseUrl = catalogProvider(provider)?.baseUrl
   // An absent `models` key and an empty one are the same request: the config
   // schema materializes `[]` for the absent case, and an empty catalog could

@@ -72,11 +72,107 @@ try {
   for (const id of getBuiltinProviders()) {
     if (!getBuiltinModels(id).length) continue
     const profile=PiPlugin.resolveProfiles({[id]:{}},'strict').get(id)
-    assert.equal(profile.piProvider.getModels().length,getBuiltinModels(id).length,id)
+    const expected = getBuiltinModels(id).map(model => model.id)
+    if (id === 'meta' && !expected.includes('muse-wonder-1.0')) expected.push('muse-wonder-1.0')
+    assert.deepEqual(profile.piProvider.getModels().map(model => model.id),expected,id)
   }
   assert.deepEqual(active, ['deepseek'])
   assert.deepEqual((await adapter.listModels('deepseek')).map(model => model.id), sdkModels.map(model => model.id))
   assert.ok(ctx.authorization.describe('llm-pi-ai/openai').methods.some(method => method.id === 'oauth'))
+
+  // Discovery and opt-in are shared runtime concepts, including on non-Meta routes.
+  const learned = { ...getBuiltinModels('anthropic')[0], id: 'fixture-new-model', [PiPlugin.DISCOVERED_MODEL]: { verified: true } }
+  const live = provider => provider === 'anthropic' ? new Map([...getBuiltinModels(provider).map(model => [model.id, model]), [learned.id, learned]]) : undefined
+  for (const enabled of [false, true]) {
+    const profile = PiPlugin.resolveProfiles({ anthropic: { enabledDiscoveredModels: enabled ? [learned.id] : [] } }, 'strict', live).get('anthropic')
+    assert.equal(profile.modelChoices.find(model => model.id === learned.id).enabled, enabled)
+  }
+
+  // The shipped plugin exposes the supplemented catalog through both the
+  // authenticated model picker and the Harness adapter registration.
+  await ctx.settings.update('dsh-pi-login', { providers: { meta: { enabled: true } } }, revision)
+  const metaBroker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, {
+    catalog: (provider, profile) => PiPlugin.resolveProfiles({ [provider]: profile }, 'strict').get(provider).modelChoices,
+  })
+  try {
+    const choice = metaBroker.models('llm-pi-ai/meta').models.find(model => model.id === 'muse-wonder-1.0')
+    assert.equal(choice.name, 'Muse Wonder')
+    assert.equal(choice.enabled, true)
+    assert.ok((await adapter.listModels('meta')).some(model => model.id === choice.id))
+    const info = await adapter.resolveModel('meta', choice.id)
+    assert.equal(info.context.contextWindow, 1048576)
+    assert.deepEqual(info.reasoning.efforts.map(effort => effort.id), ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'])
+    const listing = metaBroker.models('llm-pi-ai/meta')
+    await metaBroker.setModel('llm-pi-ai/meta', choice.id, false, listing.revision)
+    assert.ok(!(await adapter.listModels('meta')).some(model => model.id === choice.id))
+  } finally { await metaBroker.dispose() }
+  await ctx.settings.update('dsh-pi-login', { providers: { meta: { enabled: false } } }, revision)
+  assert.deepEqual(active, ['deepseek'])
+
+  // Exercise the shipped live-catalog RPC and real SDK end to end. Only Meta's
+  // HTTPS responses are fixtures; no account login or paid request occurs.
+  await ctx.credentials.modifyRecord('llm-pi-ai/meta', () => ({ kind: 'grant', payload: {
+    type: 'oauth', refresh: 'runtime-meta-identity', access: 'runtime-meta-old', expires: Date.now() + 100000,
+  } }))
+  await ctx.settings.update('dsh-pi-login', { providers: { meta: { enabled: true } } }, revision)
+  const full = 'muse-wonder-full-1.0'
+  const metaRequests = []
+  const originalFetch = globalThis.fetch
+  const metaFetch = mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : input)
+    if (url.hostname !== 'api.meta.ai') return originalFetch(input, init)
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+    metaRequests.push({ path: url.pathname, authorization: headers.get('authorization'), version: headers.get('x-api-version') })
+    if (url.pathname === '/muse-code/key') return Response.json({ is_subs_active: true, subs_tier_name: 'Maximum Usage', api_key: 'runtime-meta-minted' })
+    if (url.pathname === '/v1/models') return Response.json({ data: [{ id: full, name: 'Muse Wonder Full', context_window: 1048576, max_output_tokens: 65536, input: ['text'], reasoning: true, thinkingLevelMap: { high: 'high', max: 'max' } }] })
+    assert.equal(url.pathname, '/v1/responses')
+    const body = JSON.parse(init?.body ?? await input.clone().text())
+    assert.equal(body.model, full)
+    assert.equal(body.reasoning.effort, 'high')
+    const item = { type: 'message', id: 'msg_full', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text: 'full-fixture', annotations: [] }] }
+    const events = [
+      { type: 'response.created', response: { id: 'resp_full', model: full } },
+      { type: 'response.output_item.added', output_index: 0, item: { ...item, content: [] } },
+      { type: 'response.content_part.added', output_index: 0, content_index: 0, part: { type: 'output_text', text: '', annotations: [] } },
+      { type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: 'full-fixture' },
+      { type: 'response.output_item.done', output_index: 0, item },
+      { type: 'response.completed', response: { id: 'resp_full', model: full, status: 'completed', output: [item], usage: { input_tokens: 3, output_tokens: 1, total_tokens: 4 } } },
+    ].map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+    return new Response(events, { headers: { 'content-type': 'text/event-stream' } })
+  })
+  const metaHandler = ctx.connection.createSharedFetchHandler('/api')
+  async function metaCall(method, payload = {}) {
+    const endpoint = `dsh-pi-login/${method}`
+    const response = await metaHandler.fetch(new Request(`http://localhost/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'meta-fixture', method: endpoint, payload }) }))
+    const value = await response.json()
+    assert.equal(value.result.ok, true, JSON.stringify(value))
+    return value.result.value
+  }
+  try {
+    const refreshed = await metaCall('refresh-models', { key: 'llm-pi-ai/meta' })
+    assert.equal(refreshed.refresh.status.detail, 'Maximum Usage')
+    assert.equal(refreshed.models.find(model => model.id === full).enabled, false)
+    assert.doesNotMatch(JSON.stringify(refreshed), /runtime-meta-identity|runtime-meta-minted/)
+    await metaCall('set-model', { key: 'llm-pi-ai/meta', model: full, enabled: true, revision: refreshed.revision })
+    assert.ok((await adapter.listModels('meta')).some(model => model.id === full))
+    assert.deepEqual((await adapter.resolveModel('meta', full)).reasoning.efforts.map(effort => effort.id), ['high', 'max'])
+    const prepared = await adapter.prepareCall('meta', full)
+    const chunks = []
+    for await (const chunk of prepared.stream({ provider: 'meta', model: full, reasoningEffort: 'high', messages: [{ role: 'user', content: [{ type: 'text', text: 'fixture' }] }] })) chunks.push(chunk)
+    assert.equal(chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join(''), 'full-fixture')
+    assert.deepEqual(metaRequests.map(request => request.authorization), ['Bearer runtime-meta-identity', 'Bearer runtime-meta-minted', 'Bearer runtime-meta-minted'])
+    assert.ok(metaRequests.every(request => request.version === '1.0.0'))
+    await ctx.credentials.modifyRecord('llm-pi-ai/meta', () => ({ kind: 'grant', payload: { type: 'oauth', refresh: 'other-account', access: 'other-key', expires: Date.now() + 100000 } }))
+    const count = metaRequests.length
+    await assert.rejects(async () => { for await (const _ of prepared.stream({ provider: 'meta', model: full, messages: [] })) {} }, error => error.code === 'meta-refresh-required')
+    assert.equal(metaRequests.length, count)
+    const changed = await metaCall('models', { key: 'llm-pi-ai/meta' })
+    assert.ok(!changed.models.some(model => model.id === full))
+    assert.ok(!(await adapter.listModels('meta')).some(model => model.id === full))
+    console.log('Muse account catalog: authenticated RPC, explicit Full opt-in, actual SDK request and streamed fixture, account-key pinning, and account change invalidation passed')
+  } finally { metaFetch.mock.restore() }
+  await ctx.settings.update('dsh-pi-login', { providers: { meta: { enabled: false } } }, revision)
+  assert.deepEqual(active, ['deepseek'])
 
   // The SDK itself asks for and stores an API key through the official seam.
   await ctx.authorization.begin({ key: 'llm-pi-ai/deepseek', method: 'api-key', interaction: { notify: () => {}, prompt: async () => 'runtime-fixture-key' } })

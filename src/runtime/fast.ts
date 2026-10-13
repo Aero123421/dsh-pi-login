@@ -26,6 +26,7 @@ export interface ModelChoice {
   name: string
   model: Model<Api>
   enabled: boolean
+  discovered?: boolean
   serviceTier?: 'default' | 'priority'
 }
 
@@ -33,12 +34,17 @@ export interface ModelChoice {
 export function modelChoices(provider: string, models: readonly Model<Api>[], profile: {
   disabledModels?: readonly string[]
   enabledFastModels?: readonly string[]
-}): ModelChoice[] {
+  enabledDiscoveredModels?: readonly string[]
+  models?: readonly { id: string }[]
+}, discoveredIds: ReadonlySet<string> = new Set()): ModelChoice[] {
   const ids = new Set(models.map(model => model.id))
+  const configuredIds = new Set(profile.models?.map(model => model.id) ?? [])
   return models.flatMap(model => {
     const supported = supportsFastTier(provider, model)
     const ordinary: ModelChoice = {
-      id: model.id, name: model.name, model, enabled: !profile.disabledModels?.includes(model.id),
+      id: model.id, name: model.name, model,
+      enabled: !profile.disabledModels?.includes(model.id) && (!discoveredIds.has(model.id) || profile.enabledDiscoveredModels?.includes(model.id) === true || configuredIds.has(model.id)),
+      ...discoveredIds.has(model.id) ? { discovered: true } : {},
       ...supported ? { serviceTier: 'default' as const } : {},
     }
     if (!supported) return [ordinary]

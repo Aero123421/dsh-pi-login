@@ -105,7 +105,7 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
  * @param ctx - the plugin context carrying `ctx.authorization`.
  * @param auth - the injectables every collection here is built with.
  */
-export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
+export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection, onLogin?: (provider: string) => void): void {
   for (const providerId of catalogProviderIds()) {
     const provider = catalogProvider(providerId)
     const [first, ...rest] = loginMethods(provider)
@@ -147,6 +147,7 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection): void {
           notify: (event) => { relay(event, session) },
           prompt: prompt => session.prompt(restate(prompt)),
         }, deviceId === undefined ? undefined : { getDeviceId: () => deviceId! })
+        onLogin?.(providerId)
       },
     })
   }

@@ -2,7 +2,7 @@ import { PiLoginBroker, LoginError, dispatch } from './broker.mjs'
 export function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options)
   ctx.effect(() => () => broker.dispose(), 'dsh-pi-login: private attempts')
-  for (const method of ['list', 'start', 'state', 'answer', 'cancel', 'enable', 'models', 'set-model', 'set-provider', 'use-login']) {
+  for (const method of ['list', 'start', 'state', 'answer', 'cancel', 'enable', 'models', 'refresh-models', 'set-model', 'set-provider', 'use-login']) {
     const endpoint = `dsh-pi-login/${method}`
     ctx.connection.fetch.register({
       path: `/api/${endpoint}`, methods: ['POST'], requestBody: 'buffered',

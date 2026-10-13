@@ -1,7 +1,7 @@
 import { chromium } from 'playwright'
 import { createServer } from 'node:http'
 import { readFile, mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import { compileOfficial } from './upstream.mjs'
@@ -12,7 +12,9 @@ async function within(promise) {
  try {return await Promise.race([promise,new Promise((_,reject)=>{timer=setTimeout(()=>reject(new Error('Delayed list fixture did not settle')),10000)})])}
  finally {clearTimeout(timer)}
 }
-await mkdir('artifacts',{recursive:true})
+const artifactDir = process.env.DSH_TEST_ARTIFACT_DIR ?? 'artifacts'
+const artifact = name => join(artifactDir, name)
+await mkdir(artifactDir,{recursive:true})
 await compileOfficial('scripts/browser-fixture.jsx','.cache/browser-fixture.js','browser')
 const {Context,AuthorizationService,MemoryCredentials,HostConnectionService,BrowserAuth,PiPlugin:host}=await import(pathToFileURL(resolve('.cache/official-host.mjs')).href)
 const ctx=new Context()
@@ -21,6 +23,7 @@ const auth=await BrowserAuth.create(ctx,ctx.credentials,30)
 await ctx.plugin(pluginCtx=>{new HostConnectionService(pluginCtx,[],auth)})
 const writes=[]
 let revision=7, providers={}
+providers.meta = { enabled: true }
 ctx.provide('settings',{describe:()=>[{ns:'dsh-pi-login',value:{providers},revision}],update:async(ns,patch,expected)=>{
  assert.equal(expected,revision);writes.push([ns,patch,expected]);revision++
  for(const [provider,changes] of Object.entries(patch.providers))providers[provider]={...providers[provider],...changes}
@@ -33,7 +36,39 @@ ctx.authorization.registerFlow({key,label:'ChatGPT (Codex)',methods:[{id:'oauth'
 }})
 const model=getBuiltinModels('openai-codex').find(model=>model.id==='gpt-6.1-sol')
 const fast=fastModelId(model.id)
-const plugin=ctx.plugin({inject:['authorization','credentials','connection','settings'],apply:ctx=>host.applyLoginUI(ctx,{catalog:(provider,profile)=>modelChoices(provider,[model],profile)})});await plugin.await()
+ctx.authorization.registerFlow({ key: 'llm-pi-ai/meta', label: 'Meta (Muse)', methods: [{ id: 'oauth', label: 'Muse' }], async run(session) { await session.commit({ kind: 'grant', payload: { token: 'meta-fixture' } }) } })
+let metaRefreshed = false, metaRefreshFails = false
+const full = 'muse-wonder-full-1.0'
+const catalogs = new host.ProviderCatalogs({
+ meta: {
+  session: { refresh: async () => {
+   if (metaRefreshFails) throw Object.assign(new Error('private-error-detail'), { code: 'fixture-key-override' })
+   metaRefreshed = true
+  } },
+  presentation: models => ({
+   ...metaRefreshed ? { status: { message: 'metaSubscriptionActive', detail: 'Maximum Usage' } } : {},
+   notes: ['metaReloadHint'],
+  }),
+  errorCodes: { 'fixture-key-override': 'catalog-key-override' },
+  errors: { 'catalog-key-override': 'metaKeyOverride' },
+ },
+ example: {
+  session: { refresh: async () => { exampleRefreshed = true } },
+ },
+})
+let exampleRefreshed = false
+providers.example = { enabled: true }
+ctx.authorization.registerFlow({ key: 'llm-pi-ai/example', label: 'Example', methods: [{ id: 'api-key', label: 'API key' }], async run(session) { await session.commit({ kind: 'grant', payload: { token: 'example-fixture' } }) } })
+const plugin=ctx.plugin({inject:['authorization','credentials','connection','settings'],apply:ctx=>host.applyLoginUI(ctx,{
+ catalogs,
+ catalog:(provider,profile)=>provider === 'meta' ? [
+  { id: 'muse-spark-1.3', name: 'Muse Spark 1.3', enabled: !profile.disabledModels?.includes('muse-spark-1.3') },
+  ...metaRefreshed ? [{ id: full, name: 'Muse Wonder Full', discovered: true, capabilityUnverified: true, enabled: profile.enabledDiscoveredModels?.includes(full) === true }] : [],
+ ] : provider === 'example' ? [
+  { id: 'example-base', name: 'Example Base', enabled: true },
+  ...exampleRefreshed ? [{ id: 'example-new', name: 'Example New', discovered: true, enabled: profile.enabledDiscoveredModels?.includes('example-new') === true }] : [],
+ ] : modelChoices(provider,[model],profile),
+})});await plugin.await()
 const handler=ctx.connection.createSharedFetchHandler('/api')
 const files=new Map([
  ['/fixture.js',resolve('.cache/browser-fixture.js')],['/login.js',resolve('dist/client.js')],
@@ -52,7 +87,7 @@ const server=createServer(async(req,res)=>{
   }
   if(files.has(url.pathname)){res.setHeader('content-type',url.pathname.endsWith('.css')?'text/css':'text/javascript');res.end(await readFile(files.get(url.pathname)));return}
   if(!auth.authorizeIndex(req,res))return
-  res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/base.css"><style>body{margin:0;background:var(--dsw-alias-bg-layer-1)}</style></head><body><div id="app"></div><script src="/fixture.js"></script><script src="/login.js"></script><script>mountPlugins()</script></body></html>')
+  res.setHeader('content-type','text/html');res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pi login test fixture</title><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/base.css"><style>body{margin:0;background:var(--dsw-alias-bg-layer-1)}</style></head><body><div id="app"></div><script src="/fixture.js"></script><script src="/login.js"></script><script>mountPlugins()</script></body></html>')
  }catch{res.writeHead(500);res.end('test fixture failed')}
 })
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
@@ -61,20 +96,25 @@ let browser
 try {
  assert.equal((await fetch(new URL('api/dsh-pi-login/list',base),{method:'POST'})).status,401)
  assert.equal((await fetch(new URL('api/dsh-pi-login/list',base),{method:'POST',headers:{origin:'https://untrusted.example'}})).status,403)
+ assert.equal((await fetch(new URL('api/dsh-pi-login/refresh-models',base),{method:'POST'})).status,401)
+ assert.equal((await fetch(new URL('api/dsh-pi-login/refresh-models',base),{method:'POST',headers:{origin:'https://untrusted.example'}})).status,403)
  const options={headless:true}
  if(process.env.DSH_TEST_CHROMIUM)options.executablePath=process.env.DSH_TEST_CHROMIUM
  browser=await chromium.launch(options)
  const page=await browser.newPage({viewport:{width:1000,height:800}})
  await page.emulateMedia({reducedMotion:'reduce'})
- const errors=[];page.on('pageerror',error=>{errors.push(error.message);console.error('Page error:',error.message)})
- page.on('console',message=>{if(message.type()==='error')console.error('Console error:',message.text().slice(0,500))})
+ const errors=[],consoleErrors=[];page.on('pageerror',error=>{errors.push(error.message);console.error('Page error:',error.message)})
+ page.on('console',message=>{if(message.type()==='error'){consoleErrors.push(message.text());console.error('Console error:',message.text().slice(0,500))}})
  page.setDefaultTimeout(10000)
  await page.goto(ctx.connection.authenticatedUrl(base))
- try {await page.getByRole('heading',{name:'Pi接続'}).waitFor()} catch(error) {await page.screenshot({path:'artifacts/browser-failure.png'});console.error('Page text:',await page.locator('body').innerText());throw error}
- await page.screenshot({path:'artifacts/pi-login-light.png'})
+ assert.ok(page.url().startsWith(base))
+ assert.equal(await page.title(),'Pi login test fixture')
+ assert.equal(await page.locator('vite-error-overlay, #webpack-dev-server-client-overlay').count(),0)
+ try {await page.getByRole('heading',{name:'Pi接続'}).waitFor()} catch(error) {await page.screenshot({path:artifact('browser-failure.png')});console.error('Page text:',await page.locator('body').innerText());throw error}
+ await page.screenshot({path:artifact('pi-login-light.png')})
  await page.getByRole('button',{name:'ログイン',exact:true}).first().click()
  await page.getByRole('link',{name:'ブラウザで続ける'}).waitFor()
- await page.screenshot({path:'artifacts/pi-login-dialog.png'})
+ await page.screenshot({path:artifact('pi-login-dialog.png')})
  await page.getByLabel('認証コードを入力').fill('browser-fixture-secret')
  await page.getByRole('button',{name:'続ける',exact:true}).click()
  await page.getByText('ログインしました',{exact:true}).waitFor()
@@ -84,7 +124,7 @@ try {
  assert.deepEqual(writes,[['dsh-pi-login',{providers:{'openai-codex':{enabled:true}}},7]])
  await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
- await page.screenshot({path:'artifacts/pi-login-dark.png'})
+ await page.screenshot({path:artifact('pi-login-dark.png')})
  await page.getByRole('button',{name:'再ログイン',exact:true}).first().click()
  await page.getByLabel('認証コードを入力').waitFor()
  await page.keyboard.press('Escape')
@@ -101,11 +141,13 @@ try {
  assert.equal(await page.getByText('masked-api-key-fixture',{exact:true}).count(),0)
  await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  await page.getByRole('button',{name:'モデルを選ぶ',exact:true}).first().click()
+ await page.getByText('このプロバイダーはモデル一覧の再取得に未対応です。新モデルはプラグインまたはSDKの更新で追加されます。', {exact:true}).waitFor()
+ assert.equal(await page.getByRole('button', {name:'モデル一覧を更新',exact:true}).count(),0)
  await page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol',exact:true}).waitFor()
  await page.evaluate(()=>document.body.removeAttribute('data-ds-dark-theme'))
- await page.screenshot({path:'artifacts/pi-models-light.png'})
+ await page.screenshot({path:artifact('pi-models-light.png')})
  await page.evaluate(()=>document.body.setAttribute('data-ds-dark-theme',''))
- await page.screenshot({path:'artifacts/pi-models-dark.png'})
+ await page.screenshot({path:artifact('pi-models-dark.png')})
  const modelSwitch=page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol',exact:true})
  await modelSwitch.click()
  await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="モデルを使う: GPT-6.1 Sol"]')?.getAttribute('aria-checked')==='false')
@@ -115,7 +157,7 @@ try {
  await fastSwitch.click()
  await page.waitForFunction(()=>document.querySelector('[role="switch"][aria-label="モデルを使う: GPT-6.1 Sol Fast"]')?.getAttribute('aria-checked')==='true')
  assert.deepEqual(providers['openai-codex'].enabledFastModels,[fast])
- await page.screenshot({path:'artifacts/pi-fast-models-dark.png'})
+ await page.screenshot({path:artifact('pi-fast-models-dark.png')})
  await page.getByLabel('モデルを検索').fill('fast')
  assert.equal(await modelSwitch.count(),0)
  await page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol Fast',exact:true}).waitFor()
@@ -171,20 +213,56 @@ try {
   }finally{await page.unroute(statePath,terminalState)}
  }
  await page.setViewportSize({width:390,height:760})
- await page.screenshot({path:'artifacts/pi-login-mobile.png'})
+ await page.screenshot({path:artifact('pi-login-mobile.png')})
  await page.getByRole('button',{name:'モデルを選ぶ',exact:true}).first().click()
  const mobileFast=page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol Fast',exact:true})
  await mobileFast.waitFor()
  assert.equal(await mobileFast.getAttribute('aria-checked'),'true')
  assert.equal(await page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol',exact:true}).getAttribute('aria-checked'),'false')
- await page.screenshot({path:'artifacts/pi-fast-models-mobile.png'})
+ await page.screenshot({path:artifact('pi-fast-models-mobile.png')})
  assert.ok(await page.evaluate(()=>document.querySelector('[role="dialog"]').scrollWidth<=innerWidth))
  await page.getByRole('button',{name:'閉じる',exact:true}).last().click()
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth))
+ // Muse reload shows account information, adds an opt-in Full row, persists
+ // the choice, and retains the last list with an actionable override error.
+ await page.getByRole('button', { name: 'プロバイダー', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'Meta (Muse)', exact: true }).click()
+ await page.getByRole('button', { name: 'モデルを選ぶ', exact: true }).last().click()
+ await page.getByRole('button', { name: 'モデル一覧を更新', exact: true }).click()
+ await page.getByText('Muse契約は有効です · Maximum Usage', { exact: true }).waitFor()
+ const fullSwitch = page.getByRole('switch', { name: 'モデルを使う: Muse Wonder Full', exact: true })
+ assert.equal(await fullSwitch.getAttribute('aria-checked'), 'false')
+ await fullSwitch.click()
+ await page.waitForFunction(() => document.querySelector('[aria-label="モデルを使う: Muse Wonder Full"]')?.getAttribute('aria-checked') === 'true')
+ assert.deepEqual(providers.meta.enabledDiscoveredModels, [full])
+ assert.ok(await page.evaluate(() => document.querySelector('[role="dialog"]').scrollWidth <= innerWidth))
+ await page.screenshot({ path: artifact('pi-muse-full-mobile.png') })
+ metaRefreshFails = true
+ await page.getByRole('button', { name: 'モデル一覧を更新', exact: true }).click()
+ await page.getByRole('alert').filter({ hasText: 'APIキー参照がMuseログインより優先されています' }).waitFor()
+ assert.equal(await fullSwitch.getAttribute('aria-checked'), 'true')
+ assert.equal(await page.getByText('private-error-detail', { exact: true }).count(), 0)
+ await page.setViewportSize({ width: 1000, height: 800 })
+ await page.screenshot({ path: artifact('pi-muse-full-desktop.png') })
+ await page.getByRole('button', { name: '閉じる', exact: true }).last().click()
+ // The same dialog and RPC also refresh a non-Meta provider adapter.
+ await page.getByRole('button', { name: 'プロバイダー', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'Example', exact: true }).click()
+ await page.getByRole('button', { name: 'モデルを選ぶ', exact: true }).last().click()
+ await page.getByRole('button', { name: 'モデル一覧を更新', exact: true }).click()
+ const exampleSwitch = page.getByRole('switch', { name: 'モデルを使う: Example New', exact: true })
+ assert.equal(await exampleSwitch.getAttribute('aria-checked'), 'false')
+ assert.equal(await page.getByText('Muse契約は有効です · Maximum Usage', { exact: true }).count(), 0)
+ await exampleSwitch.click()
+ await page.waitForFunction(() => document.querySelector('[aria-label="モデルを使う: Example New"]')?.getAttribute('aria-checked') === 'true')
+ assert.deepEqual(providers.example.enabledDiscoveredModels, ['example-new'])
+ await page.screenshot({ path: artifact('pi-generic-refresh-desktop.png') })
+ await page.getByRole('button', { name: '閉じる', exact: true }).last().click()
  await page.evaluate(async()=>{await testRuntime.locale.setLocale('en');document.documentElement.lang='en'})
  await page.getByRole('heading',{name:'Pi connections'}).waitFor()
  await page.evaluate(()=>testRuntime.dispose())
  assert.equal(await page.locator('style[data-dsh-pi-login]').count(),0)
  assert.deepEqual(errors,[])
- console.log('Official Client slots / locale, authenticated transport, OAuth UI, reset during pending load, terminal reasons, light/dark, narrow layout, and unload passed')
+ assert.deepEqual(consoleErrors,[])
+ console.log('Official Client slots / locale, authenticated transport, OAuth UI, reset during pending load, terminal reasons, Muse reload/plan/Full opt-in/override errors, light/dark, narrow layout, and unload passed')
 }finally{await browser?.close();await plugin.dispose();await ctx.fiber.dispose();await new Promise(resolve=>server.close(resolve))}
