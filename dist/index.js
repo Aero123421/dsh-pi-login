@@ -4360,7 +4360,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.6.0",
+  version: "0.6.1",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
