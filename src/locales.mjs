@@ -140,3 +140,115 @@ export const ja = {
   enableFailed: 'ログインしましたが、プロバイダーを有効にできませんでした。再試行してください。',
   waiting: 'ブラウザでログインを完了してください。', readOnly: 'この環境では認証情報を保存できません。',
 }
+
+Object.assign(en, {
+  title: 'AI connections & usage', description: 'Manage each account and its models. Open usage details when needed.',
+  connectionsTab: 'Connections & models', usageTab: 'Usage', addConnection: 'Add connection', connectionSettings: 'Connection settings',
+  manageModels: 'Manage models', searchConnections: 'Search connections', filterStatus: 'Status', filter_all: 'All', filter_connected: 'Connected', filter_disconnected: 'Not connected',
+  integration: 'Integration', service: 'Service', connectionName: 'Connection name', namePlaceholder: 'Personal Pro / Company API', oauthShort: 'OAuth',
+  endpoint: 'Endpoint URL (optional)', protocol: 'Protocol', oauthHint: 'Sign in to this account in the browser. Credentials stay within this connection.',
+  save: 'Save', saved: 'Connection settings saved.', confirmSave: 'Confirm change and save',
+  methodChangeWarning: 'Changing the sign-in method changes the account or billing used by this connection. Confirm before saving.',
+  cloneConnection: 'Duplicate settings', copySuffix: 'copy', deleteConnection: 'Delete connection', confirmDelete: 'Delete this connection',
+  deleteWarning: 'Delete this connection and its saved credentials? Its models will no longer be available.',
+  keySaved: 'A key is saved. Leave this field empty to keep it. The saved key is never displayed.',
+  showSecret: 'Show input', hideSecret: 'Hide input', paste: 'Paste', pasteFailed: 'Clipboard access was unavailable. Paste directly into the field.',
+  availableModels: 'Models enabled', authExpired: 'Sign-in expired', externalSettings: 'Open integration settings',
+  refreshUsage: 'Refresh usage', usageFailed: 'Could not refresh usage. The last available reading is kept.',
+  usage_available: 'Account usage', usage_unobserved: 'Not observed yet', usage_unsupported: 'Usage is not supported',
+  usage_unknown: 'Usage is unknown', usage_unavailable: 'Usage is unavailable', usage_auth_required: 'Sign in to check usage',
+  'usage_auth-required': 'Sign in to check usage', usage_stale: 'Last reading is out of date', 'usage_rate-limited': 'Rate limited. Retry after the time below.',
+  usage_error: 'Usage could not be checked', quota_unlimited: 'Unlimited', quota_unavailable: 'Limit unavailable', quota_unallocated: 'No quota allocated', quota_unknown: 'Amount unknown',
+  used: 'used', remaining: 'Remaining', estimated: 'Estimated', unit_credits: 'credits', unit_requests: 'requests',
+  resets: 'Resets', resetDate: 'Reset date (time not supplied)', retryAt: 'Retry after', observedAt: 'Last observed', checkedAt: 'Last checked',
+  lastObserved: 'Recorded from a prior response. Opening this screen does not run a generation.',
+  endpointUntrusted: 'This endpoint is not trusted by the host. Add it to the host allowlist before saving.',
+  serviceUnavailable: 'This integration does not provide a supported model connection in this DSH version.',
+  cloneHint: 'The copy starts disabled and has no credentials. Configure its account separately.',
+
+})
+Object.assign(ja, {
+  title: 'AI接続・利用状況', description: 'アカウントごとに接続とモデルを管理します。利用状況は必要なときに開けます。',
+  connectionsTab: '接続とモデル', usageTab: '利用状況', addConnection: '接続を追加', connectionSettings: '接続設定',
+  manageModels: 'モデルを管理', searchConnections: '接続を検索', filterStatus: '接続状態', filter_all: 'すべて', filter_connected: '接続済み', filter_disconnected: '未接続',
+  integration: '連携', service: 'サービス', connectionName: '接続名', namePlaceholder: '個人Pro・会社APIなど', oauthShort: 'OAuth',
+  endpoint: '接続先URL（任意）', protocol: '通信方式', oauthHint: 'このアカウントでブラウザからログインします。認証情報は接続ごとに保存します。',
+  save: '保存', saved: '接続設定を保存しました。', confirmSave: '変更を確認して保存',
+  methodChangeWarning: '認証方式を変えると、この接続で使うアカウントや課金先が変わります。確認してから保存してください。',
+  cloneConnection: '設定を複製', copySuffix: 'コピー', deleteConnection: '接続を削除', confirmDelete: 'この接続を削除する',
+  deleteWarning: 'この接続と保存済みの認証情報を削除しますか？この接続のモデルは利用できなくなります。',
+  keySaved: 'キーは保存済みです。変更しない場合は空欄にしてください。保存済みのキーは表示しません。',
+  showSecret: '入力を表示', hideSecret: '入力を隠す', paste: '貼り付け', pasteFailed: 'クリップボードを読み込めませんでした。入力欄に直接貼り付けてください。',
+  availableModels: 'モデル有効', authExpired: '認証切れ', externalSettings: '連携元の設定を開く',
+  refreshUsage: '利用状況を更新', usageFailed: '利用状況を更新できませんでした。前回の取得結果を保持しています。',
+  usage_available: 'アカウントの利用状況', usage_unobserved: 'まだ観測していません', usage_unsupported: '利用状況の取得に未対応',
+  usage_unknown: '利用状況は不明です', usage_unavailable: '利用状況を取得できません', usage_auth_required: '利用状況の確認にはログインが必要です',
+  'usage_auth-required': '利用状況の確認にはログインが必要です', usage_stale: '前回の情報です。更新してください', 'usage_rate-limited': '取得回数の制限中です。再試行可能時刻を確認してください。',
+  usage_error: '利用状況を確認できませんでした', quota_unlimited: '無制限', quota_unavailable: '利用枠は不明', quota_unallocated: '利用枠の割当なし', quota_unknown: '使用量は不明',
+  used: '使用', remaining: '残量', estimated: '推定', unit_credits: 'クレジット', unit_requests: 'リクエスト',
+  resets: 'リセット時刻', resetDate: 'リセット日（時刻の情報なし）', retryAt: '再試行可能時刻', observedAt: '最終観測時刻', checkedAt: '最終取得時刻',
+  lastObserved: '過去の応答で観測した情報です。この画面を開いても生成は行いません。',
+  endpointUntrusted: 'この接続先はホストで許可されていません。ホストの許可リストに追加してから保存してください。',
+  serviceUnavailable: 'このDSH版では、この連携のモデル接続を利用できません。',
+  cloneHint: '複製した接続は無効・認証なしで作成します。アカウントは別に設定してください。',
+
+})
+
+Object.assign(en, {
+  hours: 'hours', days: 'days', minutes: 'minutes', accountQuota: 'Account quota', unit_tokens: 'tokens', unit_USD: 'USD',
+  ownerManaged: 'Managed by integration', directory_live: 'Available', directory_declared: 'Declared', directory_unavailable: 'Unavailable', sourceUnknown: 'Owner unknown',
+  'serviceUnavailable_muse-code-bridge-unverified': 'Muse Code requires the official CLI and a supported agent session connection in this environment. It is separate from the Meta Model API through Pi.',
+})
+Object.assign(ja, {
+  hours: '時間', days: '日', minutes: '分', accountQuota: 'アカウントの利用枠', unit_tokens: 'トークン', unit_USD: 'USD',
+  ownerManaged: '連携元で管理', directory_live: '利用可能', directory_declared: '設定あり', directory_unavailable: '利用不可', sourceUnknown: '管理元不明',
+  'serviceUnavailable_muse-code-bridge-unverified': 'Muse Codeには公式CLIと、この環境で対応するエージェント接続が必要です。Pi経由のMeta Model APIとは別の連携です。',
+})
+
+Object.assign(en, {
+  museModels: 'Muse Code model', museSessionHint: 'Muse Code runs independent agent sessions. These models are separate from Pi’s Meta Model API and are not added to the standard DSH model list.',
+  museCatalogDiagnostic: 'The host supplied a diagnostic catalog without a supported session model. Model availability does not confirm your account entitlement.',
+
+  agentSessionEnabled: 'Agent connection enabled',
+  'error_muse-code-cli-required': 'Install the official Muse Code CLI and supported MSP SDK on the host, then retry.',
+  'error_muse-code-protocol-unsupported': 'This Muse Code CLI does not support account or settings management. Update the official CLI.',
+  'error_muse-code-login-required': 'Sign in to this Muse Code connection first.', 'error_muse-code-login-failed': 'Muse Code sign-in did not complete. Retry from this connection’s settings.',
+
+  'error_muse-code-mode-unavailable': 'This account or CLI could not apply the selected model.',
+  'error_muse-code-connection-changed': 'The Muse Code connection changed. Close this panel and open it again.',
+  'error_muse-code-busy': 'Muse Code is already performing an operation. Retry after it finishes.',
+  'error_muse-code-model-unavailable': 'This model was not advertised by the current Muse Code host. Reload the panel.',
+  'error_muse-code-unavailable': 'Muse Code is unavailable. Check the official CLI and this connection’s sign-in.',
+  'error_muse-code-llm-unsupported': 'This Muse Code host does not provide a standard DSH model bridge.',
+  'error_muse-code-session-failed': 'The Muse Code agent session failed. Check this connection and retry.',
+})
+Object.assign(ja, {
+  museModels: 'Muse Codeのモデル', museSessionHint: 'Muse Codeは独立したエージェント実行です。Pi経由のMeta Model APIとは別で、DSHの通常のモデル一覧には追加しません。',
+  museCatalogDiagnostic: 'このホストの一覧は確認用で、対応するエージェントモデルがありません。モデル一覧の取得だけでは契約による利用可否は確認できません。',
+
+  agentSessionEnabled: 'エージェント接続有効',
+  'error_muse-code-cli-required': 'ホストに公式Muse Code CLIと対応するMSP SDKを導入してから再試行してください。',
+  'error_muse-code-protocol-unsupported': 'このMuse Code CLIはアカウント・設定管理に対応していません。公式CLIを更新してください。',
+  'error_muse-code-login-required': '先にこのMuse Code接続にログインしてください。', 'error_muse-code-login-failed': 'Muse Codeのログインが完了しませんでした。この接続の設定から再試行してください。',
+
+  'error_muse-code-mode-unavailable': 'このアカウントまたはCLIで選んだモデルを適用できませんでした。',
+  'error_muse-code-connection-changed': 'Muse Code接続が変わりました。この画面を閉じて開き直してください。',
+  'error_muse-code-busy': 'Muse Codeの処理中です。完了してから再試行してください。',
+  'error_muse-code-model-unavailable': '現在のMuse Codeホストにこのモデルがありません。画面を開き直してください。',
+  'error_muse-code-unavailable': 'Muse Codeを利用できません。公式CLIとこの接続のログインを確認してください。',
+  'error_muse-code-llm-unsupported': 'このMuse CodeホストはDSHの通常のモデル接続に対応していません。',
+  'error_muse-code-session-failed': 'Muse Codeのエージェント実行に失敗しました。この接続を確認して再試行してください。',
+})
+Object.assign(en, { authUnavailable: 'Account status unavailable' })
+Object.assign(ja, { authUnavailable: '接続状態を確認できません' })
+Object.assign(en, { authVerified: 'Sign-in verified' })
+Object.assign(ja, { authVerified: '接続確認済み' })
+Object.assign(en, { 'usageScope_muse-code-subscription-weekly': 'Weekly quota', 'error_muse-code-observation-invalid': 'The Muse Code response could not be verified. Update the official CLI and reopen this panel.' })
+Object.assign(ja, { 'usageScope_muse-code-subscription-weekly': '週間の利用枠', 'error_muse-code-observation-invalid': 'Muse Codeの応答を確認できませんでした。公式CLIを更新し、画面を開き直してください。' })
+Object.assign(en, { useProvider: 'Use this connection', enable: 'Enable connection', enabled: 'Connection enabled.', activateFirst: 'Enable this connection before choosing models.', modelsHint: 'When this connection is enabled, its selected models are available to chats and agents.' })
+Object.assign(ja, { useProvider: 'この接続を使う', enable: '接続を有効にする', enabled: '接続を有効にしました。', activateFirst: '接続を有効にしてからモデルを選んでください。', modelsHint: 'この接続が有効なとき、選んだモデルをチャットやエージェントで使えます。' })
+Object.assign(en, { museEntitlementUnverified: 'This model appears in the catalog. Generation entitlement for this subscription has not been verified.' })
+Object.assign(ja, { museEntitlementUnverified: '一覧にあるモデルです。この契約での生成権限は未確認です。' })
+
+Object.assign(en, { museModelSaved: 'Muse Code model saved.', museWonderOne: 'Wonder1', museWonderFull: 'Wonder Full' })
+Object.assign(ja, { museModelSaved: 'Muse Codeのモデルを保存しました。', museWonderOne: 'Wonder1', museWonderFull: 'Wonder Full' })

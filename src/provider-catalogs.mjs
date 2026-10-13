@@ -38,7 +38,7 @@ export class ProviderCatalogs {
     if (this.pending.has(provider)) return this.pending.get(provider)
     const pending = Promise.resolve().then(() => {
       if (this.closed) throw new CatalogRefreshError('catalog-refresh-failed')
-      return entry.session.refresh()
+      return entry.session.refresh({ force: true })
     }).then(() => {
       if (this.closed) throw new CatalogRefreshError('catalog-refresh-failed')
     }).catch(error => {

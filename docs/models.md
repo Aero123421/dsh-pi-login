@@ -1,5 +1,35 @@
 # モデル一覧とMuse Wonder
 
+## Metaの2つの経路
+
+「Meta Model API（Pi経由）」と「Meta Muse Code」は別の連携です。ログインしたアカウント、実行endpoint、契約・データ利用条件を混同しません。
+
+| 連携 | 実行とモデルの確認 |
+| --- | --- |
+| Meta Model API（Pi経由） | Pi SDKのResponses API。`muse-wonder-1.0`を補完し、Full等の追加モデルは認証したアカウントのAPI応答に実際に返ったIDだけを使います。 |
+| Meta Muse Code | 公式Muse CLI／SDKのMuse Session Protocol（MSP）。Wonder1／Wonder Fullの通常版・Contributor版をモデル一覧で選択し、実モデルIDと公式Contributor設定へ対応付けます。 |
+
+公式SDK `1.4.7`の[MSP schema](https://github.com/meta-models/muse-code-sdk/blob/a0c8611b382584eb5091942b477f30e92e1c8d18/schema/msp/msp.d.ts)と[モデル一覧の例](https://github.com/meta-models/muse-code-sdk/blob/a0c8611b382584eb5091942b477f30e92e1c8d18/clients/sdk-cookbook/src/recipes/list-models-and-switch-mid-session.ts)を参照しています。MSPの`model/list`はログアウト時のbundled catalogでも応答するため、一覧だけではFull／Contributorの利用権限を証明できません。契約枠や料金をプラン名から推測せず、Muse Codeで失敗してもPi Meta Model APIへ自動で切り替えません。
+
+## Muse CodeのログインとContributor
+
+独立した接続ownerは、Hostの公式`muse serve`と固定したSDK `1.4.7`を使用します。`account/read`と公式アカウントログイン通知で接続の認証を確認し、接続専用の`dsh-muse-code/<credentialRecordId>`へ保存します。CLIのfile credential backendを使う一時領域はプロファイル・接続・認証世代ごとに分け、共有のHost HOME・OS keychain・環境変数のモデルキーへ切り替えません。CLIがない、アカウント・設定protocolが未対応、認証が完了しない場合は、Piへの切替をせず終了理由を表示します。
+
+モデル一覧はWonder1、Wonder1 Contributor、Wonder Full、Wonder Full Contributorの4つの選択肢です。Hostの`model/list`に掲載されたbaseモデルごとに通常版とContributor版を表示します。選択を公式SDKのbase `modelId`とbooleanのContributor設定へ対応付け、`settings/readSchema`で対象を確認し、`settings/writeValue`の結果と`settings/read`の読み戻しを照合します。CLI側に適用可能な設定がなければ、その選択の保存は失敗します。
+
+| 画面の選択肢 | プラグイン内の選択ID | SDKへ送るmodelId | Contributor設定 |
+| --- | --- | --- | --- |
+| Wonder1 | `muse-wonder-1.0` | `muse-wonder-1.0` | `false` |
+| Wonder1 Contributor | `muse-wonder-1.0::contributor` | `muse-wonder-1.0` | `true` |
+| Wonder Full | `muse-wonder-full-1.0` | `muse-wonder-full-1.0` | `false` |
+| Wonder Full Contributor | `muse-wonder-full-1.0::contributor` | `muse-wonder-full-1.0` | `true` |
+
+`::contributor`はプラグイン内で選択肢を区別するIDです。SDKのmodelIdにはbase IDを使います。[MetaのContributor利用条件](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode)
+
+専用session wrapperはMSPの`session/start`、`turn/start`、イベント、`turn/cancel`、`session/read`、`session/resume`を扱います。通常のDSH `GenerateOptions`と互換とみなさず、DSHのチャットモデル一覧には登録しません。tool実行のownerはMuse Code側で、DSHのtool実行橋渡しは未検証です。利用状況はMSP `usage/read`／通知で得た最終観測値として、実際の期間と観測時刻だけを表示します。
+
+これらは公式schemaとfixtureで検証しています。この開発環境では公式CLI binaryがなく、配布先へのアクセスも制限されるため、実CLI・実アカウントのログイン、Wonder1／Fullの生成、Contributorによるデータ利用・利用枠・課金、Windows／macOS keychain隔離は未検証です。設定の成功・モデルの列挙を実生成の成功とは扱いません。
+
 ## Muse Wonder
 
 MetaのMuse Wonderを`muse-wonder-1.0`として追加しています。APIは既存のMetaプロバイダーのResponses API、認証は既存のAPIキーまたはMetaログインを使います。プラグインの設定画面とHarnessのモデル一覧は同じ補完カタログを使用します。
@@ -15,7 +45,7 @@ Pi SDK `1.1.0`には未収録のため、`src/runtime/catalog-additions.ts`で�
 
 単体テストで、実SDKとMetaプロバイダーによるモデルID、全推論レベル、画像付きResponsesリクエスト、ローカルのSSE応答を確認しています。runtimeテストで、ビルド済みプラグインのモデル選択、能力情報、ON/OFFを確認します。実アカウントでの生成・契約ごとの利用可否は別途確認が必要です。
 
-## 再読み込みで取得できる範囲
+## Pi Meta Model APIで再読み込みできる範囲
 
 0.4.1では、プロバイダー共通の「モデル一覧を更新」を使います。現在、実APIからの再取得に対応するのはMetaのMuseログインです。未対応のプロバイダーでは更新ボタンの代わりに案内を表示します。通常の画面再表示やSDKの`refresh()`とは別の操作です。
 
@@ -26,9 +56,9 @@ Pi SDK `1.1.0`には未収録のため、`src/runtime/catalog-additions.ts`で�
 
 保存済みOAuthのidentity tokenを`POST https://api.meta.ai/muse-code/key`で交換し、`is_subs_active`、`subs_tier_name`、`subs_tier_id`を読み取ります。契約の有効性が明確な`true`の場合、そのキーと`x-api-version: 1.0.0`で`GET https://api.meta.ai/v1/models`を取得します。契約名だけからモデルの権限を推測しません。表示は契約状態とプラン名だけで、トークン・キー・メールアドレスを画面やRPCに返しません。
 
-Full（`muse-wonder-full-1.0`）やContributorの候補は、そのアカウントの応答に実際に含まれるIDだけを追加します。SDKの能力情報は優先し、未知のモデルは一覧の能力情報がある場合に使用します。IDだけが返った場合は、画像対応や推論レベルを推測せず、テキスト入力と接続先既定の推論を使用します。トークン上限はプロバイダー設定の`defaultContextWindow`／`defaultMaxTokens`（既定262,144／32,768）を使用し、未検証であることを表示します。これは実際のモデルの最大能力を表す値ではありません。設定で推論レベルを強制している場合、能力未確認のモデルではその指定が拒否されることがあります。
+Full（`muse-wonder-full-1.0`）やContributorを名前に含む候補は、そのアカウントのAPI応答に実際に含まれるIDだけを追加します。このAPIモデルの選択でMuse Code本体のContributor modeを設定したことにはなりません。SDKの能力情報は優先し、未知のモデルは一覧の能力情報がある場合に使用します。IDだけが返った場合は、画像対応や推論レベルを推測せず、テキスト入力と接続先既定の推論を使用します。トークン上限はプロバイダー設定の`defaultContextWindow`／`defaultMaxTokens`（既定262,144／32,768）を使用し、未検証であることを表示します。これは実際のモデルの最大能力を表す値ではありません。設定で推論レベルを強制している場合、能力未確認のモデルではその指定が拒否されることがあります。
 
-新しい候補の選択は`enabledDiscoveredModels`に保存します。明示的な`models`一覧は置き換えず、`disabledModels`と既存のモデル設定を維持します。取得した能力情報はプロセス内だけ保持するため、再起動後は一覧の再取得が必要です。別アカウントへのログインで取得済みの一覧を破棄し、実行時にもアカウントを確認します。キー参照、Authorizationヘッダー、標準外の接続先を上書きした設定では、このMuse用の操作を拒否します。新モデルの実行には取得元のMuseログインのキーを使い、通常版や別のキーへ自動で切り替えません。キーの有効期限が切れた場合は再読み込みが必要です。
+新しい候補の選択は接続ごとの`enabledDiscoveredModels`に保存します。明示的な`models`一覧は置き換えず、`disabledModels`と既存のモデル設定を維持します。モデルのON/OFFやThinking変更だけでは、取得済み一覧と契約情報を失いません。取得した能力情報はプロセス内だけ保持するため、再起動後は一覧の再取得が必要です。別アカウントへのログインで取得済みの一覧を破棄し、実行時にもアカウントを確認します。キー参照、Authorizationヘッダー、標準外の接続先を上書きした設定では、この取得操作を拒否します。取得したaccess keyはその接続の標準OAuth Credentialsへ保存します。新モデルの実行には同じ接続の認証を使い、通常版や別のキーへ自動で切り替えません。鍵の再取得はHost側の同じ契約処理を共有します。
 
 一覧の取得が失敗した場合は、前回の完全な一覧を保持してエラーを表示します。不完全なページ、JSON異常、過大な応答は採用しません。回数制限では自動再試行せず、待ってから再試行する案内を表示します。契約の無効化を確認した場合やアカウント変更時には、以前の候補を使用しません。
 

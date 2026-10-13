@@ -7,10 +7,10 @@
 import type { AuthEvent, AuthPrompt, AuthType, Provider } from '@earendil-works/pi-ai'
 import { randomUUID } from 'node:crypto'
 import type { Context } from '@deepseek-ai/cordis'
-import type { AuthorizationMethod, AuthorizationPrompt, AuthorizationSession } from '@deepseek-ai/dsh-authorization'
+import type { AuthorizationFlow, AuthorizationMethod, AuthorizationPrompt, AuthorizationSession } from '@deepseek-ai/dsh-authorization'
 import { isCredentialKeySegment } from '@deepseek-ai/dsh-credentials'
 import { catalogProvider, catalogProviderIds } from './catalog.ts'
-import { recordKeyFor } from './auth.ts'
+import { connectionAuthFrom, recordKeyFor } from './auth.ts'
 import type { PiAiAuthInjection } from './adapter.ts'
 import { createModels } from './models.ts'
 
@@ -105,7 +105,8 @@ function restate(prompt: AuthPrompt): AuthorizationPrompt {
  * @param ctx - the plugin context carrying `ctx.authorization`.
  * @param auth - the injectables every collection here is built with.
  */
-export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection, onLogin?: (provider: string) => void): void {
+export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection, onLogin?: (provider: string) => void): () => void {
+  const disposers: Array<() => void> = []
   for (const providerId of catalogProviderIds()) {
     const provider = catalogProvider(providerId)
     const [first, ...rest] = loginMethods(provider)
@@ -123,7 +124,7 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection, onLogin
         providerId)
       continue
     }
-    ctx.authorization.registerFlow({
+    disposers.push(ctx.authorization.registerFlow({
       key: recordKeyFor(providerId),
       label: provider.name,
       methods: [first, ...rest],
@@ -149,6 +150,116 @@ export function registerPiAiFlows(ctx: Context, auth: PiAiAuthInjection, onLogin
         }, deviceId === undefined ? undefined : { getDeviceId: () => deviceId! })
         onLogin?.(providerId)
       },
-    })
+    }))
   }
+  return () => { for (const dispose of disposers.splice(0)) dispose() }
+}
+
+/** Only fields that determine a connection's authentication identity. */
+export interface ConnectionLoginBinding {
+  integrationId: string
+  serviceId: string
+  credentialRecordId: string
+  credentialGeneration: number
+  authMethod: 'oauth' | 'api-key'
+  displayName: string
+  credentialRef?: string
+  profile?: { baseURL?: string, api?: string }
+}
+
+function loginIdentity(connection: ConnectionLoginBinding): string {
+  return JSON.stringify([
+    connection.integrationId, connection.serviceId, connection.credentialRecordId,
+    connection.credentialGeneration, connection.authMethod, connection.credentialRef,
+    connection.profile?.baseURL, connection.profile?.api,
+  ])
+}
+
+/** Synchronize login flows with live connection settings and withdraw stale attempts. */
+export function registerConnectionFlows(
+  ctx: Context,
+  connections: () => Readonly<Record<string, ConnectionLoginBinding>>,
+  onLogin?: (connectionId: string) => void | Promise<void>,
+): { sync: () => void, dispose: () => void } {
+  const registered = new Map<string, { identity: string, dispose: () => void }>()
+  const profileContext = ctx.get('profileContext')
+  let disposed = false
+  const sync = (): void => {
+    if (disposed) return
+    const current = ctx.get('profileContext') === profileContext ? connections() : {}
+    for (const [id, flow] of registered) {
+      const connection = current[id]
+      if (connection === undefined || loginIdentity(connection) !== flow.identity) {
+        flow.dispose()
+        registered.delete(id)
+      }
+    }
+    for (const [id, connection] of Object.entries(current)) {
+      if (registered.has(id) || connection.integrationId !== 'pi') continue
+      const provider = catalogProvider(connection.serviceId)
+      const method = loginMethods(provider).find(method => method.id === connection.authMethod)
+      if (provider === undefined || method === undefined || !isCredentialKeySegment(connection.credentialRecordId)) continue
+      const identity = loginIdentity(connection)
+      const isCurrent = (): boolean => {
+        const current = connections()[id]
+        return !disposed && ctx.get('profileContext') === profileContext
+          && current !== undefined && loginIdentity(current) === identity
+      }
+      const flow: AuthorizationFlow = {
+        key: recordKeyFor(connection.credentialRecordId),
+        get label() { return connections()[id]?.displayName ?? connection.displayName },
+        methods: [method],
+        async run(session) {
+          if (!isCurrent() || session.method !== connection.authMethod) throw new Error('stale-connection')
+          session.signal.throwIfAborted()
+          const auth = connectionAuthFrom(ctx, {
+            connectionId: id, serviceId: connection.serviceId,
+            credentialRecordId: connection.credentialRecordId,
+            isCurrent: () => isCurrent() && !session.signal.aborted,
+          })
+          const models = createModels(auth)
+          models.setProvider(provider)
+          const type: AuthType = connection.authMethod === 'oauth' ? 'oauth' : 'api_key'
+          let deviceId: string | undefined
+          if (connection.serviceId === 'openai' && type === 'oauth') {
+            const record = await ctx.credentials.modifyRecord('dsh-pi-login/installation', async current => {
+              session.signal.throwIfAborted()
+              if (!isCurrent()) throw new Error('stale-connection')
+              if (current?.kind === 'grant' && typeof current.payload?.deviceId === 'string') return current
+              return { kind: 'grant', payload: { deviceId: randomUUID() } }
+            })
+            deviceId = (record?.kind === 'grant' ? record.payload.deviceId : undefined) as string | undefined
+          }
+          await models.login(connection.serviceId, type, {
+            signal: session.signal,
+            notify: event => { if (isCurrent() && !session.signal.aborted) relay(event, session) },
+            prompt: prompt => {
+              session.signal.throwIfAborted()
+              if (!isCurrent()) throw new Error('stale-connection')
+              return session.prompt(restate(prompt))
+            },
+          }, deviceId === undefined ? undefined : { getDeviceId: () => deviceId! })
+          session.signal.throwIfAborted()
+          if (!isCurrent()) throw new Error('stale-connection')
+          await onLogin?.(id)
+        },
+      }
+      const dispose = ctx.authorization.registerFlow(flow)
+      registered.set(id, { identity, dispose })
+    }
+  }
+  const listeners = [
+    ctx.on('settings/document-updated', namespace => { if (namespace === 'dsh-pi-login') sync() }),
+    ctx.on('loader/volatile-update', sync),
+  ]
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
+    for (const unwatch of listeners) unwatch()
+    for (const flow of registered.values()) flow.dispose()
+    registered.clear()
+  }
+  ctx.effect(() => dispose)
+  sync()
+  return { sync, dispose }
 }

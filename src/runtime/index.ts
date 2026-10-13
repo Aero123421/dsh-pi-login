@@ -20,17 +20,19 @@ import type { AdapterRegistrationHandle, DirectoryRegistrationHandle, LlmConfigu
 import type {} from '@deepseek-ai/dsh-fs'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { PiAiAdapter } from './adapter.ts'
-import { authContextFrom, credentialStoreFrom } from './auth.ts'
+import { authContextFrom, connectionAuthFrom, credentialStoreFrom } from './auth.ts'
 import { catalogProviderIds } from './catalog.ts'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
-import type { ResolvedPiAiProviderProfile } from './config.ts'
+import type { Connection, ResolvedPiAiProviderProfile } from './config.ts'
+import { resolveConnectionProfiles } from './connections.ts'
 import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
-import { registerPiAiFlows } from './login.ts'
+import { registerConnectionFlows, registerPiAiFlows } from './login.ts'
 
 export { PiAiAdapter } from './adapter.ts'
 export type { PiAiAdapterOptions } from './adapter.ts'
 export { Config } from './config.ts'
+export { resolveConnectionProfiles } from './connections.ts'
 export type {
   Options,
   PiAiCompatProfile,
@@ -41,6 +43,7 @@ export type {
   PiAiReasoningEfforts,
   PiAiThinkingFormat,
   ResolvedPiAiProviderProfile,
+  Connection,
 } from './config.ts'
 export { recordKeyFor } from './auth.ts'
 export { supportedProtocols } from './provider.ts'
@@ -64,6 +67,8 @@ function registrationFacts(profiles: ReadonlyMap<string, ResolvedPiAiProviderPro
     .map(([provider, profile]) => ({
       provider,
       displayName: profile.displayName,
+      integrationLabel: profile.integrationLabel,
+      serviceLabel: profile.serviceLabel,
       retryPolicy: profile.retryPolicy,
       models: profile.piProvider === undefined ? undefined : profile.modelChoices
         .filter(choice => choice.enabled)
@@ -83,6 +88,7 @@ function registrationFacts(profiles: ReadonlyMap<string, ResolvedPiAiProviderPro
 function directoryEntries(
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>,
   settingsNs: string,
+  connectionMode = false,
 ): LlmConfigurableProvider[] {
   const catalog = new Set(catalogProviderIds())
   const entries = new Map<string, LlmConfigurableProvider>()
@@ -91,7 +97,8 @@ function directoryEntries(
       provider,
       displayName,
       settingsNs,
-      settingsPath: ['providers', provider],
+      settingsPath: profiles.get(provider)?.connectionId === undefined
+        ? ['providers', provider] : ['connections', profiles.get(provider)!.connectionId!, 'profile'],
       // Membership of the installed catalog, not of the settings document:
       // narrowing a shipped provider's models stores a profile too, and that
       // route is still one pi-ai knows.
@@ -99,23 +106,27 @@ function directoryEntries(
       ...error === undefined ? {} : { error },
     })
   }
-  for (const provider of catalog) declare(provider, provider)
+  if (!connectionMode) for (const provider of catalog) declare(provider, provider)
   for (const [provider, profile] of profiles) declare(provider, profile.displayName, profile.catalogError)
   return [...entries.values()]
 }
 
 /** Register one generic pi-ai adapter for all configured provider routes. */
 export function apply(ctx: Context, config: Config, live?: {
-  catalog: (provider: string) => ReadonlyMap<string, Model<Api>> | undefined
+  catalog: (provider: string, connectionId?: string) => ReadonlyMap<string, Model<Api>> | undefined
+  connections?: () => Readonly<Record<string, Connection>> | undefined
+  authForProfile?: import('./adapter.ts').PiAiAdapterOptions['authForProfile']
   revision: () => number
   authorizeModel: NonNullable<import('./adapter.ts').PiAiAdapterOptions['authorizeModel']>
   onLogin: (provider: string) => void
-}): void {
+}): { syncFlows: () => void } {
   ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
   const settingsNs = NS
-  let lastRaw: ReturnType<Config['providers']['get']> | undefined
+  let lastRaw: unknown
   let lastCatalogRevision: number | undefined
   let memoized: ReadonlyMap<string, ResolvedPiAiProviderProfile> | undefined
+  const connections = (): Readonly<Record<string, Connection>> | undefined => config.connectionMigrationVersion.get() >= 1
+    ? live?.connections?.() ?? config.connections.get() : undefined
   /**
    * The resolved profiles for the current configuration, memoized by the raw
    * snapshot's identity — which is also what makes the adapter's own snapshot
@@ -126,11 +137,18 @@ export function apply(ctx: Context, config: Config, live?: {
    * Scalar configuration errors still reject resolution.
    */
   const profiles = (): ReadonlyMap<string, ResolvedPiAiProviderProfile> => {
-    const raw = config.providers.get()
+    const currentConnections = connections()
+    const raw = currentConnections ?? config.providers.get()
     const revision = live?.revision()
     if (raw === lastRaw && revision === lastCatalogRevision && memoized !== undefined) return memoized
-    const next = resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred', live?.catalog)
-    for (const [provider, profile] of Object.entries(raw)) if (profile.enabled === false) next.delete(provider)
+    const next = currentConnections === undefined
+      ? resolveProfiles(structuredClone(raw) as import('./config.ts').Options['providers'], 'deferred', live?.catalog)
+      : resolveConnectionProfiles(structuredClone(currentConnections), live?.catalog, 'deferred')
+    if (currentConnections === undefined) {
+      for (const [provider, profile] of Object.entries(config.providers.get())) if (profile.enabled === false) next.delete(provider)
+    } else {
+      for (const connection of Object.values(currentConnections)) if (connection.enabled === false) next.delete(connection.routeId)
+    }
     lastRaw = raw
     lastCatalogRevision = revision
     memoized = next
@@ -145,6 +163,24 @@ export function apply(ctx: Context, config: Config, live?: {
       { providers: structuredClone(candidate.providers.get()) } as import('./config.ts').Options,
       { providers: structuredClone(config.providers.get()) } as import('./config.ts').Options,
     )
+    if (candidate.connectionMigrationVersion.get() >= 1) {
+      const previous = config.connections.get()
+      const changed = Object.fromEntries(Object.entries(candidate.connections.get()).filter(([id, entry]) => !deepEqualJson(entry, previous[id])))
+      resolveConnectionProfiles(changed, (serviceId, connectionId) => {
+        const before = previous[connectionId], after = changed[connectionId]
+        // ConfigEditor validates before committing its candidate. New ids and
+        // new account/transport bindings cannot be looked up in live settings;
+        // validate them against Pi's installed baseline instead of resolving
+        // a missing draft or borrowing the previous connection's catalog.
+        if (before === undefined || before.serviceId !== after.serviceId
+          || before.credentialRecordId !== after.credentialRecordId
+          || before.credentialGeneration !== after.credentialGeneration
+          || before.profile.baseURL !== after.profile.baseURL || before.profile.api !== after.profile.api) return undefined
+        return live?.catalog(serviceId, connectionId)
+      })
+      const routes = Object.values(candidate.connections.get()).map(connection => connection.routeId)
+      if (new Set(routes).size !== routes.length) throw new Error('llm-pi-ai: duplicate connection routes')
+    }
     return raw
   })
 
@@ -163,7 +199,7 @@ export function apply(ctx: Context, config: Config, live?: {
     const hit = credentials !== undefined
       ? (await credentials.resolve(ref))?.value
       // Without the seam the environment is the whole credential plane.
-      : launchEnvironmentOf(ctx).get(ref)?.value
+      : profile.connectionId === undefined ? launchEnvironmentOf(ctx).get(ref)?.value : undefined
     if (hit !== undefined && hit.length > 0) return assertUsableApiKey(hit, 'llm-pi-ai', ref)
     throw new LlmError(
       `llm-pi-ai: no credential for provider route "${provider}"; its profile resolves ${ref}, which is not`
@@ -173,14 +209,34 @@ export function apply(ctx: Context, config: Config, live?: {
     )
   }
 
-  // One store and one ambient context for the whole plugin instance: both read
-  // through `ctx` per call, so they stay correct across the collection rebuilds
-  // a configuration change causes, and a sign-in survives one.
+  // Legacy auth remains available until migration; connection collections bind
+  // one native service to one credential record and never consult ambient auth.
   const auth = { credentials: credentialStoreFrom(ctx), authContext: authContextFrom(ctx) }
   const adapter = new PiAiAdapter({
     profiles,
     resolveApiKey,
     auth,
+    authForProfile: profile => live?.authForProfile?.(profile) ?? (profile.connectionId === undefined ? auth : connectionAuthFrom(ctx, {
+      connectionId: profile.connectionId,
+      serviceId: profile.serviceId!,
+      credentialRecordId: profile.credentialRecordId!,
+      isCurrent: () => {
+        const current = connections()?.[profile.connectionId!]
+        return current !== undefined && current.serviceId === profile.serviceId
+          && current.credentialRecordId === profile.credentialRecordId
+          && current.credentialGeneration === profile.credentialGeneration
+      },
+    })),
+    resolveHeaders: async profile => {
+      const entries = await Promise.all(Object.entries(profile.headerRefs ?? {}).map(async ([name, ref]) => {
+        const credentials = ctx.get('credentials')
+        const value = (await credentials?.resolve(ref as import('@deepseek-ai/dsh-credentials').CredentialRef))?.value
+        if (!value) throw new LlmError(`llm-pi-ai: missing credential for header "${name}"`, 'MISSING_CREDENTIAL')
+        new Headers([[name, value]])
+        return [name, value] as const
+      }))
+      return Object.fromEntries(entries)
+    },
     authorizeModel: live?.authorizeModel,
     resolveAttachments: () => ctx.get('attachments'),
     resolveImageAccess: (attachments, ref) => resolveImageAttachmentAccess(
@@ -195,20 +251,37 @@ export function apply(ctx: Context, config: Config, live?: {
       )
     },
   })
-  // Independent of the route set: signing in is what makes a route worth
-  // adding, so the flows are offered before any profile names their provider.
-  // Scoped to the authorization seam rather than injected outright, because a
-  // composition without it (headless, ACP) simply has no surface to sign in
-  // from, while everything else this plugin does still works.
-  ctx.inject(['authorization'], (authorized) => { registerPiAiFlows(authorized, auth, live?.onLogin) })
-  // The full installed catalog is configurable from the moment the plugin
-  // mounts — dormant or not — so configuration surfaces can offer every
-  // pi-ai provider before any route exists. Hand-declared routes join it as
-  // profiles appear, and leave with them.
+  // Withdraw dormant native flows when migration completes. From then on only
+  // saved connections own an authorization flow and their chosen auth method.
+  let authorizedContext: Context | undefined
+  let legacyFlows: import('@deepseek-ai/cordis').Fiber | undefined
+  let withdrawLegacyFlows: (() => void) | undefined
+  let connectionFlows: ReturnType<typeof registerConnectionFlows> | undefined
+  const syncFlows = (): void => {
+    if (authorizedContext === undefined) return
+    if (connections() !== undefined) {
+      // Fiber disposal is awaitable and can defer individual effects. The
+      // migrated connection may retain a native record key, so withdraw the
+      // old declarations synchronously before registering their replacement.
+      withdrawLegacyFlows?.(); withdrawLegacyFlows = undefined
+      if (legacyFlows !== undefined) { void legacyFlows.dispose(); legacyFlows = undefined }
+      connectionFlows ??= registerConnectionFlows(authorizedContext, () => connections() ?? {}, live?.onLogin)
+      connectionFlows.sync()
+    } else if (legacyFlows === undefined) {
+      connectionFlows?.dispose(); connectionFlows = undefined
+      legacyFlows = authorizedContext.plugin(child => { withdrawLegacyFlows = registerPiAiFlows(child, auth, live?.onLogin) })
+    }
+  }
+  ctx.inject(['authorization'], authorized => { authorizedContext = authorized; syncFlows() })
+  // The migrated directory contains saved connections, including disabled
+  // entries that still need a settings address. Registration contains enabled
+  // routes only; an empty connection set withdraws every Pi route.
   let directory: DirectoryRegistrationHandle | undefined
   let directoryFacts: unknown
   const ensureDirectory = (): void => {
-    const entries = directoryEntries(profiles(), settingsNs)
+    const currentConnections = connections()
+    const entries = directoryEntries(currentConnections === undefined ? profiles()
+      : resolveConnectionProfiles(structuredClone(currentConnections), live?.catalog, 'deferred'), settingsNs, currentConnections !== undefined)
     if (deepEqualJson(entries, directoryFacts)) return
     // Atomic replace, never dispose-then-register: a route another adapter
     // family already declares (a profile keyed `deepseek-official`) would
@@ -216,6 +289,10 @@ export function apply(ctx: Context, config: Config, live?: {
     // page empty. The candidate set is validated first, so a collision keeps
     // the previous entries serving and only costs a diagnostic.
     if (directory === undefined) {
+      // Host requires a nonempty initial registration. A migrated profile
+      // with no saved Pi connections stays dormant until its first connection
+      // appears; replace([]) remains valid for an existing registration.
+      if (entries.length === 0) { directoryFacts = entries; return }
       directory = ctx.llm.registerConfigurableProviders(entries)
     } else {
       directory.replace(entries)
@@ -276,10 +353,10 @@ export function apply(ctx: Context, config: Config, live?: {
   }
   ensureRegistrationFacts()
 
-  ctx.on('dsh-pi-login/catalog-updated', () => { ensureRegistrationFacts(); ensureDirectory() })
+  ctx.on('dsh-pi-login/catalog-updated', () => { syncFlows(); ensureRegistrationFacts(); ensureDirectory() })
 
   ctx.on('loader/volatile-update', () => {
-    try { ensureRegistrationFacts(); ensureDirectory() }
+    try { syncFlows(); ensureRegistrationFacts(); ensureDirectory() }
     catch (error) {
       ctx.logger.error('llm-pi-ai: configuration conflicts with an existing provider route')
       ctx.logger.error(error)
@@ -287,7 +364,8 @@ export function apply(ctx: Context, config: Config, live?: {
   })
   ctx.on('settings/document-updated', (namespace) => {
     if (namespace !== NS) return
-    try { ensureRegistrationFacts(); ensureDirectory() }
+    try { syncFlows(); ensureRegistrationFacts(); ensureDirectory() }
     catch (error) { ctx.logger.error('Pi plugin: could not apply model settings'); ctx.logger.error(error) }
   })
+  return { syncFlows }
 }

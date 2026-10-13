@@ -114,6 +114,62 @@ try {
     assert.equal(requests.length,before+1)
     assert.equal(failed.find(chunk=>chunk.type==='finish').replayState,undefined)
     rejectPriority = false
+
+    // The same native provider/model can exist under three public connection
+    // routes without sharing OAuth identity, replay signatures or cache affinity.
+    const makeConnection = (id, generation = 0) => ({
+      integrationId:'pi', serviceId:provider, routeId:`pi-${id}`, displayName:id,
+      credentialRecordId:id, credentialGeneration:generation, authMethod:'oauth', enabled:true,
+      profile:{...oauthSource,enabledFastModels:[fast]},
+    })
+    const connections = Object.fromEntries(['a','b','c'].map(id=>[id,makeConnection(id)]))
+    const tokens = new Map(['a','b','c'].map(id=>[id,`fixture.${Buffer.from(JSON.stringify({'https://api.openai.com/auth':{chatgpt_account_id:`account-${id}`}})).toString('base64url')}.fixture`]))
+    let scopedProfiles = PiPlugin.resolveConnectionProfiles(connections)
+    const scopedAdapter = new PiPlugin.PiAiAdapter({
+      profiles:()=>scopedProfiles,resolveApiKey:async()=>undefined,
+      authForProfile:profile=>({credentials:{
+        read:async native=>{assert.equal(native,provider);return {type:'oauth',access:tokens.get(profile.connectionId),refresh:'fixture-refresh',expires:Date.now()+3600000}},
+        list:async()=>[],modify:async()=>{throw new Error('Unexpected token refresh')},
+      }}),
+    })
+    async function scopedGenerate(id, history = [], variant = fast, prepared) {
+      const result = []
+      const options = {...input,provider:`pi-${id}`,model:variant,sessionId:'same-session',messages:[...input.messages,...history]}
+      for await (const chunk of prepared ? prepared.stream(options) : scopedAdapter.stream(options)) result.push(chunk)
+      return result.find(chunk=>chunk.type==='finish')
+    }
+    let first
+    const affinity = new Map()
+    for (const id of ['a','b','c']) {
+      const finish = await scopedGenerate(id)
+      assert.equal(requests.at(-1).headers.authorization,`Bearer ${tokens.get(id)}`)
+      assert.equal(finish.replayState.response.provider,provider)
+      assert.equal(finish.replayState.response.routeId,`pi-${id}`)
+      assert.equal(finish.replayState.response.scope.connectionId,id)
+      assert.equal(requests.at(-1).body.model,model)
+      assert.equal(requests.at(-1).body.service_tier,'priority')
+      const requestAffinity = requests.at(-1).body.prompt_cache_key ?? requests.at(-1).headers.session_id
+      assert.ok(requestAffinity)
+      affinity.set(id,requestAffinity)
+      if (id==='a') first=finish
+    }
+    assert.equal(new Set(affinity.values()).size,3)
+    const scopedHistory = {...history,source:{provider:'pi-a',model:fast,replayState:first.replayState}}
+    await scopedGenerate('a',[scopedHistory],model)
+    assert.ok(requests.at(-1).body.input.some(item=>item.encrypted_content==='encrypted-fixture'))
+    assert.equal(requests.at(-1).body.prompt_cache_key ?? requests.at(-1).headers.session_id,affinity.get('a'))
+    await scopedGenerate('b',[scopedHistory],model)
+    assert.ok(!requests.at(-1).body.input.some(item=>item.encrypted_content==='encrypted-fixture'))
+    assert.ok(JSON.stringify(requests.at(-1).body.input).includes('hello'))
+    const scopedPrepared = await scopedAdapter.prepareCall('pi-a',fast)
+    scopedProfiles = PiPlugin.resolveConnectionProfiles({...connections,a:makeConnection('a',1)})
+    await scopedGenerate('a',[scopedHistory],model)
+    assert.ok(!requests.at(-1).body.input.some(item=>item.encrypted_content==='encrypted-fixture'))
+    assert.notEqual(requests.at(-1).body.prompt_cache_key ?? requests.at(-1).headers.session_id,affinity.get('a'))
+    scopedProfiles = PiPlugin.resolveConnectionProfiles({b:connections.b,c:connections.c})
+    await assert.rejects(async()=>scopedAdapter.prepareCall('pi-a',fast))
+    await scopedGenerate('a',[],fast,scopedPrepared)
+    assert.equal(requests.at(-1).headers.authorization,`Bearer ${tokens.get('a')}`)
   }
   console.log('Fast variants: real SDK/API payloads, independent model choices, capabilities, saved replay, prepared snapshots, and no fallback passed')
 } finally {

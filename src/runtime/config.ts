@@ -193,6 +193,17 @@ export interface PiAiProviderProfile {
 /** Validated profile with its route stamped and every adapter-owned default resolved. */
 export interface ResolvedPiAiProviderProfile
   extends Omit<PiAiProviderProfile, 'apiKeyEnv' | 'retryPolicy' | 'models' | 'displayName'> {
+  serviceId?: string
+  integrationId?: string
+  connectionId?: string
+  credentialRecordId?: string
+  credentialGeneration?: number
+  authMethod?: 'oauth' | 'api-key'
+  credentialRef?: string
+  headerRefs?: Record<string, string>
+  integrationLabel?: string
+  serviceLabel?: string
+  replayScope?: import('./replay.ts').PiAiReplayScope
   /** Harness route key and the `Models` collection key (the configuration dict key). */
   provider: string
   /** Resolved display name for selectors and configuration surfaces. */
@@ -231,12 +242,35 @@ export interface ResolvedPiAiProviderProfile
 /** Plugin configuration: the provider routes this instance owns. */
 export interface Config {
   legacyImported: Volatile<boolean>
+  connectionMigrationVersion: Volatile<number>
+  connections: Volatile<Record<string, Connection>>
+  /** Host-managed origin allowlist; connection RPC cannot change trust. */
+  trustedEndpointOrigins: Volatile<string[]>
   /**
    * pi-ai provider routes, keyed by provider. An empty (or omitted) dict is
    * the dormant settings-driven posture: the adapter mounts with no routes
    * and registers them the moment a settings section supplies profiles.
    */
   providers: Volatile<Record<string, PiAiProviderProfile>>
+}
+
+/** Internal owned connection declaration, independent of SDK provider identity. */
+export interface Connection {
+  integrationId: string
+  serviceId: string
+  routeId: string
+  displayName: string
+  authMethod: 'oauth' | 'api-key'
+  credentialRecordId: string
+  credentialGeneration: number
+  credentialRef?: string
+  headerRefs?: Record<string, string>
+  enabled: boolean
+  legacyRoute?: boolean
+  integrationLabel?: string
+  serviceLabel?: string
+  profile: PiAiProviderProfile
+  museCode?: { contributorMode?: boolean, modelId?: string }
 }
 
 /** Plain options accepted by the provider resolver. */
@@ -366,6 +400,19 @@ const profile = z.object({
 /** Runtime schema for {@link Config}. */
 export const Config = z.object({
   legacyImported: z.boolean().default(false).volatile(),
+  connectionMigrationVersion: z.natural().default(0).volatile(),
+  trustedEndpointOrigins: z.array(z.string()).default([]).volatile(),
+  connections: z.dict(z.object({
+    integrationId: z.string().required(), serviceId: z.string().required(),
+    routeId: z.string().required(), displayName: z.string().required(),
+    authMethod: z.union(['oauth', 'api-key']).required(),
+    credentialRecordId: z.string().required(), credentialGeneration: z.natural().default(0),
+    credentialRef: z.string().role('credential-ref'),
+    headerRefs: z.dict(z.string().role('credential-ref')),
+    enabled: z.boolean().default(true), legacyRoute: z.boolean(),
+    integrationLabel: z.string(), serviceLabel: z.string(), profile,
+    museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
+  })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile(),
 })
 

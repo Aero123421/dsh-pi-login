@@ -8,7 +8,7 @@
 import { homedir } from 'node:os'
 import { access } from 'node:fs/promises'
 import { resolve as resolvePath } from 'node:path'
-import type { AuthContext, Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai'
+import type { AuthContext, AuthOperationOptions, Credential, CredentialInfo, CredentialStore } from '@earendil-works/pi-ai'
 import type { Context } from '@deepseek-ai/cordis'
 import {
   credentialKey, credentialKeyId, credentialKeyScope, credentialRef, isCredentialKeySegment, isCredentialRefName,
@@ -26,12 +26,12 @@ import { LlmError } from '@deepseek-ai/dsh-llm'
 export const RECORD_SCOPE = 'llm-pi-ai'
 
 /**
- * The record address for one pi-ai provider id.
- * @param providerId - pi-ai's own provider id, which is also the harness route key.
+ * The record address for a connection, or a retained legacy native provider.
+ * @param recordId - the Host-owned connection credential record ID.
  * @returns the scoped credential key this adapter family reads and writes.
  */
-export function recordKeyFor(providerId: string): CredentialKey {
-  return credentialKey(RECORD_SCOPE, providerId)
+export function recordKeyFor(recordId: string): CredentialKey {
+  return credentialKey(RECORD_SCOPE, recordId)
 }
 
 /**
@@ -118,24 +118,89 @@ function writableStore(ctx: Context): CredentialProvider {
   return credentials
 }
 
+/** Immutable ownership of one native provider's connection credential. */
+export interface ConnectionAuthBinding {
+  connectionId: string
+  /** Pi's native provider ID, never the Harness route ID. */
+  serviceId: string
+  credentialRecordId: string
+  /** Captures connection generation and the active Host profile. */
+  isCurrent?: () => boolean
+}
+
+function assertCurrent(binding: ConnectionAuthBinding): void {
+  if (binding.isCurrent?.() === false) {
+    throw new LlmError('This connection changed while authentication was in progress.', 'STALE_CONNECTION')
+  }
+}
+
+/** A single native provider mapped to a single connection-owned record. */
+function scopedCredentialStore(ctx: Context, binding: ConnectionAuthBinding): CredentialStore {
+  binding = { ...binding }
+  if (!isCredentialKeySegment(binding.credentialRecordId) || !binding.serviceId || !binding.connectionId) {
+    throw new LlmError('This connection cannot address its credential record.', 'UNSTORABLE_PROVIDER_ID')
+  }
+  const key = recordKeyFor(binding.credentialRecordId)
+  const credentialOf = (record: CredentialRecord | undefined): Credential | undefined => {
+    const credential = toPiCredential(record)
+    // Provider SDKs receive their own snapshot; mutating it before a failed
+    // commit must not modify a Host service's in-memory record by reference.
+    return credential === undefined ? undefined : structuredClone(credential)
+  }
+  const assertProvider = (providerId: string): void => {
+    if (providerId !== binding.serviceId) {
+      throw new LlmError('This credential store belongs to another connection.', 'AUTH_CONNECTION_MISMATCH')
+    }
+    assertCurrent(binding)
+  }
+  const read = async (providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> => {
+    if (providerId !== binding.serviceId) return undefined
+    options?.signal?.throwIfAborted()
+    assertCurrent(binding)
+    const record = await ctx.get('credentials')?.readRecord(key)
+    assertCurrent(binding)
+    options?.signal?.throwIfAborted()
+    return credentialOf(record)
+  }
+  return {
+    read,
+    async list(options) {
+      const credential = await read(binding.serviceId, options)
+      return credential === undefined ? [] : [{ providerId: binding.serviceId, type: credential.type }]
+    },
+    async modify(providerId, mutate, options) {
+      assertProvider(providerId)
+      options?.signal?.throwIfAborted()
+      const stored = await writableStore(ctx).modifyRecord(key, async current => {
+        // Retain the Host's record lock across the SDK refresh and rotation.
+        assertProvider(providerId)
+        options?.signal?.throwIfAborted()
+        const next = await mutate(credentialOf(current))
+        // SDK/provider cancellation is cooperative. Refuse even an SDK that
+        // finishes its network request after deletion or profile switching.
+        assertProvider(providerId)
+        options?.signal?.throwIfAborted()
+        return next === undefined ? undefined : toRecord(next)
+      })
+      assertCurrent(binding)
+      return credentialOf(stored)
+    },
+    async delete(providerId, options) {
+      assertProvider(providerId)
+      options?.signal?.throwIfAborted()
+      await writableStore(ctx).deleteRecord(key)
+      assertCurrent(binding)
+    },
+  }
+}
+
 /**
- * A pi-ai `CredentialStore` over the harness credential records.
- *
- * pi-ai runs OAuth refresh *inside* `modify()`, so this store's exclusion has
- * to cover a network round trip rather than a file rename — which is why the
- * record write path takes a wait limit of its own rather than the short one a
- * local write would need.
- *
- * pi-ai asks this store about every provider in the collection, hand-declared
- * routes included, and a route key is an arbitrary settings dict key while a
- * record id is not. An id outside the record grammar can never have stored a
- * record, so reads answer "nothing stored" and a delete has nothing to remove;
- * only `modify` refuses it, because a write that cannot land must not report
- * that it did.
- * @param ctx - the plugin context carrying the optional `ctx.credentials`.
- * @returns the store to hand `createModels()`.
+ * Bridge the Harness record lock to Pi, preserving serialized OAuth rotation.
+ * A binding restricts every operation to its native service and owned record.
+ * The unbound form remains available for provider settings before migration.
  */
-export function credentialStoreFrom(ctx: Context): CredentialStore {
+export function credentialStoreFrom(ctx: Context, binding?: ConnectionAuthBinding): CredentialStore {
+  if (binding !== undefined) return scopedCredentialStore(ctx, binding)
   return {
     async read(providerId) {
       const credentials = ctx.get('credentials')
@@ -178,6 +243,19 @@ export function credentialStoreFrom(ctx: Context): CredentialStore {
     async delete(providerId) {
       if (!isCredentialKeySegment(providerId)) return
       await writableStore(ctx).deleteRecord(recordKeyFor(providerId))
+    },
+  }
+}
+
+/** Connection routes resolve only explicit records/references, never ambient auth. */
+export function connectionAuthFrom(ctx: Context, binding: ConnectionAuthBinding): {
+  credentials: CredentialStore, authContext: AuthContext,
+} {
+  return {
+    credentials: credentialStoreFrom(ctx, binding),
+    authContext: {
+      async env() { assertCurrent(binding); return undefined },
+      async fileExists() { assertCurrent(binding); return false },
     },
   }
 }

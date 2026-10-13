@@ -12,6 +12,7 @@ import type { FinishReason, StreamChunk, TokenUsage, ToolCallId } from '@deepsee
 import { isContextOverflow } from '@earendil-works/pi-ai/utils/overflow'
 import type { AssistantMessage, AssistantMessageEvent, Usage as PiUsage } from '@earendil-works/pi-ai'
 import { toPiReplayState } from './replay.ts'
+import type { PiAiReplayScope } from './replay.ts'
 
 /**
  * Map pi-ai usage (reasoning folded into output by pi-ai).
@@ -142,6 +143,8 @@ export async function* toStreamChunks(
   contextWindow?: number,
   callerSignal?: AbortSignal,
   requestedModel?: string,
+  replayScope?: PiAiReplayScope,
+  requestedProvider?: string,
 ): AsyncGenerator<StreamChunk> {
   // pi-ai contentIndex ↔ our block index map 1:1 (both count blocks from 0
   // in stream order), but we track ids per index for tool calls.
@@ -208,7 +211,7 @@ export async function* toStreamChunks(
         yield {
           type: 'finish',
           reason: mapStopReason(event.message, contextWindow),
-          replayState: toPiReplayState(event.message, requestedModel),
+          replayState: toPiReplayState(event.message, requestedModel, replayScope, requestedProvider),
         }
         return
       case 'error':
