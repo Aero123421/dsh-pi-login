@@ -23,3 +23,7 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - run: npm run pack:plugin
+      - name: Install pinned DSH CLI for real profile smoke
+        run: npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.2
+      - name: Verify installed profile and live Release lookup
+        run: PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install

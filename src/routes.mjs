@@ -2,6 +2,9 @@ import { PiLoginBroker, LoginError, dispatch } from './broker.mjs'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 import { PluginUpdates } from './updates.mjs'
+import { ConnectionError } from './connections.mjs'
+import { RegistryError } from './registry.mjs'
+import { MuseCodeError } from './muse-code.mjs'
 export function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options)
   let writes = 0
@@ -17,7 +20,8 @@ export function applyLoginUI(ctx, options = {}) {
     ...options.updates,
   })
   ctx.effect(() => () => { updates.dispose(); broker.dispose() }, 'dsh-pi-login: private attempts and update retrieval')
-  for (const method of ['list', 'start', 'state', 'answer', 'cancel', 'enable', 'models', 'refresh-models', 'set-model', 'set-provider', 'use-login', 'update-status', 'update-check', 'update-begin', 'update-reconcile']) {
+  const connectionMutations = ['connection-create', 'connection-update', 'connection-clone', 'connection-delete']
+  for (const method of ['connection-list', ...connectionMutations, 'usage', 'list', 'start', 'state', 'answer', 'cancel', 'enable', 'models', 'refresh-models', 'set-model', 'set-provider', 'use-login', 'update-status', 'update-check', 'update-begin', 'update-reconcile']) {
     const endpoint = `dsh-pi-login/${method}`
     ctx.connection.fetch.register({
       path: `/api/${endpoint}`, methods: ['POST'], requestBody: 'buffered',
@@ -40,15 +44,45 @@ export function applyLoginUI(ctx, options = {}) {
               else value = await updates.reconcile(payload.requestId)
             } catch (error) { throw new LoginError(['busy', 'profile'].includes(error.message) ? error.message : 'update-failed') }
           } else {
-            const mutation = ['start', 'answer', 'enable', 'set-model', 'set-provider', 'use-login'].includes(method)
+            const mutation = [...connectionMutations, 'start', 'answer', 'enable', 'set-model', 'set-provider', 'use-login'].includes(method)
             if (mutation && updates.running) throw new LoginError('busy')
             if (mutation) writes++
-            try { value = await dispatch(broker, method, envelope.payload) } finally { if (mutation) writes-- }
+            try {
+              const payload = envelope.payload
+              if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new LoginError('invalid-request')
+              if (connectionMutations.includes(method)) {
+                if (!options.connections) throw new LoginError('unavailable')
+                options.connections.guard(payload)
+                if (method === 'connection-create') value = await options.connections.create(payload, payload.revision)
+                else if (method === 'connection-update') value = await options.connections.update(payload.connectionId, payload.patch, payload.revision)
+                else if (method === 'connection-clone') value = await options.connections.clone(payload.connectionId, payload.displayName, payload.revision)
+                else value = await options.connections.delete(payload.connectionId, payload.revision)
+              } else if (method === 'connection-list') {
+                if (!options.connections) throw new LoginError('unavailable')
+                value = await options.connections.list()
+              } else if (['models', 'refresh-models'].includes(method) && payload.connectionId && options.connections?.lookup(payload.connectionId).integrationId !== 'pi') {
+                const connection = options.connections.lookup(payload.connectionId)
+                const binding = options.connections.binding(connection)
+                const owner = options.registry.owner(connection.integrationId)
+                const result = await owner.readModels(binding, { signal: request.signal })
+                if (!options.connections.isCurrent(binding)) throw new LoginError('connection-changed')
+                value = { connectionId: connection.connectionId, revision: options.connections.section()?.revision,
+                  enabled: connection.enabled, models: result.models, contributor: result.contributor,
+                  executionKind: result.executionKind, liveVerified: false, refresh: { canRefresh: true } }
+              } else if (method === 'usage') {
+                if (!options.connections || !options.usage) throw new LoginError('unavailable')
+                options.connections.guard(payload)
+                const connection = options.connections.lookup(payload.connectionId)
+                const binding = options.connections.binding(connection)
+                value = await options.usage.get(binding, { force: payload.refresh === true, signal: request.signal })
+                if (!options.connections.isCurrent(binding)) throw new LoginError('connection-changed')
+              } else value = await dispatch(broker, method, payload)
+            } finally { if (mutation) writes-- }
           }
           return Response.json({ type: 'server-response', rpcId, result: { ok: true, value } }, { headers: { 'cache-control': 'no-store' } })
         } catch (error) {
           if (rpcId === undefined) return new Response('invalid request', { status: 400 })
-          const code = error instanceof LoginError ? error.code : 'unavailable'
+          const code = error instanceof LoginError || error instanceof ConnectionError || error instanceof RegistryError || error instanceof MuseCodeError ? error.code : 'unavailable'
           return Response.json({ type: 'server-response', rpcId, result: { ok: false, error: { code: `dsh-pi-login/${code}`, message: code, details: {} } } }, { headers: { 'cache-control': 'no-store' } })
         }
       },

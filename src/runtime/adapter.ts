@@ -8,8 +8,9 @@
  *
  * Explicit credential references take priority through the request's apiKey.
  * Missing referenced keys fail instead of falling back to a saved login.
- * The shared credential store and auth context supply login, token refresh,
- * and ambient auth across configuration changes.
+ * Each connection keeps Pi's native provider identity inside its own Models
+ * collection. Auth and endpoint resolve once per request; process environment
+ * discovery is available only on the pre-migration legacy path.
  *
  * @module dsh-pi-login/runtime/adapter
  */
@@ -25,6 +26,7 @@ import type {
   SimpleStreamOptions,
   ThinkingLevel,
 } from '@earendil-works/pi-ai'
+import { createHash } from 'node:crypto'
 import {
   attributionHeaders,
   contentHasImage,
@@ -68,7 +70,8 @@ interface PiAiSnapshot {
   /** The resolved profiles this collection was built from, used as its identity. */
   profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
   /** Providers for exactly those profiles; never mutated once published. */
-  models: Models
+  models: ReadonlyMap<string, Models>
+  auth: ReadonlyMap<string, PiAiAuthInjection>
 }
 
 /** Constructor options for {@link PiAiAdapter}: the two resolution hooks the plugin owns. */
@@ -85,14 +88,14 @@ export interface PiAiAdapterOptions {
    */
   resolveApiKey: (provider: string, profile: ResolvedPiAiProviderProfile) => Promise<string | undefined>
   /**
-   * How every collection this adapter builds resolves auth the request-level
-   * `apiKey` override does not cover. Required rather than optional: a
-   * collection built without them gets pi-ai's in-memory default store, which
-   * is empty at every boot and discarded on every configuration change, so a
-   * route whose only method is a login would report itself unconfigured on
-   * every request no matter how often the human signed in.
+   * Durable native auth for legacy profiles. Connection profiles use
+   * authForProfile instead; an omitted binding has no ambient credentials.
    */
-  auth: PiAiAuthInjection
+  auth?: PiAiAuthInjection
+  /** Native credentials bound to this exact connection and generation. */
+  authForProfile?: (profile: ResolvedPiAiProviderProfile) => PiAiAuthInjection
+  /** Resolve stored header references, never client supplied secrets. */
+  resolveHeaders?: (profile: ResolvedPiAiProviderProfile) => Promise<Readonly<Record<string, string>>>
   /** Pin the account key for models learned from a subscription catalog. */
   authorizeModel?: (provider: string, model: Model<Api>, profile: ResolvedPiAiProviderProfile) => Promise<{ apiKey: string, headers?: Readonly<Record<string, string>> } | undefined>
   /** Resolve the optional durable attachment service at request time. */
@@ -214,6 +217,46 @@ function requestHeaders(headers: Readonly<Record<string, string>> | undefined): 
   }
 }
 
+/** Connections never inherit Pi's process environment or another account store. */
+const isolatedAuth: PiAiAuthInjection = {
+  authContext: { env: async () => undefined, fileExists: async () => false },
+  credentials: {
+    read: async () => undefined,
+    list: async () => [],
+    modify: async () => { throw new LlmError('Connection credential store is unavailable', 'MISSING_CREDENTIAL') },
+    delete: async () => {},
+  },
+}
+
+/** Start the read before any other await; SDK lazy auth receives this frozen record. */
+function requestAuth(auth: PiAiAuthInjection, profile: ResolvedPiAiProviderProfile, signal?: AbortSignal): PiAiAuthInjection {
+  if (profile.connectionId === undefined || auth.credentials === undefined) return auth
+  const serviceId = profile.serviceId!
+  let credential = auth.credentials.read(serviceId, { signal }).then(value => {
+    if (value === undefined || (profile.authMethod === 'oauth' ? value.type !== 'oauth' : value.type !== 'api_key')) return undefined
+    return structuredClone(value)
+  })
+  // SDK auth can start later (after image preparation). Attach a rejection
+  // handler now while retaining the rejection for the actual credential read.
+  void credential.catch(() => {})
+  return {
+    authContext: isolatedAuth.authContext,
+    credentials: {
+      read: async provider => provider === serviceId ? await credential : undefined,
+      list: async () => [],
+      modify: async (provider, mutate, options) => {
+        if (provider !== serviceId) throw new LlmError('Credential provider does not match connection', 'MISSING_CREDENTIAL')
+        // Refreshes still run under Harness's record lock and generation
+        // guard; a newer login can never be overwritten by an old request.
+        const next = await auth.credentials!.modify(provider, mutate, options)
+        credential = Promise.resolve(next === undefined ? undefined : structuredClone(next))
+        return next
+      },
+      delete: async () => { throw new LlmError('Request credential snapshots are read-only', 'MISSING_CREDENTIAL') },
+    },
+  }
+}
+
 /**
  * pi-ai-backed multi-provider adapter. Each operation reads the current
  * profiles, so a configuration change reaches the next request without a
@@ -235,11 +278,17 @@ export class PiAiAdapter extends LlmAdapter {
   private current(): PiAiSnapshot {
     const profiles = this.config.profiles()
     if (this.snapshot?.profiles === profiles) return this.snapshot
-    const models: MutableModels = createModels(this.config.auth)
-    for (const profile of profiles.values()) {
-      if (profile.piProvider !== undefined) models.setProvider(profile.piProvider)
+    const models = new Map<string, Models>()
+    const auth = new Map<string, PiAiAuthInjection>()
+    for (const [route, profile] of profiles) {
+      const binding = profile.connectionId === undefined ? this.config.auth ?? isolatedAuth
+        : this.config.authForProfile?.(profile) ?? isolatedAuth
+      const collection: MutableModels = createModels(binding)
+      if (profile.piProvider !== undefined) collection.setProvider(profile.piProvider)
+      models.set(route, collection)
+      auth.set(route, binding)
     }
-    this.snapshot = { profiles, models }
+    this.snapshot = { profiles, models, auth }
     return this.snapshot
   }
 
@@ -269,7 +318,12 @@ export class PiAiAdapter extends LlmAdapter {
     // The configured name, not the route key: `displayName` exists so a
     // deployment can label a route, and a label only the configuration surface
     // reads would leave every selector showing the raw key.
-    return { id: provider, name: this.current().profiles.get(provider)?.displayName ?? provider }
+    const profile = this.current().profiles.get(provider)
+    return {
+      id: provider,
+      name: profile?.connectionId === undefined ? profile?.displayName ?? provider
+        : [profile.integrationLabel ?? profile.integrationId, profile.serviceLabel ?? profile.serviceId, profile.displayName].filter(Boolean).join(' / '),
+    }
   }
 
   override providerRetryPolicy(provider: string): ResolvedRetryPolicy | undefined {
@@ -345,6 +399,17 @@ export class PiAiAdapter extends LlmAdapter {
     const profile = this.profileOf(snapshot, options.provider)
     const choice = this.modelOf(snapshot, options.provider, options.model)
     const model = choice.model
+    const scopedAuth = requestAuth(snapshot.auth.get(options.provider)!, profile, options.signal)
+    let models = snapshot.models.get(options.provider)!
+    if (profile.connectionId !== undefined) {
+      const collection = createModels(scopedAuth)
+      collection.setProvider(profile.piProvider!)
+      models = collection
+    }
+    const replayScope = profile.replayScope === undefined ? undefined : {
+      ...profile.replayScope, endpoint: model.baseUrl, api: model.api,
+    }
+    const replayTarget = { provider: options.provider, serviceId: model.provider, ...replayScope === undefined ? {} : { scope: replayScope } }
     const updates = conversationUpdates(model)
     // pi-ai collapses Anthropic tool updates without an initially active declaration.
     const tools = options.tools ?? []
@@ -359,9 +424,25 @@ export class PiAiAdapter extends LlmAdapter {
       model,
       options.reasoningEffort ?? profile.reasoning,
     )
-    const explicitKey = await this.config.resolveApiKey(options.provider, profile)
-    const accountAuthorization = await this.config.authorizeModel?.(options.provider, model, profile)
+    const [explicitKey, accountAuthorization, storedHeaders] = await Promise.all([
+      this.config.resolveApiKey(options.provider, profile),
+      this.config.authorizeModel?.(options.provider, model, profile),
+      this.config.resolveHeaders?.(profile),
+    ])
     const apiKey = accountAuthorization?.apiKey ?? explicitKey
+    if (profile.connectionId !== undefined) {
+      // Resolve native auth once, including provider-owned endpoint overrides.
+      // The later lazy SDK stream receives only this request's resolved auth;
+      // image loading or a concurrent login cannot change its account.
+      const resolvedAuth = await models.getAuth(model, { apiKey, signal: options.signal })
+      if (resolvedAuth === undefined) throw new LlmError(`Connection "${profile.connectionId}" has no usable credential`, 'MISSING_CREDENTIAL')
+      if (replayScope !== undefined) replayScope.endpoint = resolvedAuth.auth.baseUrl ?? model.baseUrl
+      const collection = createModels(isolatedAuth)
+      collection.setProvider({ ...profile.piProvider!, auth: {
+        apiKey: { name: profile.displayName, resolve: async () => resolvedAuth },
+      } })
+      models = collection
+    }
 
     const consumer = new AbortController()
     const upstream = options.signal === undefined
@@ -383,7 +464,7 @@ export class PiAiAdapter extends LlmAdapter {
         this.config.onReplayDegrade?.({ provider: options.provider, model: options.model, reason })
       }
       const context = attachments === undefined
-        ? toPiContext(request, undefined, onReplayDegrade)
+        ? toPiContext(request, undefined, onReplayDegrade, replayTarget)
         : await toPiContext({ ...request, signal: watchdog.signal }, {
           attachments,
           resolveImageAccess: ref => this.config.resolveImageAccess?.(attachments, ref),
@@ -392,21 +473,23 @@ export class PiAiAdapter extends LlmAdapter {
             maxPixels: profile.requestImagePixelBudget,
             maxBytes: profile.requestImageMaxBytes,
           },
-        }, onReplayDegrade)
+        }, onReplayDegrade, replayTarget)
       const streamOptions: SimpleStreamOptions = {
         ...profileOptions(profile, reasoning, apiKey),
         ...options.temperature === undefined ? {} : { temperature: options.temperature },
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
-        ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
+        ...options.sessionId === undefined ? {} : { sessionId: replayScope === undefined ? String(options.sessionId)
+          : createHash('sha256').update(JSON.stringify([replayScope.connectionId, replayScope.credentialGeneration,
+            replayScope.endpoint, replayScope.api, String(options.sessionId)])).digest('hex') },
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
-        headers: { ...requestHeaders(profile.headers), ...accountAuthorization?.headers },
+        headers: { ...requestHeaders({ ...profile.headers, ...storedHeaders }), ...accountAuthorization?.headers },
       }
       const events = choice.serviceTier !== undefined
-        ? streamWithTier(snapshot.models, model, context, streamOptions, choice.serviceTier)
-        : snapshot.models.streamSimple(model, context, streamOptions)
-      const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model)[Symbol.asyncIterator]()
+        ? streamWithTier(models, model, context, streamOptions, choice.serviceTier)
+        : models.streamSimple(model, context, streamOptions)
+      const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model, replayScope, options.provider)[Symbol.asyncIterator]()
       let exhausted = false
       try {
         while (true) {

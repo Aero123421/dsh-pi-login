@@ -6,14 +6,16 @@ function setup() {
   const requests = []
   const controller = new LoginController({ rpc: {
     call(path, method, payload, signal) {
-      if (!method.endsWith('/list')) return Promise.resolve({ ok: true, value: {} })
+      if (!method.endsWith('/connection-list')) return Promise.resolve({ ok: true, value: {} })
       return new Promise((resolve, reject) => requests.push({ signal, resolve, reject }))
     },
   } })
   return { controller, requests }
 }
 
-const reply = (request, enabled) => request.resolve({ ok: true, value: [{ enabled }] })
+const snapshot = enabled => ({ connections: [{ enabled }], integrations: [], services: [], profileKey: 'test-profile', generation: 1, revision: 7 })
+const expected = enabled => ({ status: 'ready', ...snapshot(enabled), entries: [{ enabled }], error: false })
+const reply = (request, enabled) => request.resolve({ ok: true, value: snapshot(enabled) })
 
 test('ordinary concurrent loads share one request', async t => {
   const { controller, requests } = setup()
@@ -23,7 +25,7 @@ test('ordinary concurrent loads share one request', async t => {
   assert.equal(requests.length, 1)
   reply(requests[0], false)
   await first
-  assert.deepEqual(controller.getSnapshot(), { status: 'ready', entries: [{ enabled: false }], error: false })
+  assert.deepEqual(controller.getSnapshot(), expected(false))
 })
 
 test('refresh after a saved setting invalidates the outstanding list', async t => {
@@ -40,7 +42,7 @@ test('refresh after a saved setting invalidates the outstanding list', async t =
   assert.equal(controller.load(), current)
   reply(requests[1], true)
   await current
-  assert.deepEqual(controller.getSnapshot(), { status: 'ready', entries: [{ enabled: true }], error: false })
+  assert.deepEqual(controller.getSnapshot(), expected(true))
 })
 
 for (const outcome of ['success', 'failure']) {
@@ -54,7 +56,7 @@ for (const outcome of ['success', 'failure']) {
     if (outcome === 'success') reply(requests[0], false)
     else requests[0].reject(new Error('old connection failed'))
     await old
-    assert.deepEqual(controller.getSnapshot(), { status: 'ready', entries: [{ enabled: true }], error: false })
+    assert.deepEqual(controller.getSnapshot(), expected(true))
     const next = controller.load()
     assert.equal(requests.length, 3)
     reply(requests[2], true)
@@ -91,4 +93,16 @@ test('disposing aborts the list and ignores its late response', async () => {
   await controller.refresh()
   assert.equal(requests.length, 1)
   assert.equal(updates, 1)
+})
+
+test('mutations use the current Host profile identity, replacing caller-supplied scope', async () => {
+  const payloads = []
+  const controller = new LoginController({ rpc: { async call(path, method, payload) {
+    payloads.push(payload)
+    return { ok: true, value: method.endsWith('/connection-list') ? snapshot(true) : {} }
+  } } })
+  await controller.load()
+  await controller.mutation('connection-update', { connectionId: 'c-one', profileKey: 'old', generation: 9 })
+  assert.deepEqual(payloads[1], { connectionId: 'c-one', profileKey: 'test-profile', generation: 1 })
+  controller.dispose()
 })

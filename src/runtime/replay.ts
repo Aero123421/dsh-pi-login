@@ -15,12 +15,31 @@ export type PiAiReplayBlock =
   | { type: 'reasoning'; thinkingSignature?: string; redacted?: boolean }
   | { type: 'tool-call'; thoughtSignature?: string; namespace?: string }
 
+/** Account and wire boundary within which opaque provider state may be reused. */
+export interface PiAiReplayScope {
+  connectionId: string
+  credentialGeneration: number
+  endpoint: string
+  api: string
+  /** Original migrated route, the only route allowed to read its old envelopes. */
+  legacyRoute?: string
+}
+
+export interface PiAiReplayTarget {
+  provider: string
+  serviceId?: string
+  scope?: PiAiReplayScope
+}
+
 /** Versioned response-level half of the pi-ai replay envelope. */
 export interface PiAiReplayResponse {
   kind: 'pi-ai'
   version: 2
   api: Api
   provider: string
+  /** Durable DSH source route; provider above remains Pi's native identity. */
+  routeId?: string
+  scope?: PiAiReplayScope
   /** Requested model identity, matching the durable assistant source. */
   model: string
   /** Native request model for selectable variants; absent in ordinary saved turns. */
@@ -73,12 +92,19 @@ function emptyPiUsage(): PiUsage {
  * @param requestedModel - request identity stored in the assistant source; defaults to the native model.
  * @returns the versioned lossless-JSON replay projection.
  */
-export function toPiReplayState(message: AssistantMessage, requestedModel = message.model): ReplayEnvelope {
+export function toPiReplayState(
+  message: AssistantMessage,
+  requestedModel = message.model,
+  scope?: PiAiReplayScope,
+  requestedProvider?: string,
+): ReplayEnvelope {
   const response: PiAiReplayResponse = {
     kind: 'pi-ai',
     version: 2,
     api: message.api,
     provider: message.provider,
+    ...requestedProvider === undefined || requestedProvider === message.provider ? {} : { routeId: requestedProvider },
+    ...scope === undefined ? {} : { scope: { ...scope } },
     model: requestedModel,
     ...requestedModel === message.model ? {} : { wireModel: message.model },
     ...message.responseModel === undefined ? {} : { responseModel: message.responseModel },
@@ -124,6 +150,16 @@ function readReplayState(value: unknown): PiAiReplayState {
   if (response['version'] !== 2) return invalidReplay(`unsupported version ${String(response['version'])}`)
   for (const key of ['api', 'provider', 'model'] as const) {
     if (typeof response[key] !== 'string' || response[key].length === 0) return invalidReplay(`${key} must be a non-empty string`)
+  }
+  if (response['routeId'] !== undefined && (typeof response['routeId'] !== 'string' || !response['routeId'])) return invalidReplay('routeId must be a non-empty string')
+  if (response['scope'] !== undefined) {
+    const scope = response['scope'] as Partial<PiAiReplayScope> | null
+    if (typeof scope !== 'object' || scope === null || Array.isArray(scope)
+      || typeof scope.connectionId !== 'string' || !scope.connectionId
+      || !Number.isSafeInteger(scope.credentialGeneration) || scope.credentialGeneration! < 0
+      || typeof scope.endpoint !== 'string' || !scope.endpoint
+      || typeof scope.api !== 'string' || !scope.api
+      || (scope.legacyRoute !== undefined && typeof scope.legacyRoute !== 'string')) return invalidReplay('invalid connection scope')
   }
   if (!['stop', 'length', 'toolUse', 'error', 'aborted'].includes(String(response['stopReason']))) {
     return invalidReplay('unknown stopReason')
@@ -185,10 +221,26 @@ function foreignAssistant(message: HarnessAssistantMessage): AssistantMessage {
 }
 
 /** Recombine durable Harness content with validated pi-ai replay metadata. */
-function replayedAssistant(message: HarnessAssistantMessage, source: ModelMessageSource, rawState: unknown): AssistantMessage {
+function replayedAssistant(message: HarnessAssistantMessage, source: ModelMessageSource, rawState: unknown, target?: PiAiReplayTarget): AssistantMessage {
   const state = readReplayState(rawState)
-  if (state.response.provider !== source.provider) return invalidReplay('provider does not match assistant source')
+  if ((state.response.routeId ?? state.response.provider) !== source.provider) return invalidReplay('provider route does not match assistant source')
   if (state.response.model !== source.model) return invalidReplay('model does not match assistant source')
+  if (target !== undefined) {
+    if (source.provider !== target.provider) return invalidReplay('assistant belongs to another provider route')
+    if (target.serviceId !== undefined && state.response.provider !== target.serviceId) return invalidReplay('assistant belongs to another native provider')
+    const stored = state.response.scope
+    const expected = target.scope
+    if (stored !== undefined) {
+      if (expected === undefined || stored.connectionId !== expected.connectionId
+        || stored.credentialGeneration !== expected.credentialGeneration
+        || stored.endpoint !== expected.endpoint || stored.api !== expected.api
+        || state.response.api !== expected.api) return invalidReplay('assistant belongs to another connection scope')
+    } else if (expected !== undefined
+      && !(expected.credentialGeneration === 0 && expected.legacyRoute === source.provider
+        && state.response.api === expected.api)) {
+      return invalidReplay('assistant has no matching connection scope')
+    }
+  }
   if (state.blocks.length !== message.content.length) return invalidReplay('block count does not match assistant content')
   const content: AssistantMessage['content'] = message.content.map((block, index) => {
     const replay = state.blocks[index]
@@ -245,11 +297,11 @@ function replayedAssistant(message: HarnessAssistantMessage, source: ModelMessag
  *   state falls back to provider-neutral conversion.
  * @returns a native pi-ai assistant message reconstructed from durable content.
  */
-export function toPiAssistant(message: HarnessAssistantMessage, onDegrade?: (reason: string) => void): AssistantMessage {
+export function toPiAssistant(message: HarnessAssistantMessage, onDegrade?: (reason: string) => void, target?: PiAiReplayTarget): AssistantMessage {
   const source = message.source
   if (source.replayState === undefined) return foreignAssistant(message)
   try {
-    return replayedAssistant(message, source, source.replayState)
+    return replayedAssistant(message, source, source.replayState, target)
   } catch (error: unknown) {
     /* v8 ignore next -- replayedAssistant throws only INVALID_REPLAY_STATE LlmErrors; the
        guard keeps a future non-replay failure loud instead of silently degrading it */

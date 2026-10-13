@@ -6,9 +6,9 @@ export function metaCatalogProvider(session) {
   return {
     session,
     presentation(models) {
-      const { account } = session.state()
+      const { account, entitlementStale } = session.state()
       return {
-        ...account ? { status: { message: account.active === true ? 'metaSubscriptionActive' : account.active === false ? 'metaSubscriptionInactive' : 'metaSubscriptionUnknown', detail: account.tierName } } : {},
+        ...account ? { status: { message: entitlementStale ? 'metaSubscriptionUnknown' : account.active === true ? 'metaSubscriptionActive' : account.active === false ? 'metaSubscriptionInactive' : 'metaSubscriptionUnknown', detail: account.tierName } } : {},
         notes: ['metaReloadHint', ...models.some(model => model.id.includes('contributor')) ? ['metaContributorHint'] : []],
       }
     },

@@ -38,20 +38,25 @@ function Choice({ label, value, options, onChange, disabled }) {
 function Prompt({ prompt, ticket, controller, t, onFailure }) {
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
+  const [visible, setVisible] = useState(false)
+  const [pasteError, setPasteError] = useState(false)
   const id = useId()
   async function submit(event) {
     event.preventDefault()
     const answer = value
     setValue(''); setBusy(true)
-    try { await controller.call('answer', { ticket, id: prompt.id, value: answer }) }
+    try { await controller.mutation('answer', { ticket, id: prompt.id, value: answer }) }
     catch { onFailure() } finally { setBusy(false) }
   }
   return <form onSubmit={submit} className="dsh-pi-prompt">
     {prompt.kind === 'select'
       ? <Choice label={prompt.message || t('selection')} value={value} options={prompt.options} onChange={setValue} disabled={busy} />
       : <><label htmlFor={id}>{prompt.message || t(prompt.kind === 'secret' ? 'secret' : 'answer')}</label>
-        <Input id={id} data-modal-autofocus type={prompt.kind === 'secret' ? 'password' : 'text'} autoComplete="off" spellCheck={false}
-          value={value} placeholder={prompt.placeholder} onChange={event => setValue(event.target.value)} /></>}
+        <Input id={id} data-modal-autofocus type={prompt.kind === 'secret' && !visible ? 'password' : 'text'} autoComplete="off" spellCheck={false}
+          value={value} placeholder={prompt.placeholder} onChange={event => setValue(event.target.value)} />
+        {prompt.kind === 'secret' ? <div className="dsh-pi-secret-actions"><Button onClick={() => setVisible(!visible)} aria-pressed={visible}>{t(visible ? 'hideSecret' : 'showSecret')}</Button>
+          <Button onClick={async () => { try { setValue(await navigator.clipboard.readText()); setPasteError(false) } catch { setPasteError(true) } }}>{t('paste')}</Button></div> : null}</>}
+    {pasteError ? <p role="alert">{t('pasteFailed')}</p> : null}
     <div className="dsh-pi-actions"><Button type="submit" variant="primary" disabled={busy || (prompt.kind === 'select' && !value)}>{t('submit')}</Button></div>
   </form>
 }
@@ -68,11 +73,11 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     let alive = true
-    void controller.start(entry.key, method).then(value => {
+    void controller.start(entry.connectionId, method).then(value => {
       ticketRef.current = value
       if (alive) setTicket(value)
       else void controller.cancel(value).catch(() => {})
-    }, () => { if (alive) setError(true) })
+    }, error => { if (alive) setError(connectionError(error)) })
     return () => { alive = false; if (ticketRef.current) void controller.cancel(ticketRef.current).catch(() => {}) }
   }, [])
   useEffect(() => {
@@ -86,22 +91,22 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
         setState(snapshot)
         if (snapshot.status === 'running') timer = setTimeout(poll, 800)
         else { controller.tickets.delete(ticket); await controller.refresh() }
-      } catch { if (alive) setError(true) }
+      } catch (error) { if (alive) setError(connectionError(error)) }
     }
     void poll()
     return () => { alive = false; abort.abort(); clearTimeout(timer) }
   }, [ticket])
   const link = safeUrl(state.notice?.url)
   const complete = state.status !== 'running' || error
-  const terminalCopy = state.reason === 'provider-expired' ? 'providerExpired' : state.reason === 'timeout' ? 'timedOut' : state.status === 'cancelled' ? 'cancelled' : 'failed'
+  const terminalCopy = state.reason?.startsWith('muse-code-') ? connectionError(new Error(state.reason)) : state.reason === 'provider-expired' ? 'providerExpired' : state.reason === 'timeout' ? 'timedOut' : state.status === 'cancelled' ? 'cancelled' : 'failed'
   async function enable(useLogin = false) {
     setEnabling(true); setEnableError(false)
-    try { await controller.call(useLogin ? 'use-login' : 'enable', { key: entry.key }); setEnabled(true); await controller.refresh() }
+    try { await controller.mutation(useLogin ? 'use-login' : 'enable', { connectionId: entry.connectionId }); setEnabled(true); await controller.refresh() }
     catch (error) { setEnableError(true); setKeyOverride(error.message.endsWith('/api-key-override')) } finally { setEnabling(false) }
   }
-  return <Modal open onClose={onClose} title={entry.label} closeLabel={t('close')} className="dsh-pi-login"
+  return <Modal open onClose={onClose} title={entry.displayName} closeLabel={t('close')} className="dsh-pi-login"
     footer={<Button variant="outline" onClick={onClose}>{t(complete ? 'close' : 'cancel')}</Button>}>
-    {error || state.status === 'failed' ? <p role="alert">{t(error ? 'failed' : terminalCopy)}</p> : null}
+    {error || state.status === 'failed' ? <p role="alert">{t(error || terminalCopy)}</p> : null}
     {state.status === 'authorized' ? <><p role="status">{t('success')}</p><p className="dsh-pi-muted">{t('successDescription')}</p>
       {enabled ? <p role="status">{t('enabled')}</p> : <Button variant="primary" onClick={() => { void enable() }} disabled={enabling}>{t('enable')}</Button>}
       {enableError ? <p role="alert">{t(keyOverride ? 'keyOverride' : 'enableFailed')}</p> : null}
@@ -113,7 +118,7 @@ function LoginDialog({ entry, method, controller, t, onClose }) {
       {state.notice?.code ? <div className="dsh-pi-verification"><span className="dsh-pi-muted">{t('code')}</span>
         <div className="dsh-pi-verification-row"><code>{state.notice.code}</code>
           <Button size="sm" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(state.notice.code); setCopied(true) } catch { setCopied(false) } }}>{t(copied ? 'copied' : 'copy')}</Button></div></div> : null}
-      {state.prompt ? <Prompt key={state.prompt.id} prompt={state.prompt} ticket={ticket} controller={controller} t={t} onFailure={() => setError(true)} /> : null}
+      {state.prompt ? <Prompt key={state.prompt.id} prompt={state.prompt} ticket={ticket} controller={controller} t={t} onFailure={() => setError('failed')} /> : null}
     </> : null}
   </Modal>
 }
@@ -128,16 +133,16 @@ function ModelsDialog({ entry, controller, t, onClose }) {
   const generation = useRef(0)
   useEffect(() => {
     const abort = new AbortController()
-    void controller.call('models', { key: entry.key }, abort.signal).then(setSnapshot, () => { if (!abort.signal.aborted) setError(true) })
+    void controller.call('models', { connectionId: entry.connectionId }, abort.signal).then(setSnapshot, () => { if (!abort.signal.aborted) setError(true) })
     return () => { abort.abort(); refreshAbort.current?.abort(); generation.current++ }
-  }, [entry.key])
+  }, [entry.connectionId])
   async function reload() {
     const request = ++generation.current
     refreshAbort.current?.abort()
     const abort = new AbortController(); refreshAbort.current = abort
     setBusy(true); setRefreshError(''); setError(false)
     try {
-      const next = await controller.call('refresh-models', { key: entry.key }, abort.signal)
+      const next = await controller.call('refresh-models', { connectionId: entry.connectionId }, abort.signal)
       if (!abort.signal.aborted && request === generation.current) setSnapshot(next)
     } catch (error) {
       if (!abort.signal.aborted && request === generation.current) {
@@ -149,35 +154,93 @@ function ModelsDialog({ entry, controller, t, onClose }) {
   async function toggle(model, enabled) {
     setBusy(true); setError(false)
     try {
-      await controller.call('set-model', { key: entry.key, model, enabled, revision: snapshot.revision })
-      setSnapshot(await controller.call('models', { key: entry.key }))
+      await controller.mutation('set-model', { connectionId: entry.connectionId, model, enabled, revision: snapshot.revision })
+      setSnapshot(await controller.call('models', { connectionId: entry.connectionId }))
+      await controller.refresh()
     } catch {
       setError(true)
-      try { setSnapshot(await controller.call('models', { key: entry.key })) } catch {}
+      try { setSnapshot(await controller.call('models', { connectionId: entry.connectionId })) } catch {}
     } finally { setBusy(false) }
   }
   const needle = search.trim().toLowerCase()
   const models = snapshot?.models.filter(model => `${model.id} ${model.name}`.toLowerCase().includes(needle))
-  return <Modal open title={`${entry.label} · ${t('models')}`} description={t('modelsHint')} closeLabel={t('close')} onClose={onClose}
+  return <Modal open title={`${entry.displayName} · ${t('models')}`} description={t('modelsHint')} closeLabel={t('close')} onClose={onClose}
     className="dsh-pi-login dsh-pi-models-dialog" footer={<Button variant="outline" onClick={onClose}>{t('close')}</Button>}>
     <Input icon={<IconSearchOutlineRegular size={16} />} aria-label={t('searchModels')} placeholder={t('searchModels')} data-modal-autofocus value={search} onChange={event => setSearch(event.target.value)} />
     {snapshot?.refresh?.canRefresh ? <>
       <Button variant="outline" size="sm" disabled={busy || !entry.writable} onClick={() => { void reload() }}>{t(busy ? 'loading' : 'reloadModels')}</Button>
       {snapshot.refresh.status ? <p role="status">{t(snapshot.refresh.status.message)}{snapshot.refresh.status.detail ? ` · ${snapshot.refresh.status.detail}` : ''}</p> : null}
-      {snapshot.refresh.notes.map(note => <p key={note} className="dsh-pi-muted">{t(note)}</p>)}
+      {(snapshot.refresh.notes ?? []).map(note => <p key={note} className="dsh-pi-muted">{t(note)}</p>)}
     </> : snapshot ? <p className="dsh-pi-muted">{t('catalogRefreshUnsupported')}</p> : null}
     {refreshError ? <p role="alert">{t(refreshError)}</p> : null}
     {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
     {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
-    {snapshot && !entry.managed ? <p className="dsh-pi-muted">{t('activateFirst')}</p> : null}
+    {snapshot && !entry.enabled ? <p className="dsh-pi-muted">{t('activateFirst')}</p> : null}
     {snapshot?.models.some(model => model.fast) ? <p className="dsh-pi-muted">{t('fastWarning')}</p> : null}
     <div className="dsh-pi-model-list">
       {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
-        <div className="dsh-pi-model-label"><span>{model.name}</span><span className="dsh-pi-model-id">{model.id}</span>{model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
-        <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={busy || !entry.writable || !entry.managed} onChange={enabled => { void toggle(model.id, enabled) }} />
+        <div className="dsh-pi-model-label"><span>{model.name} · {entry.displayName}</span><span className="dsh-pi-model-id">{model.id}</span>{model.contributor ? <span className="dsh-pi-muted">{t('metaContributorHint')}</span> : null}{model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
+        <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={busy || !entry.writable || !entry.enabled} onChange={enabled => { void toggle(model.id, enabled) }} />
       </div>)}
       {models?.length === 0 ? <p className="dsh-pi-muted">{t('noResults')}</p> : null}
     </div>
+  </Modal>
+}
+
+function connectionError(error) {
+  const code = error.message.split('/').pop()
+  if (code === 'endpoint-untrusted') return 'endpointUntrusted'
+  if (code?.startsWith('muse-code-')) return Object.hasOwn(en, `error_${code}`) ? `error_${code}` : 'error_muse-code-unavailable'
+  return 'saveFailed'
+}
+
+function MuseModelsDialog({ entry, service, controller, t, onClose }) {
+  const [snapshot, setSnapshot] = useState()
+  const [selected, setSelected] = useState(entry.museCode?.modelId ?? '')
+  const [contributor, setContributor] = useState(entry.museCode?.contributorMode === true)
+  const [consent, setConsent] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
+  const consentId = useId()
+  const currentMode = useRef(entry.museCode?.contributorMode === true)
+  const request = useRef()
+  useEffect(() => {
+    const abort = new AbortController(); request.current = abort
+    void controller.mutation('models', { connectionId: entry.connectionId }, abort.signal).then(result => {
+      if (abort.signal.aborted) return
+      setSnapshot(result)
+      if (typeof result.contributor === 'boolean') { setContributor(result.contributor); currentMode.current = result.contributor }
+      setSelected(entry.museCode?.modelId ?? result.selectedModelId ?? result.models?.find(model => model.selected)?.id ?? '')
+    }, error => { if (!abort.signal.aborted) setError(connectionError(error)) })
+    return () => { abort.abort() }
+  }, [entry.connectionId])
+  const models = (snapshot?.models ?? []).filter(model => model.sessionSupported === true).map(model => ({ ...model, id: model.id ?? model.modelId, name: model.name ?? model.label ?? model.displayLabel ?? model.modelId }))
+  const termsUrl = safeUrl(service?.termsUrl ?? service?.sourceTermsUrl ?? 'https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode')
+  async function save() {
+    setBusy(true); setError(''); setSaved(false)
+    try {
+      await controller.mutation('connection-update', { connectionId: entry.connectionId, revision: snapshot.revision ?? entry.revision,
+        patch: { ...(selected ? { modelId: selected } : {}), contributorMode: contributor, ...(contributor ? { contributorConsent: consent || currentMode.current } : {}) } }, request.current.signal)
+      await controller.refresh(); currentMode.current = contributor; setConsent(false); setSaved(true)
+      setSnapshot({ ...snapshot, revision: controller.getSnapshot().revision })
+    } catch (error) { if (!request.current.signal.aborted) setError(connectionError(error)) }
+    finally { if (!request.current.signal.aborted) setBusy(false) }
+  }
+  return <Modal open title={`${entry.displayName} · ${t('museModels')}`} description={t('museSessionHint')} closeLabel={t('close')} onClose={onClose} className="dsh-pi-login dsh-pi-connection-dialog" contentClassName="dsh-pi-modal-content"
+    footer={<><Button variant="outline" onClick={onClose}>{t('close')}</Button><Button variant="primary" onClick={() => { void save() }} disabled={busy || !entry.writable || !entry.configured || !snapshot || models.length === 0 || !selected || contributor && !currentMode.current && !consent}>{t(busy ? 'loading' : 'save')}</Button></>}>
+    {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
+    {error ? <p role="alert">{t(error)}</p> : null}
+    {saved ? <p role="status">{t('museModeSaved')}</p> : null}
+    {contributor !== currentMode.current ? <p role="status" className="dsh-pi-muted">{t('museModePending')}</p> : null}
+    {models.length ? <Choice label={t('museModels')} value={selected} options={models.map(model => ({ id: model.id, label: `${model.name} · ${entry.displayName}` }))} disabled={busy || !entry.configured || !entry.writable} onChange={value => { setSelected(value); setSaved(false) }} /> : snapshot ? <p className="dsh-pi-muted">{t('museCatalogDiagnostic')}</p> : null}
+    {models.find(model => model.id === selected)?.entitlement === 'unverified' ? <p className="dsh-pi-muted">{t('museEntitlementUnverified')}</p> : null}
+    {snapshot ? <><div className="dsh-pi-provider-row"><div><span>{t('museContributor')}</span><p className="dsh-pi-muted">{t(contributor ? 'museContributorEnabled' : 'museStandard')}</p></div>
+      <Switch label={t('museContributor')} checked={contributor} disabled={busy || !entry.configured || !entry.writable || !models.length} onChange={value => { setContributor(value); setConsent(false); setSaved(false) }} /></div>
+      <p className="dsh-pi-muted">{t('museContributorExplanation')}</p>
+      {termsUrl ? <a className="dsh-pi-link" href={termsUrl} target="_blank" rel="noopener noreferrer">{t('museTerms')}</a> : null}
+      {contributor && !currentMode.current ? <label className="dsh-pi-consent" htmlFor={consentId}><input id={consentId} type="checkbox" checked={consent} disabled={busy} onChange={event => setConsent(event.target.checked)} /><span>{t('museConsent')}</span></label> : null}
+    </> : null}
   </Modal>
 }
 
@@ -202,50 +265,192 @@ export function UpdateUI({ controller, t }) {
   </div>
 }
 
-export function ConnectionUI({ controller, updates, locale, provider }) {
+function time(value, dateOnly = false) {
+  if (!value) return undefined
+  if (dateOnly) return value
+  const date = new Date(value)
+  return Number.isNaN(date.valueOf()) ? undefined : date.toLocaleString()
+}
+
+function usageWindow(window, t) {
+  const seconds = window.windowSeconds
+  if (seconds && seconds % 86400 === 0) return `${seconds / 86400} ${t('days')}`
+  if (seconds && seconds % 3600 === 0) return `${seconds / 3600} ${t('hours')}`
+  if (seconds && seconds % 60 === 0) return `${seconds / 60} ${t('minutes')}`
+  return window.scope === 'account' ? t('accountQuota') : Object.hasOwn(en, `usageScope_${window.scope}`) ? t(`usageScope_${window.scope}`) : window.scope
+}
+
+function UsagePanel({ entry, controller, t }) {
+  const [snapshot, setSnapshot] = useState()
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const request = useRef()
+  const generation = useRef(0)
+  async function load(refresh = false) {
+    const current = ++generation.current
+    request.current?.abort()
+    const abort = new AbortController(); request.current = abort
+    setBusy(true); setFailed(false)
+    try {
+      const result = await controller.mutation('usage', { connectionId: entry.connectionId, refresh }, abort.signal)
+      if (!abort.signal.aborted && current === generation.current) setSnapshot(result)
+    } catch { if (!abort.signal.aborted && current === generation.current) setFailed(true) }
+    finally { if (!abort.signal.aborted && current === generation.current) setBusy(false) }
+  }
+  useEffect(() => { void load(); return () => { generation.current++; request.current?.abort() } }, [entry.connectionId])
+  return <div className="dsh-pi-usage" aria-busy={busy}>
+    <div className="dsh-pi-toolbar"><p role="status">{t(snapshot ? `usage_${snapshot.status}` : 'loading')}</p>
+      <Button variant="outline" disabled={busy || snapshot?.status === 'rate-limited' && new Date(snapshot.retryAt).valueOf() > Date.now()} onClick={() => { void load(true) }}>{t('refreshUsage')}</Button></div>
+    {failed ? <p role="alert">{t('usageFailed')}</p> : null}
+    {(snapshot?.windows ?? []).map(window => <div key={window.id} className="dsh-pi-usage-window">
+      <span>{usageWindow(window, t)}</span>
+      {window.quotaState ? <strong>{t(`quota_${window.quotaState}`)}</strong> : typeof window.usedPercent === 'number' ? <><strong>{window.usedPercent}% {t('used')}</strong><progress max="100" value={Math.min(100, Math.max(0, window.usedPercent))} aria-label={usageWindow(window, t)} /></> : <span>{t('quota_unknown')}</span>}
+      {window.quota ? <span className="dsh-pi-muted">{window.quota.estimated ? `${t('estimated')} · ` : ''}{window.quota.remaining != null ? `${t('remaining')}: ${window.quota.remaining}` : window.quota.used != null ? `${t('used')}: ${window.quota.used}` : t('quota_unknown')}{window.quota.total != null ? ` / ${window.quota.total}` : ''} {t(`unit_${window.quota.unit}`)}</span> : null}
+      {window.resetsAt ? <span className="dsh-pi-muted">{t('resets')}: {time(window.resetsAt)}</span> : window.resetsOn ? <span className="dsh-pi-muted">{t('resetDate')}: {time(window.resetsOn, true)}</span> : null}
+    </div>)}
+    {snapshot?.retryAt ? <p className="dsh-pi-muted">{t('retryAt')}: {time(snapshot.retryAt)}</p> : null}
+    {snapshot?.sourceObservedAt ? <p className="dsh-pi-muted">{t('observedAt')}: {time(snapshot.sourceObservedAt)}</p> : null}
+    {snapshot?.checkedAt ? <p className="dsh-pi-muted">{t('checkedAt')}: {time(snapshot.checkedAt)}</p> : null}
+    {snapshot?.source === 'last-observed' ? <p className="dsh-pi-muted">{t('lastObserved')}</p> : null}
+  </div>
+}
+
+function SecretField({ value, onChange, t, disabled }) {
+  const [visible, setVisible] = useState(false)
+  const [pasteError, setPasteError] = useState(false)
+  const id = useId()
+  return <div className="dsh-pi-field"><label htmlFor={id}>{t('apiKey')}</label>
+    <Input id={id} type={visible ? 'text' : 'password'} autoComplete="off" spellCheck={false} value={value} disabled={disabled} onChange={event => onChange(event.target.value)} />
+    <div className="dsh-pi-secret-actions"><Button disabled={disabled} aria-pressed={visible} onClick={() => setVisible(!visible)}>{t(visible ? 'hideSecret' : 'showSecret')}</Button>
+      <Button disabled={disabled} onClick={async () => { try { onChange(await navigator.clipboard.readText()); setPasteError(false) } catch { setPasteError(true) } }}>{t('paste')}</Button></div>
+    {pasteError ? <p role="alert">{t('pasteFailed')}</p> : null}
+  </div>
+}
+
+function ConnectionDialog({ entry, state, controller, t, onClose, onLogin, onSaved }) {
+  const [integration, setIntegration] = useState(entry?.integrationId ?? state.integrations[0]?.id ?? 'pi')
+  const services = state.services.filter(service => service.integrationId === integration)
+  const [serviceId, setServiceId] = useState(entry?.serviceId ?? services[0]?.serviceId ?? services[0]?.id ?? '')
+  const service = services.find(item => (item.serviceId ?? item.id) === serviceId) ?? services[0]
+  const methods = service?.methods ?? entry?.methods ?? []
+  const [authMethod, setAuthMethod] = useState(entry?.authMethod ?? methods[0]?.id ?? 'oauth')
+  const effectiveMethod = methods.find(method => method.id === authMethod)?.id ?? methods[0]?.id ?? authMethod
+  const [displayName, setDisplayName] = useState(entry?.displayName ?? '')
+  const [enabled, setEnabled] = useState(entry?.enabled ?? false)
+  const [endpointUrl, setEndpointUrl] = useState(entry?.profile?.baseURL ?? '')
+  const [api, setApi] = useState(entry?.profile?.api ?? '')
+  const [apiKey, setApiKey] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const [confirm, setConfirm] = useState()
+  const fieldId = useId()
+  const revision = state.revision
+  const writable = entry?.writable ?? service?.writable !== false
+  const methodChanged = entry && effectiveMethod !== entry.authMethod
+  async function save() {
+    if (methodChanged && confirm !== 'method') { setConfirm('method'); return }
+    setBusy(true); setError('')
+    try {
+      const fields = { displayName: displayName.trim(), ...(!entry || methodChanged ? { authMethod: effectiveMethod } : {}), ...(entry ? { enabled } : {}), ...(apiKey ? { apiKey } : {}), ...(endpointUrl.trim() ? { endpointUrl: endpointUrl.trim() } : entry?.profile?.baseURL ? { endpointUrl: '' } : {}), ...(api ? { api } : {}) }
+      const result = await controller.mutation(entry ? 'connection-update' : 'connection-create', entry ? { connectionId: entry.connectionId, patch: fields, revision } : { integrationId: integration, serviceId: service.serviceId ?? service.id, ...fields, revision })
+      setApiKey(''); await controller.refresh(); onSaved()
+      if (!entry && effectiveMethod === 'oauth') {
+        const created = result.connection ?? result
+        const next = controller.getSnapshot().entries.find(item => item.connectionId === created.connectionId)
+        if (next) onLogin(next)
+      }
+    } catch (error) { setError(connectionError(error)) } finally { setBusy(false) }
+  }
+  async function destructive(action) {
+    setBusy(true); setError('')
+    try {
+      await controller.mutation(`connection-${action}`, { connectionId: entry.connectionId, revision, ...(action === 'clone' ? { displayName: `${displayName} ${t('copySuffix')}` } : {}) })
+      await controller.refresh(); onSaved()
+    } catch { setError('saveFailed') } finally { setBusy(false) }
+  }
+  return <Modal open title={entry ? `${entry.displayName} · ${t('connectionSettings')}` : t('addConnection')} closeLabel={t('close')} onClose={onClose} className="dsh-pi-login dsh-pi-connection-dialog" contentClassName="dsh-pi-modal-content"
+    footer={<><Button variant="outline" onClick={onClose} disabled={busy}>{t('cancel')}</Button><Button variant="primary" disabled={busy || !writable || !service || service.capabilities?.settings === false || confirm === 'delete' || !displayName.trim() || !entry && effectiveMethod === 'api-key' && !apiKey.trim()} onClick={() => { void save() }}>{t(busy ? 'loading' : confirm === 'method' ? 'confirmSave' : 'save')}</Button></>}>
+    {!entry ? <div className="dsh-pi-fields"><Choice label={t('integration')} value={integration} options={state.integrations.map(item => ({ id: item.id ?? item.integrationId, label: item.label }))} disabled={busy} onChange={value => { setIntegration(value); setServiceId(''); setAuthMethod('oauth') }} />
+      {services.length > 1 ? <Choice label={t('service')} value={service?.serviceId ?? service?.id} options={services.map(item => ({ id: item.serviceId ?? item.id, label: item.label ?? item.serviceLabel }))} disabled={busy} onChange={setServiceId} /> : null}</div> : <p className="dsh-pi-muted">{entry.integrationLabel} / {entry.serviceLabel}</p>}
+    <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label><Input id={`${fieldId}-name`} data-modal-autofocus maxLength={80} value={displayName} disabled={busy || !writable} placeholder={t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
+    {entry ? <div className="dsh-pi-provider-row"><div><span>{t('useProvider')}</span><p className="dsh-pi-muted">{t('disabledHint')}</p></div><Switch label={`${t('useProvider')}: ${entry.displayName}`} checked={enabled} disabled={busy || !writable || !entry.configured} onChange={setEnabled} /></div> : null}
+    {service?.capabilities?.settings === false ? <p role="status">{t(service.unavailableReason === 'muse-code-bridge-unverified' ? `serviceUnavailable_${service.unavailableReason}` : 'serviceUnavailable')}</p> : null}
+    {methods.length > 1 ? <Choice label={t('method')} value={effectiveMethod} options={methods.map(method => ({ id: method.id, label: t(method.id === 'oauth' ? 'oauth' : 'apiKey') }))} disabled={busy || !writable} onChange={value => { setAuthMethod(value); setApiKey(''); setConfirm(undefined) }} /> : null}
+    {effectiveMethod === 'api-key' ? <><SecretField value={apiKey} onChange={setApiKey} t={t} disabled={busy || !writable} />{entry?.configured ? <p className="dsh-pi-muted">{t('keySaved')}</p> : null}
+      <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} type="url" value={endpointUrl} disabled={busy || !writable} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
+      {service?.apis?.length ? <Choice label={t('protocol')} value={api || service.apis[0]} options={service.apis.map(value => ({ id: value, label: value }))} disabled={busy || !writable} onChange={setApi} /> : null}</> : <p className="dsh-pi-muted">{t('oauthHint')}</p>}
+    {methodChanged ? <p role="alert">{t('methodChangeWarning')}</p> : null}
+    {entry ? <div className="dsh-pi-detail-actions">
+      {entry.authMethod === 'oauth' && entry.capabilities?.auth !== false ? <Button variant="outline" disabled={busy || !writable || methodChanged} onClick={() => onLogin(entry)}>{t(entry.configured ? 'signInAgain' : 'signIn')}</Button> : null}
+      <Button variant="outline" disabled={busy || !writable} onClick={() => { void destructive('clone') }}>{t('cloneConnection')}</Button>
+      <Button disabled={busy || !writable} onClick={() => setConfirm('delete')}>{t('deleteConnection')}</Button>
+    </div> : null}
+    {entry ? <p className="dsh-pi-muted">{t('cloneHint')}</p> : null}
+    {confirm === 'delete' ? <div className="dsh-pi-confirm"><p role="alert">{t('deleteWarning')}</p><Button variant="outline" disabled={busy} onClick={() => setConfirm(undefined)}>{t('cancel')}</Button><Button variant="primary" disabled={busy} onClick={() => { void destructive('delete') }}>{t('confirmDelete')}</Button></div> : null}
+    {error ? <p role="alert">{t(error)}</p> : null}
+    {!writable ? <p className="dsh-pi-muted">{t('readOnly')}</p> : null}
+  </Modal>
+}
+
+export function ConnectionUI({ controller, updates, locale }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const t = useCopy(locale)
-  const [selected, setSelected] = useState('llm-pi-ai/openai')
-  const [preferredMethod, setPreferredMethod] = useState('oauth')
+  const [tab, setTab] = useState('connections')
+  const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState('all')
   const [opened, setOpened] = useState()
-  const [choosingModels, setChoosingModels] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(false)
+  const [notice, setNotice] = useState(false)
+  const tabId = useId()
   useEffect(() => { void controller.load() }, [controller])
-  const entries = provider ? state.entries.filter(entry => entry.provider === provider.provider) : state.entries
-  const entry = entries.find(entry => entry.key === selected) || entries[0]
-  const method = entry?.methods.find(item => item.id === preferredMethod) || entry?.methods[0]
-  async function toggleProvider(enabled) {
-    setBusy(true); setError(false)
-    try {
-      const snapshot = await controller.call('models', { key: entry.key })
-      await controller.call('set-provider', { key: entry.key, enabled, revision: snapshot.revision })
-      await controller.refresh()
-    } catch { setError(true); await controller.refresh() } finally { setBusy(false) }
+  useEffect(() => { setOpened(undefined); setNotice(false) }, [state.profileKey, state.generation])
+  const needle = search.trim().toLocaleLowerCase()
+  const groups = new Map()
+  for (const entry of state.entries) {
+    if (!`${entry.displayName} ${entry.integrationLabel} ${entry.serviceLabel}`.toLocaleLowerCase().includes(needle)) continue
+    if (filter === 'connected' && !entry.configured || filter === 'disconnected' && entry.configured) continue
+    const key = `${entry.integrationId}/${entry.serviceId}`
+    if (!groups.has(key)) groups.set(key, { label: `${entry.integrationLabel} / ${entry.serviceLabel}`, entries: [] })
+    groups.get(key).entries.push(entry)
   }
-  if (provider && !entry && !state.error) return null
-  return <section className={`dsh-pi-login ${provider ? 'dsh-pi-card' : 'dsh-pi-footer'}`}>
-    {!provider ? <><h3>{t('title')}</h3><p className="dsh-pi-muted">{t('description')}</p></> : null}
-    {state.error ? <p role="alert">{t('loadFailed')} <Button size="sm" onClick={() => { void controller.refresh() }}>{t('retry')}</Button></p> : null}
-    {state.status === 'ready' && !state.error && entries.length === 0 && !provider ? <p>{t('empty')}</p> : null}
-    {entry ? <>
-      <div className="dsh-pi-fields">
-        {!provider ? <Choice label={t('provider')} value={entry.key} options={entries.map(item => ({ id: item.key, label: item.label }))}
-          onChange={setSelected} disabled={busy} /> : null}
-        {entry.methods.length > 1 ? <Choice label={t('method')} value={method.id} options={entry.methods.map(item => ({ id: item.id, label: item.id === 'oauth' ? t('oauth') : item.id === 'api-key' ? t('apiKey') : item.label }))}
-          onChange={setPreferredMethod} disabled={busy} /> : null}
-      </div>
-      <div className="dsh-pi-account-row"><span className="dsh-pi-status"><StateDot state={entry.inFlight ? 'ongoing' : entry.configured ? 'done' : 'pending'} size={10} />{t(entry.inFlight ? 'busy' : entry.configured ? 'connected' : 'notConnected')}</span>
-        <Button variant={entry.configured ? 'outline' : 'primary'} size="sm" disabled={entry.inFlight || !entry.writable || !method} onClick={() => setOpened({ entry, method: method.id })}>{t(entry.configured ? 'signInAgain' : 'signIn')}</Button></div>
-      <div className="dsh-pi-provider-row"><div><span>{t('useProvider')}</span><p className="dsh-pi-muted">{t('disabledHint')}</p></div>
-        <Switch label={`${t('useProvider')}: ${entry.label}`} checked={entry.enabled} disabled={busy || !entry.writable || (!entry.configured && !entry.managed)} onChange={enabled => { void toggleProvider(enabled) }} /></div>
-      <Button variant="outline" size="sm" disabled={busy} onClick={() => setChoosingModels(true)}>{t('manageModels')}</Button>
-      {error ? <p role="alert">{t('saveFailed')}</p> : null}
-      {!entry.writable ? <p className="dsh-pi-muted">{t('readOnly')}</p> : null}
-    </> : null}
-    {!provider && updates ? <UpdateUI controller={updates} t={t} /> : null}
-    {opened ? <LoginDialog {...opened} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
-    {choosingModels && entry ? <ModelsDialog entry={entry} controller={controller} t={t} onClose={() => setChoosingModels(false)} /> : null}
+  const tabs = ['connections', 'usage']
+  function onLogin(entry) { setOpened({ kind: 'login', entry, method: entry.authMethod }) }
+  function onSaved() { setOpened(undefined); setNotice(true) }
+  return <section className="dsh-pi-login dsh-pi-footer" aria-labelledby={`${tabId}-title`}>
+    <div className="dsh-pi-toolbar"><h3 id={`${tabId}-title`}>{t('title')}</h3><Button variant="outline" onClick={() => { setNotice(false); setOpened({ kind: 'settings' }) }} disabled={state.status !== 'ready' || state.services.length === 0}>{t('addConnection')}</Button></div>
+    <p className="dsh-pi-muted">{t('description')}</p>
+    <div className="dsh-pi-tabs" role="tablist" aria-label={t('title')}>
+      {tabs.map(value => <Button key={value} id={`${tabId}-${value}`} role="tab" aria-selected={tab === value} aria-controls={`${tabId}-panel`} tabIndex={tab === value ? 0 : -1} variant={tab === value ? 'outline' : 'ghost'} onClick={() => setTab(value)} onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+        event.preventDefault(); const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs[1] : tabs[1 - tabs.indexOf(value)]
+        setTab(next); document.getElementById(`${tabId}-${next}`)?.focus()
+      }}>{t(value === 'connections' ? 'connectionsTab' : 'usageTab')}</Button>)}
+    </div>
+    {notice ? <p role="status">{t('saved')}</p> : null}
+    {state.error ? <p role="alert">{t('loadFailed')} <Button onClick={() => { void controller.refresh() }}>{t('retry')}</Button></p> : null}
+    {state.status === 'loading' && state.entries.length === 0 ? <p role="status" className="dsh-pi-loading">{t('loading')}</p> : null}
+    <div className="dsh-pi-fields dsh-pi-search"><Input aria-label={t('searchConnections')} placeholder={t('searchConnections')} icon={<IconSearchOutlineRegular size={16} />} value={search} onChange={event => setSearch(event.target.value)} />
+      <Choice label={t('filterStatus')} value={filter} options={['all', 'connected', 'disconnected'].map(id => ({ id, label: t(`filter_${id}`) }))} onChange={setFilter} /></div>
+    <div id={`${tabId}-panel`} role="tabpanel" aria-labelledby={`${tabId}-${tab}`}>
+      {[...groups].map(([key, group], index) => <details className="dsh-pi-group" key={key} open={state.entries.length <= 8 || index === 0 || needle ? true : undefined}>
+        <summary><span>{group.label}</span><span className="dsh-pi-muted">{group.entries.length}</span></summary>
+        {group.entries.map(entry => <div className="dsh-pi-connection-row" key={entry.connectionId}>
+          <div className="dsh-pi-row-label"><span>{entry.displayName}</span><div className="dsh-pi-row-meta"><span>{t(entry.authMethod === 'owner-managed' ? 'ownerManaged' : entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')}</span>
+            {entry.authStatus === 'owner-managed' ? <span>{t(`directory_${entry.directoryState ?? 'unavailable'}`)} · {entry.source ?? t('sourceUnknown')}</span> : <span className="dsh-pi-status"><StateDot state={entry.inFlight || entry.authStatus === 'updating' ? 'ongoing' : entry.configured ? 'done' : 'pending'} size={8} />{t(entry.inFlight || entry.authStatus === 'updating' ? 'busy' : entry.authStatus === 'unavailable' ? 'authUnavailable' : entry.authStatus === 'expired' ? 'authExpired' : entry.authStatus === 'verified' ? 'authVerified' : entry.configured ? 'connected' : 'notConnected')}</span>}
+            {entry.enabled ? <span>{t(entry.executionKind === 'agent-session' ? 'agentSessionEnabled' : 'availableModels')}</span> : null}
+            {entry.integrationId === 'meta-muse-code' ? <span>{t(entry.museCode?.contributorMode ? 'museContributor' : 'museStandardShort')}</span> : null}</div></div>
+          <div className="dsh-pi-row-actions">{tab === 'usage' ? entry.capabilities?.usage !== false ? <Button variant="outline" aria-label={`${t('usageTab')}: ${entry.displayName}`} onClick={() => setOpened({ kind: 'usage', entry })}>{t('usageTab')}</Button> : <span className="dsh-pi-muted">{t('usage_unsupported')}</span> : <>
+            {entry.capabilities?.models !== false ? <Button variant="outline" aria-label={`${t('manageModels')}: ${entry.displayName}`} onClick={() => setOpened({ kind: 'models', entry })}>{t('manageModels')}</Button> : null}
+            {entry.capabilities?.settings !== false ? <Button aria-label={`${t('connectionSettings')}: ${entry.displayName}`} onClick={() => { setNotice(false); setOpened({ kind: 'settings', entry }) }}>{t('connectionSettings')}</Button> : entry.settingsUrl && safeUrl(entry.settingsUrl) ? <a className="dsh-pi-link" href={safeUrl(entry.settingsUrl)} target="_blank" rel="noopener noreferrer">{t('externalSettings')}</a> : null}
+          </>}</div>
+        </div>)}
+      </details>)}
+      {state.status === 'ready' && groups.size === 0 && !state.error ? <p className="dsh-pi-muted">{t(state.entries.length ? 'noResults' : 'empty')}</p> : null}
+    </div>
+    {updates ? <UpdateUI controller={updates} t={t} /> : null}
+    {opened?.kind === 'login' ? <LoginDialog {...opened} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
+    {opened?.kind === 'models' ? opened.entry.integrationId === 'meta-muse-code' ? <MuseModelsDialog entry={opened.entry} service={state.services.find(service => service.integrationId === opened.entry.integrationId && service.serviceId === opened.entry.serviceId)} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : <ModelsDialog entry={opened.entry} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
+    {opened?.kind === 'settings' ? <ConnectionDialog entry={opened.entry} state={state} controller={controller} t={t} onClose={() => setOpened(undefined)} onLogin={onLogin} onSaved={onSaved} /> : null}
+    {opened?.kind === 'usage' ? <Modal open title={`${opened.entry.displayName} · ${t('usageTab')}`} closeLabel={t('close')} onClose={() => setOpened(undefined)} className="dsh-pi-login dsh-pi-connection-dialog" contentClassName="dsh-pi-modal-content" footer={<Button variant="outline" onClick={() => setOpened(undefined)}>{t('close')}</Button>}><UsagePanel entry={opened.entry} controller={controller} t={t} /></Modal> : null}
   </section>
 }
 
@@ -262,5 +467,4 @@ export function apply(ctx) {
   ctx.on('connection/reset', () => { void controller.refresh(); void updates.load() })
   const inject = () => ({ controller, updates, locale: ctx.locale })
   ctx.slots.inject('settings.models.footer', () => ctx.slots.register({ name: 'settings.models.footer', id: 'dsh-pi-login', order: 10, inject }, ConnectionUI))
-  ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({ name: 'settings.models.provider-card', id: 'dsh-pi-login', key: 'dsh-pi-login', inject }, ConnectionUI))
 }

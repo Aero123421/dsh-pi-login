@@ -6,13 +6,13 @@ import { modelChoices } from '../src/runtime/fast.ts'
 
 const full = 'muse-wonder-full-1.0'
 const json = value => Response.json(value)
-function setup(t, fetch, baseline = catalogModels) {
+function setup(t, fetch, baseline = catalogModels, options = {}) {
   let record = { type: 'oauth', refresh: 'identity-A', access: 'old-key', expires: Date.now() + 100000 }
   let profile = {}
   const requests = []
   const session = new MetaCatalogSession({
     credentials: { read: async () => record, modify: async (_id, mutate) => { record = await mutate(record); return record } },
-    profile: () => profile, baseline,
+    profile: () => profile, baseline, ...options,
     fetch: async (url, init) => {
       requests.push({ url, init })
       if (fetch) return fetch(url, init)
@@ -129,7 +129,7 @@ test('bad, failed, oversized and partial responses retain the last complete cata
   await f.session.refresh()
   for (const response of [new Response('SECRET-FROM-REMOTE', { status: 500 }), json({ data: [], has_more: true }), json({ models: [] }), new Response('x', { headers: { 'content-length': String(4 * 1024 * 1024 + 1) } }), new Response('not-json')]) {
     reply = response
-    await assert.rejects(f.session.refresh(), error => error.message === 'meta-refresh-failed')
+    await assert.rejects(f.session.refresh({ force: true }), error => error.message === 'meta-refresh-failed')
     assert.ok(f.session.catalog('meta').has(full))
   }
 })
@@ -147,7 +147,8 @@ test('confirmed inactive status revokes a prior learned catalog and unsupported 
   const model = f.session.catalog('meta').get(full)
   assert.equal(f.session.state().discoveredCount, 1)
   active = false
-  await f.session.refresh()
+  await f.session.usage({ force: true })
+  await f.session.refresh({ force: true })
   assert.equal(f.session.state().account.active, false)
   assert.ok(!f.session.catalog('meta').has(full))
   await assert.rejects(f.session.keyForModel('meta', model, {}), /meta-refresh-required/)
@@ -180,4 +181,104 @@ test('refresh deduplicates concurrent reads and disposal cannot publish an outst
   await began; f.session.dispose(); release()
   await assert.rejects(pending, /meta-account-changed|meta-refresh-failed/)
   assert.equal(f.session.catalog('meta'), undefined)
+})
+
+
+test('Usage and ten catalog requests share mint work, with independent completed TTLs and source observations', async t => {
+  let now = Date.now(), mints = 0, lists = 0, changes = 0
+  const f = setup(t, async url => {
+    if (url.endsWith('/key')) {
+      mints++; await new Promise(resolve => setImmediate(resolve))
+      return json({ is_subs_active: true, api_key: 'key', subs_usage: { window: { used_percent: 80, window_duration_mins: 300 }, weekly: { used_percent: 30 } } })
+    }
+    lists++; return json({ data: [{ id: full }] })
+  }, catalogModels, { now: () => now, onChange: () => { changes++ } })
+  const requests = Array.from({ length: 10 }, () => f.session.refresh())
+  const [usage] = await Promise.all([f.session.usage(), ...requests])
+  assert.equal(mints, 1); assert.equal(lists, 1); assert.equal(changes, 1)
+  assert.equal(usage.windows[0].usedPercent, 80)
+  now += 60000
+  const cached = await f.session.usage()
+  assert.equal(cached.sourceObservedAt, usage.sourceObservedAt)
+  await f.session.refresh()
+  assert.equal(mints, 1); assert.equal(lists, 1)
+  await f.session.refresh({ force: true })
+  assert.equal(mints, 1); assert.equal(lists, 2); assert.equal(changes, 1)
+  now += 300000
+  await f.session.usage()
+  assert.equal(mints, 2); assert.equal(lists, 2); assert.equal(changes, 1)
+})
+
+test('SDK standard OAuth token rotation does not remove entitlement or depend on stored custom flags', async t => {
+  const f = setup(t)
+  f.record.dshPiSubscription = { active: false }
+  await f.session.refresh()
+  assert.ok(!Object.hasOwn(f.record, 'dshPiSubscription'))
+  const model = f.session.catalog('meta').get(full)
+  f.record = { type: 'oauth', refresh: 'identity-A', access: 'sdk-rotated-key', expires: Date.now() + 100000 }
+  assert.equal(await f.session.keyForModel('meta', model, {}), 'sdk-rotated-key')
+  assert.equal(f.session.state().account.active, true)
+  assert.equal(f.requests.length, 2)
+})
+
+test('Meta Retry-After is shared across Usage and catalog mint, including manual requests', async t => {
+  let now = Date.now(), calls = 0
+  const f = setup(t, async () => { calls++; return new Response('SECRET', { status: 429, headers: { 'retry-after': '120' } }) }, catalogModels, { now: () => now })
+  await assert.rejects(f.session.usage(), error => error.code === 'rate-limited')
+  await assert.rejects(f.session.refresh({ force: true }), error => error.code === 'meta-rate-limited')
+  await assert.rejects(f.session.usage({ force: true }), error => error.code === 'rate-limited')
+  assert.equal(calls, 1)
+  assert.equal(f.session.state().retryAt, now + 120000)
+  now += 120000
+  await assert.rejects(f.session.usage({ force: true }), error => error.code === 'rate-limited')
+  assert.equal(calls, 2)
+})
+
+test('Meta expired key renewal shares Usage mint and keeps no credentials in cached snapshots', async t => {
+  let mints = 0
+  const f = setup(t, async url => {
+    if (url.endsWith('/key')) { mints++; await new Promise(resolve => setImmediate(resolve)); return json({ is_subs_active: true, api_key: 'renewed-key', private_email: 'private@test' }) }
+    return json({ data: [{ id: full }] })
+  })
+  await f.session.refresh()
+  f.record.expires = 0
+  const [credential, usage] = await Promise.all([f.session.ensureCredentials(), f.session.usage({ force: true })])
+  assert.equal(mints, 2)
+  assert.equal(credential.access, 'renewed-key')
+  assert.doesNotMatch(JSON.stringify([f.session.state(), f.session.entitlementCache.value, usage]), /renewed-key|identity-A|private@test/)
+})
+
+
+test('Meta authentication failures revoke learned access and preserve actionable safe errors', async t => {
+  let authStatus = 200, changes = 0
+  const f = setup(t, async url => {
+    if (authStatus !== 200) return new Response('SECRET remote authorization detail', { status: authStatus })
+    return url.endsWith('/key') ? json({ is_subs_active: true, api_key: 'key' }) : json({ data: [{ id: full }] })
+  }, catalogModels, { onChange: () => { changes++ } })
+  await f.session.refresh()
+  const granted = f.session.catalog('meta').get(full)
+  authStatus = 401
+  await assert.rejects(f.session.refresh({ force: true }), error => error.code === 'meta-login-required' && error.message === 'meta-login-required')
+  assert.equal(f.session.catalog('meta'), undefined)
+  assert.equal(changes, 2)
+  await assert.rejects(f.session.keyForModel('meta', granted, {}), /meta-refresh-required/)
+  f.session.invalidate()
+  await assert.rejects(f.session.refresh(), error => error.code === 'meta-login-required')
+})
+
+
+test('model opt-in and effort changes retain the same account entitlement and Full grant', async t => {
+  const f = setup(t)
+  await f.session.refresh()
+  const model = f.session.catalog('meta').get(full), version = f.session.version
+  f.profile = { enabledDiscoveredModels: [full], reasoning: 'high', disabledModels: [] }
+  await f.session.validate()
+  assert.equal(f.session.version, version)
+  assert.equal(await f.session.keyForModel('meta', model, { enabledDiscoveredModels: [full] }), 'subscription-key')
+  assert.equal(f.session.catalog('meta').get(full), model)
+  assert.equal(f.requests.length, 2)
+  f.profile = { enabledDiscoveredModels: [full], headerRefs: { Authorization: 'OTHER_ACCOUNT_KEY' } }
+  await f.session.validate()
+  assert.equal(f.session.catalog('meta'), undefined)
+  await assert.rejects(f.session.keyForModel('meta', model, { headerRefs: { Authorization: 'OTHER_ACCOUNT_KEY' } }), /meta-settings-incompatible|meta-refresh-required/)
 })

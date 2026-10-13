@@ -4,6 +4,9 @@ import { PiLoginBroker, dispatch } from '../src/broker.mjs'
 import { applyLoginUI as apply } from '../src/routes.mjs'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
+import { ConnectionManager } from '../src/connections.mjs'
+import { IntegrationRegistry } from '../src/registry.mjs'
+import { MuseCodeError } from '../src/muse-code.mjs'
 
 const key = 'llm-pi-ai/openai-codex'
 const pause = () => new Promise(resolve => setImmediate(resolve))
@@ -185,7 +188,8 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  apply({get:()=>undefined,authorization:fixture.authorization,credentials:fixture.credentials,settings:fixture.settings,effect:body=>{effects.push(body())},connection:{fetch:{register:route=>routes.set(route.path,route)}}})
  t.after(async()=>{for(const effect of effects.reverse())await effect?.();await fixture.broker.dispose()})
  const route=routes.get('/api/dsh-pi-login/start')
- assert.equal(routes.size,15)
+ assert.equal(routes.size,21)
+ for(const method of ['connection-list','connection-create','connection-update','connection-clone','connection-delete','usage']) assert.ok(routes.has(`/api/dsh-pi-login/${method}`))
  const call=payload=>route.fetch(new Request('http://localhost/api/dsh-pi-login/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}))
  assert.equal((await call({})).status,400)
  const response=await call({type:'client-request',rpcId:'test-id',method:'dsh-pi-login/start',payload:{key:'other/credential',method:'oauth'}})
@@ -257,4 +261,190 @@ test('model and provider switches preserve settings and credentials and reject s
  assert.equal(profiles['openai-codex'].enabled,true)
  assert.deepEqual(profiles['openai-codex'].disabledModels,['model-one'])
  assert.equal(fixture.stored.get(key),'preserved-token')
+})
+
+function connectionSetup(run = async () => {}) {
+ const stored = new Map(), active = new Set(), events = []
+ const registry = new IntegrationRegistry('profile-a')
+ registry.register({integrationId:'pi',label:'Pi',source:'fixture',listConnections:()=>[],listServices:()=>[{
+  serviceId:'openai-codex',label:'Codex',methods:[{id:'oauth',label:'Sign in'}],capabilities:{auth:true,models:true,settings:true},
+ }]})
+ let revision = 1, raw = Object.fromEntries(['a','b'].map(account=>[`c-account-${account}`,{
+  integrationId:'pi',serviceId:'openai-codex',routeId:`pi-c-account-${account}`,credentialRecordId:`c-account-${account}`,
+  credentialGeneration:0,authMethod:'oauth',displayName:`Account ${account}`,enabled:false,
+  profile:{disabledModels:[],enabledFastModels:[]},
+ }]))
+ const settings = {
+  describe:()=>[{ns:'dsh-pi-login',revision,writable:true,value:{connections:raw,connectionMigrationVersion:1,trustedEndpointOrigins:['https://models.example']}}],
+  async mutate(ns,ops,expected) {
+   assert.equal(ns,'dsh-pi-login'); assert.equal(expected,revision)
+   for(const op of ops) { assert.equal(op.op,'set'); assert.deepEqual(op.path,['connections']); raw=structuredClone(op.value) }
+   revision++
+  },
+ }
+ const credentials = {
+  describeRecord:async key=>({configured:stored.has(key),writable:true}),
+  readRecord:async key=>stored.get(key),listRecords:async()=>[],
+ }
+ const connections = new ConnectionManager({settings,credentials,registry})
+ const entries = new Map(['a','b'].map(account=>{const key=`llm-pi-ai/c-account-${account}`;return [key,{key,label:`Account ${account}`,methods:[{id:'oauth',label:'Sign in'}]}]}))
+ const authorization = {
+  list:()=>[...entries.values()].map(entry=>({...entry,inFlight:active.has(entry.key)})),
+  describe:key=>entries.has(key)?{...entries.get(key),inFlight:active.has(key)}:undefined,
+  async begin({key,signal,interaction}) {
+   const id=Object.keys(raw).find(id=>connections.authKey(raw[id])===key)
+   events.push({type:'begin',id,generation:connections.lookup(id).credentialGeneration})
+   active.add(key)
+   try { await run({id,signal,...interaction,commit:value=>stored.set(key,value)}); return {status:signal.aborted?'cancelled':'authorized'} }
+   finally {active.delete(key)}
+  },
+ }
+ const catalogs = new Map(['a','b'].map(account=>[`c-account-${account}`,{
+  state:()=>({canRefresh:true}),validate:async()=>{},refresh:async()=>events.push({type:'refresh',id:`c-account-${account}`}),
+ }]))
+ const broker = new PiLoginBroker(authorization,credentials,settings,{
+  connections,catalogsFor:connection=>catalogs.get(connection.connectionId),
+  syncFlows:()=>events.push({type:'sync'}),
+  catalog:(_service,profile)=>[
+   {id:'regular',name:'Regular',enabled:!profile.disabledModels?.includes('regular')},
+   {id:'regular::fast',name:'Fast',serviceTier:'priority',enabled:profile.enabledFastModels?.includes('regular::fast')},
+  ],
+ })
+ return {broker,connections,registry,stored,events,catalogs,entries,get raw(){return raw},get revision(){return revision},
+  payload:extra=>({profileKey:registry.profileKey,generation:registry.generation,...extra})}
+}
+
+test('connection tickets bump only their credential generation and enforce account and profile ownership', async t => {
+ const f=connectionSetup(async session=>session.commit(await session.prompt({kind:'secret',message:'Account credential'})))
+ t.after(()=>f.broker.dispose())
+ await assert.rejects(dispatch(f.broker,'start',{connectionId:'c-account-a',method:'oauth'}),/profile-changed/)
+ const a=await dispatch(f.broker,'start',f.payload({connectionId:'c-account-a',method:'oauth'}))
+ const b=await dispatch(f.broker,'start',f.payload({connectionId:'c-account-b',method:'oauth'}))
+ await pause()
+ assert.deepEqual(f.events.filter(event=>event.type==='begin').map(event=>event.generation),[1,1])
+ assert.equal(f.connections.pendingLogins.size,2)
+ const promptA=f.broker.snapshot(a.ticket).prompt, promptB=f.broker.snapshot(b.ticket).prompt
+ await assert.rejects(dispatch(f.broker,'answer',f.payload({connectionId:'c-account-b',ticket:a.ticket,id:promptA.id,value:'wrong-account'})),/invalid-request/)
+ await dispatch(f.broker,'answer',f.payload({connectionId:'c-account-a',ticket:a.ticket,id:promptA.id,value:'account-a-token'}))
+ await dispatch(f.broker,'answer',f.payload({connectionId:'c-account-b',ticket:b.ticket,id:promptB.id,value:'account-b-token'}))
+ await Promise.all([f.broker.attempt(a.ticket).done,f.broker.attempt(b.ticket).done])
+ assert.equal(f.stored.get('llm-pi-ai/c-account-a'),'account-a-token')
+ assert.equal(f.stored.get('llm-pi-ai/c-account-b'),'account-b-token')
+ assert.equal(f.connections.pendingLogins.size,0)
+ assert.doesNotMatch(JSON.stringify(await f.broker.list()),/account-a-token|account-b-token/)
+})
+
+test('connection model selections, catalog refresh and activation leave the other account unchanged', async t => {
+ const f=connectionSetup(); t.after(()=>f.broker.dispose())
+ f.stored.set('llm-pi-ai/c-account-a','account-a-token');f.stored.set('llm-pi-ai/c-account-b','account-b-token')
+ const untouched=structuredClone(f.raw['c-account-b'])
+ await f.broker.setModel('c-account-a','regular::fast',true,f.revision)
+ await f.broker.setModel('c-account-a','regular',false,f.revision)
+ await f.broker.enable('c-account-a')
+ await f.broker.refreshModels('c-account-a')
+ assert.deepEqual(f.raw['c-account-b'],untouched)
+ assert.deepEqual(f.broker.models('c-account-a').models.map(model=>model.enabled),[false,true])
+ assert.deepEqual(f.broker.models('c-account-b').models.map(model=>model.enabled),[true,false])
+ assert.deepEqual(f.events.filter(event=>event.type==='refresh'),[{type:'refresh',id:'c-account-a'}])
+ assert.equal(f.raw['c-account-a'].credentialGeneration,0)
+ assert.equal(f.raw['c-account-a'].enabled,true)
+ await assert.rejects(f.broker.setModel('c-account-a','regular',true,1),/settings-changed/)
+ assert.throws(()=>f.broker.models('llm-pi-ai/c-account-a'),/invalid-request/)
+ assert.throws(()=>f.broker.models('llm-pi-ai/openai-codex'),/invalid-request/)
+})
+
+test('profile switch withdraws connection prompts and rejects delayed model refresh results', async t => {
+ const f=connectionSetup(async session=>{await session.prompt({kind:'text',message:'Approve'})})
+ t.after(()=>f.broker.dispose())
+ const {ticket}=await dispatch(f.broker,'start',f.payload({connectionId:'c-account-a',method:'oauth'}))
+ await pause()
+ const prompt=f.broker.snapshot(ticket).prompt
+ let release
+ f.catalogs.get('c-account-b').refresh=()=>new Promise(resolve=>{release=resolve})
+ const refreshing=f.broker.refreshModels('c-account-b')
+ f.registry.switchProfile('profile-b');release()
+ await assert.rejects(refreshing,/connection-changed/)
+ await f.broker.attempt(ticket).done
+ assert.deepEqual(f.broker.snapshot(ticket),{status:'cancelled',reason:'connection-changed'})
+ assert.throws(()=>f.broker.answer(ticket,prompt.id,'stale-answer'),/connection-changed/)
+ assert.equal(f.stored.size,0)
+ assert.equal(f.connections.pendingLogins.size,0)
+})
+
+test('endpoint changes reject delayed catalog results while retaining the account generation', async t => {
+ const f=connectionSetup();t.after(()=>f.broker.dispose())
+ let release
+ f.catalogs.get('c-account-a').refresh=()=>new Promise(resolve=>{release=resolve})
+ const refreshing=f.broker.refreshModels('c-account-a')
+ await f.connections.update('c-account-a',{endpointUrl:'https://models.example/v1'},f.revision)
+ release()
+ await assert.rejects(refreshing,/connection-changed/)
+ assert.equal(f.raw['c-account-a'].credentialGeneration,0)
+ assert.equal(f.raw['c-account-a'].profile.baseURL,'https://models.example/v1')
+})
+
+test('independent integration auth and activation remain owned by its namespace', async t => {
+ const f=connectionSetup(async session=>session.commit(await session.prompt({kind:'secret',message:'Independent account'})))
+ t.after(()=>f.broker.dispose())
+ const ownKey=connection=>`independent-auth/${connection.credentialRecordId}`
+ let activated=0
+ f.registry.register({integrationId:'independent-fixture',label:'Independent',listConnections:()=>[],
+  listServices:()=>[{serviceId:'subscription',label:'Subscription',methods:[{id:'oauth',label:'Sign in'}],capabilities:{auth:true,settings:true}}],
+  authKey:ownKey,describeConnection:async connection=>({configured:f.stored.has(ownKey(connection)),writable:true}),
+  validateConnection:()=>{},
+  enable:async()=>{activated++;return {enabled:true}},
+ })
+ f.raw['c-independent']={integrationId:'independent-fixture',serviceId:'subscription',routeId:'independent-fixture',credentialRecordId:'c-independent',credentialGeneration:0,authMethod:'oauth',displayName:'Independent account',enabled:false,profile:{}}
+ f.entries.set('independent-auth/c-independent',{key:'independent-auth/c-independent',label:'Independent account',methods:[{id:'oauth',label:'Sign in'}]})
+ const {ticket}=await dispatch(f.broker,'start',f.payload({connectionId:'c-independent',method:'oauth'}))
+ await pause()
+ const prompt=f.broker.snapshot(ticket).prompt
+ await dispatch(f.broker,'answer',f.payload({connectionId:'c-independent',ticket,id:prompt.id,value:'independent-token'}))
+ await f.broker.attempt(ticket).done
+ assert.deepEqual(f.broker.snapshot(ticket),{status:'authorized'})
+ assert.equal(f.stored.get('independent-auth/c-independent'),'independent-token')
+ assert.equal(f.stored.has('llm-pi-ai/c-independent'),false)
+ await f.broker.enable('c-independent')
+ assert.equal(activated,1)
+ assert.throws(()=>f.broker.start('independent-auth/c-independent','oauth'),/connection-unavailable/)
+})
+
+test('Muse owner login exposes only known prerequisite codes without provider messages or logs', async t => {
+ const logged=[]
+ t.mock.method(console,'error',(...args)=>{logged.push(args)})
+ t.mock.method(console,'warn',(...args)=>{logged.push(args)})
+ const scenarios=[
+  [Object.assign(new MuseCodeError('muse-code-cli-required'),{message:'private-account-token in provider error'}),'muse-code-cli-required'],
+  [Object.assign(new MuseCodeError('muse-code-protocol-unsupported'),{message:'private-account-token in provider error'}),'muse-code-protocol-unsupported'],
+  [Object.assign(new MuseCodeError('muse-code-cli-required'),{code:'private-account-token'}),undefined],
+  [Object.assign(new Error('private-account-token'),{code:'muse-code-cli-required'}),undefined],
+ ]
+ for(const [error,reason] of scenarios) {
+  const f=connectionSetup(async()=>{throw error});t.after(()=>f.broker.dispose())
+  f.registry.register({integrationId:'meta-muse-code',label:'Muse Code',listConnections:()=>[],
+   listServices:()=>[{serviceId:'muse-code',label:'Muse Code',methods:[{id:'oauth',label:'Sign in'}],capabilities:{auth:true,settings:true}}],
+   authKey:connection=>`dsh-muse-code/${connection.credentialRecordId}`,
+   describeConnection:async()=>({configured:false,writable:true}),validateConnection:()=>{},
+  })
+  f.raw['c-muse']={integrationId:'meta-muse-code',serviceId:'muse-code',routeId:'muse-c-muse',credentialRecordId:'c-muse',credentialGeneration:0,authMethod:'oauth',displayName:'Muse fixture',enabled:false,profile:{}}
+  f.entries.set('dsh-muse-code/c-muse',{key:'dsh-muse-code/c-muse',label:'Muse Code',methods:[{id:'oauth',label:'Sign in'}]})
+  const {ticket}=await dispatch(f.broker,'start',f.payload({connectionId:'c-muse',method:'oauth'}))
+  await f.broker.attempt(ticket).done
+  const snapshot=f.broker.snapshot(ticket)
+  assert.deepEqual(snapshot,{status:'failed',...reason?{reason}:{}})
+  assert.doesNotMatch(JSON.stringify(snapshot),/private-account-token|provider error/)
+  assert.equal(f.connections.pendingLogins.size,0)
+ }
+ assert.deepEqual(logged,[])
+})
+
+test('unverified configured gateway models retain their independent capability warning', async t => {
+ const legacy=setup(async()=>{});t.after(()=>legacy.broker.dispose())
+ legacy.broker.catalog=()=>[{id:'gateway-model',name:'Gateway model',capabilityUnverified:true}]
+ assert.equal(legacy.broker.models(key).models[0].capabilityUnverified,true)
+ assert.equal(legacy.broker.models(key).models[0].discovered,undefined)
+ const connected=connectionSetup();t.after(()=>connected.broker.dispose())
+ connected.broker.catalog=()=>[{id:'gateway-model',name:'Gateway model',capabilityUnverified:true}]
+ assert.equal(connected.broker.models('c-account-a').models[0].capabilityUnverified,true)
+ assert.equal(connected.broker.models('c-account-a').models[0].discovered,undefined)
 })

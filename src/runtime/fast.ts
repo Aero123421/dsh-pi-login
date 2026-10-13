@@ -27,6 +27,7 @@ export interface ModelChoice {
   model: Model<Api>
   enabled: boolean
   discovered?: boolean
+  capabilityUnverified?: boolean
   serviceTier?: 'default' | 'priority'
 }
 
