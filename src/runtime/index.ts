@@ -218,7 +218,7 @@ export function apply(ctx: Context, config: Config, live?: {
     auth,
     authForProfile: profile => live?.authForProfile?.(profile) ?? (profile.connectionId === undefined ? auth : connectionAuthFrom(ctx, {
       connectionId: profile.connectionId,
-      serviceId: profile.serviceId!,
+      serviceId: profile.sdkServiceId ?? profile.serviceId!,
       credentialRecordId: profile.credentialRecordId!,
       isCurrent: () => {
         const current = connections()?.[profile.connectionId!]

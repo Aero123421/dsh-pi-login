@@ -13,6 +13,7 @@ import { catalogProvider, catalogProviderIds } from './catalog.ts'
 import { connectionAuthFrom, recordKeyFor } from './auth.ts'
 import type { PiAiAuthInjection } from './adapter.ts'
 import { createModels } from './models.ts'
+import { sdkServiceOf } from './connections.ts'
 
 /**
  * The login methods one catalog provider offers.
@@ -195,8 +196,9 @@ export function registerConnectionFlows(
       }
     }
     for (const [id, connection] of Object.entries(current)) {
-      if (registered.has(id) || connection.integrationId !== 'pi') continue
-      const provider = catalogProvider(connection.serviceId)
+      const sdkService = sdkServiceOf(connection)
+      if (registered.has(id) || sdkService === undefined) continue
+      const provider = catalogProvider(sdkService)
       const method = loginMethods(provider).find(method => method.id === connection.authMethod)
       if (provider === undefined || method === undefined || !isCredentialKeySegment(connection.credentialRecordId)) continue
       const identity = loginIdentity(connection)
@@ -213,7 +215,7 @@ export function registerConnectionFlows(
           if (!isCurrent() || session.method !== connection.authMethod) throw new Error('stale-connection')
           session.signal.throwIfAborted()
           const auth = connectionAuthFrom(ctx, {
-            connectionId: id, serviceId: connection.serviceId,
+            connectionId: id, serviceId: sdkService,
             credentialRecordId: connection.credentialRecordId,
             isCurrent: () => isCurrent() && !session.signal.aborted,
           })
@@ -221,7 +223,7 @@ export function registerConnectionFlows(
           models.setProvider(provider)
           const type: AuthType = connection.authMethod === 'oauth' ? 'oauth' : 'api_key'
           let deviceId: string | undefined
-          if (connection.serviceId === 'openai' && type === 'oauth') {
+          if (sdkService === 'openai' && type === 'oauth') {
             const record = await ctx.credentials.modifyRecord('dsh-pi-login/installation', async current => {
               session.signal.throwIfAborted()
               if (!isCurrent()) throw new Error('stale-connection')
@@ -230,7 +232,7 @@ export function registerConnectionFlows(
             })
             deviceId = (record?.kind === 'grant' ? record.payload.deviceId : undefined) as string | undefined
           }
-          await models.login(connection.serviceId, type, {
+          await models.login(sdkService, type, {
             signal: session.signal,
             notify: event => { if (isCurrent() && !session.signal.aborted) relay(event, session) },
             prompt: prompt => {

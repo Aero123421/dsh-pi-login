@@ -1,17 +1,10 @@
 import { CatalogRefreshError } from './provider-catalogs.mjs'
 import { randomUUID } from 'node:crypto'
-import { MUSE_CODE_INTEGRATION_ID, MuseCodeError } from './muse-code.mjs'
 
 const KEY_PATTERN = /^llm-pi-ai\/[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const LIVE = 'running'
 const NS = 'dsh-pi-login'
 const MAX_TIMER_DELAY_MS = 2147483647
-const MUSE_LOGIN_REASONS = new Set([
-  'muse-code-unavailable', 'muse-code-cli-required', 'muse-code-protocol-unsupported',
-  'muse-code-login-required', 'muse-code-login-failed', 'muse-code-connection-changed',
-  'muse-code-connection-disabled', 'muse-code-busy', 'muse-code-observation-invalid',
-  'muse-code-observation-failed', 'muse-code-observation-closed',
-])
 
 export class LoginError extends Error {
   constructor(code) { super(code); this.code = code }
@@ -121,6 +114,7 @@ export class PiLoginBroker {
         refresh: this.catalogsForConnection(connection)?.state(connection.serviceId, models) ?? { canRefresh: false },
         models: models.map(model => ({ id: model.id, name: model.name, enabled: model.enabled ?? !profile.disabledModels?.includes(model.id),
           fast: model.serviceTier === 'priority',
+          ...model.contributor ? { contributor: true } : {},
           ...model.discovered ? { discovered: true } : {},
           ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {},
         })) }
@@ -153,9 +147,10 @@ export class PiLoginBroker {
     const provider = connection?.serviceId ?? key.slice('llm-pi-ai/'.length)
     const profile = connection?.profile ?? this.section().value?.providers?.[provider]
     if (!profile) throw new LoginError('not-enabled')
-    const field = choice.fast ? 'enabledFastModels' : choice.discovered ? 'enabledDiscoveredModels' : 'disabledModels'
+    const optIn = choice.fast || choice.contributor || choice.discovered
+    const field = choice.fast ? 'enabledFastModels' : choice.contributor ? 'enabledContributorModels' : choice.discovered ? 'enabledDiscoveredModels' : 'disabledModels'
     const selected = new Set(profile[field] ?? [])
-    if (choice.fast || choice.discovered ? enabled : !enabled) selected.add(model)
+    if (optIn ? enabled : !enabled) selected.add(model)
     else selected.delete(model)
     const changes = { [field]: [...selected] }
     if (choice.discovered) {
@@ -264,8 +259,6 @@ export class PiLoginBroker {
     }, error => {
       attempt.status = attempt.controller.signal.aborted ? 'cancelled' : 'failed'
       if (!attempt.controller.signal.aborted && error instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error.message)) attempt.reason = 'provider-expired'
-      else if (!attempt.controller.signal.aborted && connection?.integrationId === MUSE_CODE_INTEGRATION_ID
-        && error instanceof MuseCodeError && MUSE_LOGIN_REASONS.has(error.code)) attempt.reason = error.code
     }).finally(() => {
       if (attempt.loginStarted) this.connections.endLogin(connection.connectionId)
       clearTimeout(attempt.timer)

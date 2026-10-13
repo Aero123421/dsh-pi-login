@@ -4,7 +4,6 @@ import { pathToFileURL } from 'node:url'
 import { PluginUpdates } from './updates.mjs'
 import { ConnectionError } from './connections.mjs'
 import { RegistryError } from './registry.mjs'
-import { MuseCodeError } from './muse-code.mjs'
 export function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options)
   let writes = 0
@@ -60,15 +59,6 @@ export function applyLoginUI(ctx, options = {}) {
               } else if (method === 'connection-list') {
                 if (!options.connections) throw new LoginError('unavailable')
                 value = await options.connections.list()
-              } else if (['models', 'refresh-models'].includes(method) && payload.connectionId && options.connections?.lookup(payload.connectionId).integrationId !== 'pi') {
-                const connection = options.connections.lookup(payload.connectionId)
-                const binding = options.connections.binding(connection)
-                const owner = options.registry.owner(connection.integrationId)
-                const result = await owner.readModels(binding, { signal: request.signal })
-                if (!options.connections.isCurrent(binding)) throw new LoginError('connection-changed')
-                value = { connectionId: connection.connectionId, revision: options.connections.section()?.revision,
-                  enabled: connection.enabled, models: result.models, contributor: result.contributor,
-                  executionKind: result.executionKind, liveVerified: false, refresh: { canRefresh: true } }
               } else if (method === 'usage') {
                 if (!options.connections || !options.usage) throw new LoginError('unavailable')
                 options.connections.guard(payload)
@@ -82,7 +72,7 @@ export function applyLoginUI(ctx, options = {}) {
           return Response.json({ type: 'server-response', rpcId, result: { ok: true, value } }, { headers: { 'cache-control': 'no-store' } })
         } catch (error) {
           if (rpcId === undefined) return new Response('invalid request', { status: 400 })
-          const code = error instanceof LoginError || error instanceof ConnectionError || error instanceof RegistryError || error instanceof MuseCodeError ? error.code : 'unavailable'
+          const code = error instanceof LoginError || error instanceof ConnectionError || error instanceof RegistryError ? error.code : 'unavailable'
           return Response.json({ type: 'server-response', rpcId, result: { ok: false, error: { code: `dsh-pi-login/${code}`, message: code, details: {} } } }, { headers: { 'cache-control': 'no-store' } })
         }
       },

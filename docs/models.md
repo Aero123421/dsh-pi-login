@@ -7,28 +7,19 @@
 | 連携 | 実行とモデルの確認 |
 | --- | --- |
 | Meta Model API（Pi経由） | Pi SDKのResponses API。`muse-wonder-1.0`を補完し、Full等の追加モデルは認証したアカウントのAPI応答に実際に返ったIDだけを使います。 |
-| Meta Muse Code | 公式Muse CLI／SDKのMuse Session Protocol（MSP）。Wonder1／Wonder Fullの通常版・Contributor版をモデル一覧で選択し、実モデルIDと公式Contributor設定へ対応付けます。 |
+| Meta Muse Code | Pi SDKのMetaログインとResponses API。モデル一覧はMuse Code専用の`/muse-code/models`、Contributorはリクエストヘッダーで選択します。 |
 
-公式SDK `1.4.7`の[MSP schema](https://github.com/meta-models/muse-code-sdk/blob/a0c8611b382584eb5091942b477f30e92e1c8d18/schema/msp/msp.d.ts)と[モデル一覧の例](https://github.com/meta-models/muse-code-sdk/blob/a0c8611b382584eb5091942b477f30e92e1c8d18/clients/sdk-cookbook/src/recipes/list-models-and-switch-mid-session.ts)を参照しています。MSPの`model/list`はログアウト時のbundled catalogでも応答するため、一覧だけではFull／Contributorの利用権限を証明できません。契約枠や料金をプラン名から推測せず、Muse Codeで失敗してもPi Meta Model APIへ自動で切り替えません。
+## Meta Muse Code
 
-## Muse CodeのログインとContributor
+公式Muse Code CLI 1.4.7の実装を確認した結果に基づきます。
 
-独立した接続ownerは、Hostの公式`muse serve`と固定したSDK `1.4.7`を使用します。`account/read`と公式アカウントログイン通知で接続の認証を確認し、接続専用の`dsh-muse-code/<credentialRecordId>`へ保存します。CLIのfile credential backendを使う一時領域はプロファイル・接続・認証世代ごとに分け、共有のHost HOME・OS keychain・環境変数のモデルキーへ切り替えません。CLIがない、アカウント・設定protocolが未対応、認証が完了しない場合は、Piへの切替をせず終了理由を表示します。
+- **ログイン:** `auth.meta.com`の端末コード（CLIと同じクライアントID）で本人確認し、`POST https://api.meta.ai/muse-code/key`でAPIキーを発行します。Pi SDKの`meta`プロバイダーがこれを行い、期限切れ時に再発行します。認証情報は接続専用の`llm-pi-ai/<credentialRecordId>`に保存します。
+- **モデル一覧:** CLIと同じ`GET https://api.meta.ai/muse-code/models`を、`x-tbh-contributor-mode: 0`と`1`の両方で読み込みます。Model APIの`/v1/models`はWonder FullなどMuse Code専用のモデルを含まないため使いません。行の`id`／`display_label`／`context_limit`／`output_limit`／`reasoning_effort_variants`を読み、画像・音声生成用のモデルや非公開の行は除外します。
+- **Contributor:** `1`の一覧にあるモデルに「<名前> Contributor」の選択肢（`<id>::contributor`）を追加します。最初はオフで、`enabledContributorModels`に保存します。送信時はContributor版に`x-tbh-contributor-mode: 1`、通常版に`0`を付け、APIへは元のモデルIDを送ります。[MetaのContributor利用条件](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode)
+- **保存:** 読み込んだ一覧（ID・名前・上限・effort・Contributor可否のみ）を接続の`museCatalog`に保存し、再起動後もモデル選択とルーティングに使います。アカウントが途中で変わった場合は保存しません。複製した接続には一覧も認証情報も引き継ぎません。
+- **利用状況:** キー発行の応答に含まれる契約と利用枠を表示します。
 
-モデル一覧はWonder1、Wonder1 Contributor、Wonder Full、Wonder Full Contributorの4つの選択肢です。Hostの`model/list`に掲載されたbaseモデルごとに通常版とContributor版を表示します。選択を公式SDKのbase `modelId`とbooleanのContributor設定へ対応付け、`settings/readSchema`で対象を確認し、`settings/writeValue`の結果と`settings/read`の読み戻しを照合します。CLI側に適用可能な設定がなければ、その選択の保存は失敗します。
-
-| 画面の選択肢 | プラグイン内の選択ID | SDKへ送るmodelId | Contributor設定 |
-| --- | --- | --- | --- |
-| Wonder1 | `muse-wonder-1.0` | `muse-wonder-1.0` | `false` |
-| Wonder1 Contributor | `muse-wonder-1.0::contributor` | `muse-wonder-1.0` | `true` |
-| Wonder Full | `muse-wonder-full-1.0` | `muse-wonder-full-1.0` | `false` |
-| Wonder Full Contributor | `muse-wonder-full-1.0::contributor` | `muse-wonder-full-1.0` | `true` |
-
-`::contributor`はプラグイン内で選択肢を区別するIDです。SDKのmodelIdにはbase IDを使います。[MetaのContributor利用条件](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode)
-
-専用session wrapperはMSPの`session/start`、`turn/start`、イベント、`turn/cancel`、`session/read`、`session/resume`を扱います。通常のDSH `GenerateOptions`と互換とみなさず、DSHのチャットモデル一覧には登録しません。tool実行のownerはMuse Code側で、DSHのtool実行橋渡しは未検証です。利用状況はMSP `usage/read`／通知で得た最終観測値として、実際の期間と観測時刻だけを表示します。
-
-これらは公式schemaとfixtureで検証しています。この開発環境では公式CLI binaryがなく、配布先へのアクセスも制限されるため、実CLI・実アカウントのログイン、Wonder1／Fullの生成、Contributorによるデータ利用・利用枠・課金、Windows／macOS keychain隔離は未検証です。設定の成功・モデルの列挙を実生成の成功とは扱いません。
+一覧の応答形式とContributorヘッダーの値はCLIの実装から読み取ったもので、公開仕様ではありません。実アカウントでのログイン、Wonder／Fullの生成、Contributorの利用枠・課金は未検証です。
 
 ## Muse Wonder
 

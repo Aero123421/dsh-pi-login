@@ -6,7 +6,6 @@ import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
 import { ConnectionManager } from '../src/connections.mjs'
 import { IntegrationRegistry } from '../src/registry.mjs'
-import { MuseCodeError } from '../src/muse-code.mjs'
 
 const key = 'llm-pi-ai/openai-codex'
 const pause = () => new Promise(resolve => setImmediate(resolve))
@@ -409,32 +408,24 @@ test('independent integration auth and activation remain owned by its namespace'
  assert.throws(()=>f.broker.start('independent-auth/c-independent','oauth'),/connection-unavailable/)
 })
 
-test('Muse owner login exposes only known prerequisite codes without provider messages or logs', async t => {
+test('Muse Code login failures expose no provider messages or logs', async t => {
  const logged=[]
  t.mock.method(console,'error',(...args)=>{logged.push(args)})
  t.mock.method(console,'warn',(...args)=>{logged.push(args)})
- const scenarios=[
-  [Object.assign(new MuseCodeError('muse-code-cli-required'),{message:'private-account-token in provider error'}),'muse-code-cli-required'],
-  [Object.assign(new MuseCodeError('muse-code-protocol-unsupported'),{message:'private-account-token in provider error'}),'muse-code-protocol-unsupported'],
-  [Object.assign(new MuseCodeError('muse-code-cli-required'),{code:'private-account-token'}),undefined],
-  [Object.assign(new Error('private-account-token'),{code:'muse-code-cli-required'}),undefined],
- ]
- for(const [error,reason] of scenarios) {
-  const f=connectionSetup(async()=>{throw error});t.after(()=>f.broker.dispose())
-  f.registry.register({integrationId:'meta-muse-code',label:'Muse Code',listConnections:()=>[],
-   listServices:()=>[{serviceId:'muse-code',label:'Muse Code',methods:[{id:'oauth',label:'Sign in'}],capabilities:{auth:true,settings:true}}],
-   authKey:connection=>`dsh-muse-code/${connection.credentialRecordId}`,
-   describeConnection:async()=>({configured:false,writable:true}),validateConnection:()=>{},
-  })
-  f.raw['c-muse']={integrationId:'meta-muse-code',serviceId:'muse-code',routeId:'muse-c-muse',credentialRecordId:'c-muse',credentialGeneration:0,authMethod:'oauth',displayName:'Muse fixture',enabled:false,profile:{}}
-  f.entries.set('dsh-muse-code/c-muse',{key:'dsh-muse-code/c-muse',label:'Muse Code',methods:[{id:'oauth',label:'Sign in'}]})
-  const {ticket}=await dispatch(f.broker,'start',f.payload({connectionId:'c-muse',method:'oauth'}))
-  await f.broker.attempt(ticket).done
-  const snapshot=f.broker.snapshot(ticket)
-  assert.deepEqual(snapshot,{status:'failed',...reason?{reason}:{}})
-  assert.doesNotMatch(JSON.stringify(snapshot),/private-account-token|provider error/)
-  assert.equal(f.connections.pendingLogins.size,0)
- }
+ const f=connectionSetup(async()=>{throw Object.assign(new Error('private-account-token in provider error'),{code:'private-account-token'})});t.after(()=>f.broker.dispose())
+ f.registry.register({integrationId:'meta-muse-code',label:'Meta',listConnections:()=>[],
+  listServices:()=>[{serviceId:'muse-code',label:'Muse Code',methods:[{id:'oauth',label:'Sign in with Meta'}],capabilities:{auth:true,settings:true}}],
+  authKey:connection=>`llm-pi-ai/${connection.credentialRecordId}`,
+  describeConnection:async()=>({configured:false,writable:true}),validateConnection:()=>{},
+ })
+ f.raw['c-muse']={integrationId:'meta-muse-code',serviceId:'muse-code',routeId:'muse-c-muse',credentialRecordId:'c-muse',credentialGeneration:0,authMethod:'oauth',displayName:'Muse fixture',enabled:false,profile:{}}
+ f.entries.set('llm-pi-ai/c-muse',{key:'llm-pi-ai/c-muse',label:'Muse Code',methods:[{id:'oauth',label:'Sign in with Meta'}]})
+ const {ticket}=await dispatch(f.broker,'start',f.payload({connectionId:'c-muse',method:'oauth'}))
+ await f.broker.attempt(ticket).done
+ const snapshot=f.broker.snapshot(ticket)
+ assert.deepEqual(snapshot,{status:'failed'})
+ assert.doesNotMatch(JSON.stringify(snapshot),/private-account-token|provider error/)
+ assert.equal(f.connections.pendingLogins.size,0)
  assert.deepEqual(logged,[])
 })
 

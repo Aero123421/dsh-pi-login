@@ -205,27 +205,25 @@ test('same-provider clone keeps models and gets a disabled route with no copied 
   assert.equal(Object.keys(f.value.connections).length, 1)
 })
 
-test('cloning Muse model settings retains the selected Contributor model without duplicating its login', async () => {
-  const selection = { modelId: 'muse-wonder-full-1.0', contributorMode: true }
+test('cloning a Muse Code connection keeps model choices but never its login or account catalog', async () => {
+  const catalog = [{ id: 'muse-wonder-1.0', name: 'Muse Wonder', contextWindow: 1048576, maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true }]
   const f = fixture({ connections: { 'c-muse': {
     integrationId: 'meta-muse-code', serviceId: 'muse-code', routeId: 'muse-c-muse',
     displayName: 'Muse', authMethod: 'oauth', credentialRecordId: 'c-muse',
-    credentialGeneration: 0, enabled: true, profile: {}, museCode: selection,
-  } } }, { 'dsh-muse-code/c-muse': { kind: 'grant', payload: { format: 'fixture' } } })
-  const owner = createMuseCodeOwner({ ctx: { credentials: f.credentials }, connections: f.manager,
-    privateRoot: '/fixture/not-started', openHost: () => { throw new Error('Cloning must not start Muse') } })
-  f.registry.register(owner)
-  try {
-    const { connectionId } = await f.manager.clone('c-muse', 'Muse copy', f.revision)
-    const copy = f.value.connections[connectionId]
-    assert.deepEqual(copy.museCode, selection)
-    assert.equal(copy.enabled, false)
-    assert.equal((await f.manager.list()).connections.find(row => row.connectionId === connectionId).configured, false)
-    assert.equal(f.records.size, 1)
-    await f.manager.delete(connectionId, f.revision)
-    assert.deepEqual(f.value.connections['c-muse'].museCode, selection)
-    assert.equal(f.records.has('dsh-muse-code/c-muse'), true)
-  } finally { await owner.dispose() }
+    credentialGeneration: 0, enabled: true, profile: { enabledContributorModels: ['muse-wonder-1.0::contributor'] }, museCatalog: catalog,
+  } } }, { 'llm-pi-ai/c-muse': { kind: 'grant', payload: { type: 'oauth', refresh: 'fixture', access: 'fixture', expires: Date.now() + 100000 } } })
+  f.registry.register(createMuseCodeOwner({ ctx: { credentials: f.credentials }, connections: f.manager }))
+  assert.equal((await f.manager.list()).connections.find(row => row.connectionId === 'c-muse').configured, true)
+  const { connectionId } = await f.manager.clone('c-muse', 'Muse copy', f.revision)
+  const copy = f.value.connections[connectionId]
+  assert.deepEqual(copy.profile.enabledContributorModels, ['muse-wonder-1.0::contributor'])
+  assert.equal(copy.museCatalog, undefined)
+  assert.equal(copy.enabled, false)
+  assert.equal((await f.manager.list()).connections.find(row => row.connectionId === connectionId).configured, false)
+  await f.manager.delete(connectionId, f.revision)
+  assert.deepEqual(f.value.connections['c-muse'].museCatalog, catalog)
+  assert.equal(f.records.has('llm-pi-ai/c-muse'), true)
+  await assert.rejects(f.manager.update('c-muse', { apiKey: 'not-allowed' }, f.revision), error => error.code === 'owner-managed')
 })
 
 test('login generation and profile change reject stale auth and RPC identities', async () => {

@@ -134,7 +134,7 @@ export function codexAccountId(access) {
   } catch { throw new ProviderReadError('auth-required') }
 }
 
-export async function readProviderJson(response, { now = Date.now(), maxBytes = 262144 } = {}) {
+export async function readProviderJson(response, { now = Date.now(), maxBytes = 262144, allowArray = false } = {}) {
   if (!response.ok) {
     await response.body?.cancel().catch(() => {})
     throw new ProviderReadError(response.status === 401 || response.status === 403 ? 'auth-required' : response.status === 429 ? 'rate-limited' : 'error', response.status === 429 ? retryAfterMilliseconds(response.headers.get('retry-after'), now) : undefined)
@@ -153,7 +153,8 @@ export async function readProviderJson(response, { now = Date.now(), maxBytes = 
     }
     const bytes = new Uint8Array(length); let offset = 0
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength }
-    return object(JSON.parse(new TextDecoder().decode(bytes)))
+    const value = JSON.parse(new TextDecoder().decode(bytes))
+    return allowArray && Array.isArray(value) ? value : object(value)
   } catch (error) { throw error instanceof ProviderReadError ? error : new ProviderReadError('error') }
   finally { await reader.cancel().catch(() => {}) }
 }

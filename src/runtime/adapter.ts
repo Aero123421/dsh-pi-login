@@ -231,7 +231,7 @@ const isolatedAuth: PiAiAuthInjection = {
 /** Start the read before any other await; SDK lazy auth receives this frozen record. */
 function requestAuth(auth: PiAiAuthInjection, profile: ResolvedPiAiProviderProfile, signal?: AbortSignal): PiAiAuthInjection {
   if (profile.connectionId === undefined || auth.credentials === undefined) return auth
-  const serviceId = profile.serviceId!
+  const serviceId = profile.sdkServiceId ?? profile.serviceId!
   let credential = auth.credentials.read(serviceId, { signal }).then(value => {
     if (value === undefined || (profile.authMethod === 'oauth' ? value.type !== 'oauth' : value.type !== 'api_key')) return undefined
     return structuredClone(value)
@@ -484,7 +484,7 @@ export class PiAiAdapter extends LlmAdapter {
         signal: watchdog.signal,
         // Profile headers are deployment-owned; attribution names are
         // Harness-owned and therefore win collisions.
-        headers: { ...requestHeaders({ ...profile.headers, ...storedHeaders }), ...accountAuthorization?.headers },
+        headers: { ...requestHeaders({ ...profile.headers, ...storedHeaders }), ...choice.headers, ...accountAuthorization?.headers },
       }
       const events = choice.serviceTier !== undefined
         ? streamWithTier(models, model, context, streamOptions, choice.serviceTier)

@@ -204,16 +204,20 @@ function ModelsDialog({ entry, controller, t, onClose }) {
     {snapshot && snapshot.models.length > 8 ? <Input icon={<IconSearchOutlineRegular size={16} />} aria-label={t('searchModels')} placeholder={t('searchModels')} data-modal-autofocus value={search} onChange={event => setSearch(event.target.value)} /> : null}
     <div className="dsh-pi-toolbar dsh-pi-models-toolbar">
       {snapshot ? <span className="dsh-pi-muted">{t('modelsOn').replace('{count}', String(count))}</span> : <span role="status">{error ? '' : t('loading')}</span>}
-      {snapshot?.refresh?.canRefresh ? <Button variant="ghost" size="sm" disabled={reloading || !entry.writable} onClick={() => { void reload() }}>{t(reloading ? 'loading' : 'reloadModels')}</Button> : null}
+      {snapshot?.refresh?.canRefresh && snapshot.models.length ? <Button variant="ghost" size="sm" disabled={reloading || !entry.writable} onClick={() => { void reload() }}>{t(reloading ? 'loading' : 'reloadModels')}</Button> : null}
     </div>
     {snapshot?.refresh?.status ? <p role="status" className="dsh-pi-muted">{t(snapshot.refresh.status.message)}{snapshot.refresh.status.detail ? ` · ${snapshot.refresh.status.detail}` : ''}</p> : null}
     {refreshError ? <p role="alert">{t(refreshError)}</p> : null}
     {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
+    {snapshot && !snapshot.models.length && snapshot.refresh?.canRefresh ? <div className="dsh-pi-empty-models">
+      {(snapshot.refresh.notes ?? []).map(note => <p key={note} className="dsh-pi-muted">{t(note)}</p>)}
+      <Button variant="primary" disabled={reloading || !entry.writable} onClick={() => { void reload() }}>{t(reloading ? 'loading' : 'reloadModels')}</Button>
+    </div> : null}
     {snapshot?.models.some(model => model.fast && model.enabled) ? <p className="dsh-pi-note">{t('fastWarning')}</p> : null}
+    {snapshot?.models.some(model => model.contributor) ? <p className="dsh-pi-note">{t('museContributorNote')}</p> : null}
     <div className="dsh-pi-model-list">
       {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
         <div className="dsh-pi-model-label"><span>{model.name}</span>
-          {model.contributor ? <span className="dsh-pi-muted">{t('metaContributorHint')}</span> : null}
           {model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
         <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={pending.has(model.id) || !entry.writable} onChange={enabled => toggle(model.id, enabled)} />
       </div>)}
@@ -227,64 +231,6 @@ function connectionError(error) {
   if (code === 'endpoint-untrusted') return 'endpointUntrusted'
   if (code?.startsWith('muse-code-')) return Object.hasOwn(en, `error_${code}`) ? `error_${code}` : 'error_muse-code-unavailable'
   return 'saveFailed'
-}
-
-function museModelName(entry, t) {
-  const id = entry.museCode?.modelId
-  const name = id === 'muse-wonder-1.0' ? t('museWonderOne') : id === 'muse-wonder-full-1.0' ? t('museWonderFull') : id
-  return name ? `${name}${entry.museCode?.contributorMode === true ? ' Contributor' : ''}` : undefined
-}
-
-/** Muse Code runs one model per connection, so the choice is a single-select list saved on pick. */
-function MuseModelsDialog({ entry, controller, t, onClose }) {
-  const [snapshot, setSnapshot] = useState()
-  const [selected, setSelected] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
-  const request = useRef()
-  const name = useId()
-  useEffect(() => {
-    const abort = new AbortController(); request.current = abort
-    void controller.mutation('models', { connectionId: entry.connectionId }, abort.signal).then(result => {
-      if (abort.signal.aborted) return
-      setSnapshot(result)
-      const model = result.models?.find(model => model.selected) ?? result.models?.find(model => model.modelId === entry.museCode?.modelId && model.contributor === (entry.museCode?.contributorMode === true))
-      setSelected(model?.id ?? '')
-    }, error => { if (!abort.signal.aborted) setError(connectionError(error)) })
-    return () => { abort.abort() }
-  }, [entry.connectionId])
-  const models = (snapshot?.models ?? []).filter(model => model.sessionSupported === true)
-  async function choose(id) {
-    const model = models.find(model => model.id === id)
-    if (!model || busy) return
-    const previous = selected
-    setSelected(id); setBusy(true); setError(''); setSaved(false)
-    try {
-      await controller.mutation('connection-update', { connectionId: entry.connectionId, revision: snapshot.revision ?? entry.revision,
-        patch: { modelId: model.modelId, contributorMode: model.contributor === true } }, request.current.signal)
-      await controller.refresh(); setSaved(true)
-      setSnapshot({ ...snapshot, revision: controller.getSnapshot().revision })
-    } catch (error) { if (!request.current.signal.aborted) { setSelected(previous); setError(connectionError(error)) } }
-    finally { if (!request.current.signal.aborted) setBusy(false) }
-  }
-  const selectedModel = models.find(model => model.id === selected)
-  const disabled = busy || !entry.writable || !entry.configured
-  return <Modal open title={entry.displayName} description={t('museSessionHint')} closeLabel={t('close')} onClose={onClose} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
-    footer={<Button variant="outline" onClick={onClose}>{t('close')}</Button>}>
-    {!snapshot && !error ? <p role="status">{t('loading')}</p> : null}
-    {error ? <p role="alert">{t(error)}</p> : null}
-    {models.length ? <fieldset className="dsh-pi-radio-list" disabled={disabled}>
-      <legend className="dsh-pi-caption">{t('museModels')}</legend>
-      {models.map(model => <label key={model.id} className="dsh-pi-radio-row">
-        <input type="radio" name={name} value={model.id} checked={selected === model.id} onChange={() => { void choose(model.id) }} />
-        <span>{model.name ?? model.label}</span>
-      </label>)}
-    </fieldset> : snapshot ? <p className="dsh-pi-muted">{t('museCatalogDiagnostic')}</p> : null}
-    {busy ? <p role="status" className="dsh-pi-muted">{t('loading')}</p> : saved ? <p role="status" className="dsh-pi-success">{t('museModelSaved')}</p> : null}
-    {selectedModel?.contributor ? <p className="dsh-pi-note">{t('metaContributorHint')}</p> : null}
-    {selectedModel?.entitlement === 'unverified' ? <p className="dsh-pi-muted">{t('museEntitlementUnverified')}</p> : null}
-  </Modal>
 }
 
 export function UpdateUI({ controller, t }) {
@@ -526,7 +472,6 @@ function ConnectionRow({ entry, controller, t, writableRevision, onOpen, onLogin
   }
   const meta = [
     ownerManaged ? `${t(`directory_${entry.directoryState ?? 'unavailable'}`)} · ${entry.source ?? t('sourceUnknown')}` : `${t(entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')} · ${t(status.copy)}`,
-    entry.integrationId === 'meta-muse-code' ? museModelName(entry, t) : undefined,
   ].filter(Boolean).join(' · ')
   const main = <><span className="dsh-pi-row-name">{ownerManaged ? null : <StateDot state={status.dot} size={8} />}{entry.displayName}</span>
     <span className={`dsh-pi-row-meta${status.dot === 'error' ? ' dsh-pi-row-meta-alert' : ''}`}>{meta}</span></>
@@ -583,7 +528,7 @@ export function ConnectionUI({ controller, updates, locale }) {
     {state.status === 'ready' && groups.size === 0 && !state.error ? <p className="dsh-pi-muted">{t(state.entries.length ? 'noResults' : 'emptyConnections')}</p> : null}
     {updates ? <UpdateUI controller={updates} t={t} /> : null}
     {opened?.kind === 'login' ? <LoginDialog {...opened} controller={controller} t={t} onClose={close} onModels={onModels} /> : null}
-    {opened?.kind === 'models' ? opened.entry.integrationId === 'meta-muse-code' ? <MuseModelsDialog entry={opened.entry} controller={controller} t={t} onClose={close} /> : <ModelsDialog entry={opened.entry} controller={controller} t={t} onClose={close} /> : null}
+    {opened?.kind === 'models' ? <ModelsDialog entry={opened.entry} controller={controller} t={t} onClose={close} /> : null}
     {opened?.kind === 'add' ? <AddDialog state={state} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
     {opened?.kind === 'settings' ? <ConnectionDialog key={opened.entry.connectionId} entry={opened.entry} state={state} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
   </section>
