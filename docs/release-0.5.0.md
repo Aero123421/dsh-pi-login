@@ -7,4 +7,4 @@
 - 切断後は保存した操作IDとmanager結果を照合します。結果不明、取消、導入失敗、上位設定、再起動待ち、実行版反映を区別します。新しい版が実際に動作し、導入版も一致したときだけ更新済みと表示します。
 - manager不在、read-only、開発用導入元、互換性不明では理由と手動更新先を表示します。
 
-検証：unit 63件、build、公式Cordis／認証／Connection互換チェック、runtime／Fastテスト、公式UIのPlaywright（日本語・light/dark・390px・更新候補と再起動待ち・解除）、pack、実DSH 0.2.1-alpha.2の空profileへのtgz導入と再起動後の0.5.0実行版確認が成功しました。実アカウント、Windows・macOS実機は未検証です。公開前の0.5.0 Releaseタグへの自己更新は公開後の確認対象です。
+検証：unit 64件、build、公式Cordis／認証／Connection互換チェック、runtime／Fastテスト、公式UIのPlaywright（日本語・light/dark・390px・更新候補と再起動待ち・解除）、pack、実DSH 0.2.1-alpha.2の空profileへのtgz導入と再起動後の0.5.0実行版確認が成功しました。実アカウント、Windows・macOS実機は未検証です。公開前の0.5.0 Releaseタグへの自己更新は公開後の確認対象です。

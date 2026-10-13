@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
@@ -148,4 +148,15 @@ test('post-invocation transport failure remains unknown and reconciles the origi
   const restarted = new PluginUpdates({ manager: () => manager, profileDir: directory, version, runtimeVersion: async () => '0.2.1-alpha.2' })
   assert.equal((await restarted.reconcile(id)).status, 'applied')
   assert.equal(calls.length, 1)
+})
+
+test('release-named local directories and links remain manual sources', async t => {
+  const { updater, bundle, directory } = await fixture(t)
+  const source = join(directory, 'local-dsh-pi-login-0.5.0.tgz')
+  bundle.source = `file:${source}`
+  await mkdir(source)
+  assert.equal((await updater.status()).reason, 'source')
+  await rm(source, { recursive: true }); const target = join(directory, 'original.tgz'); await writeFile(target, 'fixture')
+  await symlink(target, source)
+  assert.equal((await updater.status()).reason, 'source')
 })

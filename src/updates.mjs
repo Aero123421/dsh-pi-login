@@ -173,6 +173,9 @@ export class PluginUpdates {
     const bundle = (await manager.listBundles()).find(item => item.name === PACKAGE)
     if (!bundle?.installed || bundle.readOnlyReason || bundle.error) throw new Error('read-only')
     const source = sourceKind(bundle.source, this.cacheDir, bundle.version)
+    if (bundle.source.startsWith('file:')) {
+      try { if (!(await lstat(bundle.source.slice(5))).isFile()) throw new Error('source') } catch { throw new Error('source') }
+    }
     const dshVersion = await this.runtimeVersion(); semanticVersion(dshVersion)
     return { manager, bundle, source, dshVersion }
   }
