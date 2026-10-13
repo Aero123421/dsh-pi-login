@@ -70,3 +70,15 @@ npm run update:pi -- 1.1.0
 1. `upstream.json`のコミットとバージョンを変更し、古い`.cache/upstream`を退避します。
 2. `src/runtime`と[元アダプター](../src/runtime/UPSTREAM.md)を比較します。
 3. HostのpeerDependencies、UI部品、認証・LLM APIの互換性を確認し、ビルドとテストを実行します。
+
+## プラグイン更新UI（0.5.0）
+
+更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。現行配布版のexact DSH peerと実行版が一致する場合だけ候補にします。範囲指定など判定できない互換性は導入せず表示します。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
+
+GitHub shorthand／git+httpsの導入元は明示タグへ、Release URL／保存済み検証tgz／`local-dsh-pi-login-<導入版>.tgz`という名前の`file:`導入元は検証済みtgzへ更新します。ファイル名は配布経路の分類にだけ使い、旧ファイルの真正性を保証するものとは扱いません。その他の導入元は手動更新です。
+
+Clientはbegin送信前にUUIDをsessionStorageへ保存します。HostはUUIDを検証してDSHの`PluginInstallRequestId`型へ変換し、profileへ操作記録を書いてからmanagerに委譲します。再接続では同IDを照合し、`waitForInstall()`のnullを成功に変換しません。実行版の反映、再起動待ち、失敗、取消、上位設定による無効化、結果不明を分けます。生のpackage出力や認証情報は記録・表示しません。
+
+プラグインの解除は取得処理だけを中止します。開始済み導入はmanagerが所有し、その結果を書き戻す処理とprofile参照中のtgzを解除時に削除しません。承認済みbuild scriptを自動指定しません。応答生成やSDK・system promptは変更しません。
+
+検証：`npm test`（61件）、`npm run build`、`npm run test:compat`、`npm run test:runtime`、Chromiumを指定した`npm run test:browser`が成功しました。ブラウザでは更新欄が共通フッターに1つだけあり、manager不在の説明、更新確認中の重複防止、候補・再起動待ち表示、390pxの日本語表示、解除を確認しました。`npm run pack:plugin`と`npm run test:install`を使い、実DSH `0.2.1-alpha.2`の独立した空profileへ0.5.0のtgzを導入し、再起動後の実行版とmanager対応、公開Releaseの確認を検証しました。実アカウント認証、Windows・macOS実機、公開前の0.5.0タグへの更新は未検証です。

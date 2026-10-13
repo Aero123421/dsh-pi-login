@@ -26,3 +26,8 @@
 .dsh-pi-model-label { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .dsh-pi-model-id { font-size: 12px; }
 .dsh-pi-login [role='alert'] { overflow-wrap: anywhere; }
+
+.dsh-pi-login .dsh-pi-updates { margin-top: 20px; border-top: 1px solid var(--dsw-alias-border-l2); padding-top: 12px; min-width: 0; }
+.dsh-pi-login .dsh-pi-updates h4 { margin: 0; }
+.dsh-pi-login .dsh-pi-update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
+.dsh-pi-login .dsh-pi-updates .dsh-pi-actions { flex-wrap: wrap; }
