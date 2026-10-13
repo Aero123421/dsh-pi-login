@@ -23,6 +23,16 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
       - run: npm run pack:plugin
+      - name: Upload package and UI comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-pi-login-${{ github.sha }}
+          path: |
+            artifacts/*.tgz
+            artifacts/SHA256SUMS
+            .github/ui-review/
+          if-no-files-found: error
+          retention-days: 14
       - name: Install pinned DSH CLI for real profile smoke
         run: npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.2
       - name: Verify installed profile and live Release lookup
