@@ -2,9 +2,6 @@ name: Publish Pi plugin release
 on:
   push:
     tags: ['v*']
-    # Bootstrap this release workflow after the existing v0.4.1 tag was pushed.
-    branches: [main]
-    paths: ['.github/workflows/release.yml']
   workflow_dispatch:
 
 permissions:
