@@ -842,6 +842,7 @@ var PluginUpdates = class {
     await rename(index, join(directory, "latest.json"));
   }
   async execute(candidate, operation) {
+    let managerInvoked = false;
     try {
       const before = await this.capability();
       const fresh = await this.getCandidate(before.bundle.version ?? this.version);
@@ -863,11 +864,12 @@ var PluginUpdates = class {
       const spec = latest.source === "github" ? `github:${REPOSITORY}#${candidate.tag}` : path;
       operation.status = "installing";
       await this.save(operation);
+      managerInvoked = true;
       const result = await latest.manager.installBundle(spec, { enabled: latest.bundle.enabled, requestId: operation.requestId, saveExact: true });
       operation.status = resultState(result, operation.version, this.version);
       operation.result = safeResult(result);
     } catch (error) {
-      operation.status = "failed";
+      operation.status = managerInvoked ? "unknown" : "failed";
       operation.reason = reasonOf(error);
     }
     try {
@@ -891,7 +893,7 @@ var PluginUpdates = class {
       operation.reason = "interrupted";
       await this.save(operation);
     }
-    if (operation.status === "installing") {
+    if (["installing", "unknown"].includes(operation.status) && !operation.result) {
       const manager = this.manager();
       const result = manager && await manager.waitForInstall(requestId);
       if (result) {

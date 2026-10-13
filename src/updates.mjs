@@ -245,6 +245,7 @@ export class PluginUpdates {
     await writeFile(index, JSON.stringify({ requestId: operation.requestId }), { flag: 'wx', mode: 0o600 }); await rename(index, join(directory, 'latest.json'))
   }
   async execute(candidate, operation) {
+    let managerInvoked = false
     try {
       const before = await this.capability()
       const fresh = await this.getCandidate(before.bundle.version ?? this.version)
@@ -265,10 +266,11 @@ export class PluginUpdates {
       if (latest.bundle.source !== before.bundle.source || latest.bundle.enabled !== before.bundle.enabled || this.isBusy() || this.closed) throw new Error('busy')
       const spec = latest.source === 'github' ? `github:${REPOSITORY}#${candidate.tag}` : path
       operation.status = 'installing'; await this.save(operation)
+      managerInvoked = true
       const result = await latest.manager.installBundle(spec, { enabled: latest.bundle.enabled, requestId: operation.requestId, saveExact: true })
       operation.status = resultState(result, operation.version, this.version)
       operation.result = safeResult(result)
-    } catch (error) { operation.status = 'failed'; operation.reason = reasonOf(error) }
+    } catch (error) { operation.status = managerInvoked ? 'unknown' : 'failed'; operation.reason = reasonOf(error) }
     try { await this.save(operation) } catch { /* Manager retains its running operation; reconcile still checks it. */ }
   }
   async reconcile(requestId) {
@@ -279,7 +281,7 @@ export class PluginUpdates {
     semanticVersion(operation.version)
     if (this.running?.requestId === requestId) return { ...this.base(), ...this.running }
     if (operation.status === 'preparing') { operation.status = 'failed'; operation.reason = 'interrupted'; await this.save(operation) }
-    if (operation.status === 'installing') {
+    if (['installing', 'unknown'].includes(operation.status) && !operation.result) {
       const manager = this.manager()
       const result = manager && await manager.waitForInstall(requestId)
       if (result) { operation.result = safeResult(result); operation.status = resultState(result, operation.version, this.version); await this.save(operation) }

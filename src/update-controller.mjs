@@ -47,7 +47,13 @@ export class UpdateController {
       this.requestId = state.requestId
       try { this.storage?.setItem(STORAGE, state.requestId) } catch {}
       if (generation === this.generation) { this.publish({ ...this.state, ...state }); await this.load() }
-    } catch (error) { if (generation === this.generation) this.publish({ ...this.state, status: error.rejected ? 'failed' : 'unknown', reason: error.message.endsWith('/busy') ? 'busy' : 'network' }) }
+    } catch (error) {
+      if (error.rejected) {
+        this.requestId = undefined
+        try { this.storage?.removeItem(STORAGE) } catch {}
+      }
+      if (generation === this.generation) this.publish({ ...this.state, status: error.rejected ? 'failed' : 'unknown', reason: error.message.endsWith('/busy') ? 'busy' : 'network' })
+    }
   }
   dispose() { this.closed = true; this.generation++; clearTimeout(this.timer); this.listeners.clear() }
 }

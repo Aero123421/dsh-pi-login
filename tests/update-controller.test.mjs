@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { UpdateController } from '../src/update-controller.mjs'
 const tick = () => new Promise(resolve => setImmediate(resolve))
-function storage() { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value) } }
+function storage() { const values = new Map(); return { getItem: key => values.get(key), setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) } }
 function deferred() { let resolve; const promise = new Promise(r => { resolve = r }); return { promise, resolve } }
 
 test('lost begin response retains operation id before RPC and reconnect never resubmits', async () => {
@@ -35,4 +35,19 @@ test('explicit host refusal is failed rather than unknown or success', async () 
   const controller = new UpdateController({ rpc: { call: async () => ({ ok: false, error: { code: 'dsh-pi-login/busy' } }) } }, storage())
   controller.publish({ status: 'available', candidate: { id: '7' } }); await controller.begin()
   assert.equal(controller.state.status, 'failed'); assert.equal(controller.state.reason, 'busy'); controller.dispose()
+})
+
+test('authoritative begin refusal clears the rejected id and reconnect discovers the accepted operation', async () => {
+  const saved = storage(), calls = []
+  const controller = new UpdateController({ rpc: { call: async (_path, method, payload) => {
+    calls.push({ method, payload })
+    return method.endsWith('begin') ? { ok: false, error: { code: 'dsh-pi-login/busy' } } : { ok: true, value: { status: 'restart-required', requestId: 'accepted-operation', runtimeVersion: '0.5.0' } }
+  } } }, saved)
+  controller.publish({ status: 'available', candidate: { id: '7' } }); await controller.begin()
+  assert.equal(saved.getItem('dsh-pi-login:update'), undefined)
+  await controller.load()
+  assert.equal(calls.at(-1).method, 'dsh-pi-login/update-status')
+  assert.equal(controller.state.status, 'restart-required')
+  assert.equal(controller.requestId, 'accepted-operation')
+  controller.dispose()
 })

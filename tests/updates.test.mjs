@@ -136,3 +136,16 @@ test('verified archive with wrong package metadata is refused and disposal abort
   await stopped.updater.begin('7', randomUUID()); stopped.updater.dispose(); await settle(stopped.updater)
   assert.equal(stopped.calls.length, 0)
 })
+
+test('post-invocation transport failure remains unknown and reconciles the original manager request', async t => {
+  const { updater, manager, bundle, directory, calls } = await fixture(t)
+  let waited = 0
+  manager.installBundle = async (...args) => { calls.push(args); bundle.version = version; throw new Error('response lost after manager admission') }
+  manager.waitForInstall = async () => { waited++; return { changed: true, application: 'restart-required', stage: 'install', target: PACKAGE, bundle: PACKAGE, version } }
+  await updater.check(); const id = randomUUID(); await updater.begin('7', id); await settle(updater)
+  assert.equal((await updater.reconcile(id)).status, 'restart-required')
+  assert.equal(waited, 1); assert.equal(calls.length, 1)
+  const restarted = new PluginUpdates({ manager: () => manager, profileDir: directory, version, runtimeVersion: async () => '0.2.1-alpha.2' })
+  assert.equal((await restarted.reconcile(id)).status, 'applied')
+  assert.equal(calls.length, 1)
+})
