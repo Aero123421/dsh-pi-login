@@ -160,3 +160,18 @@ test('release-named local directories and links remain manual sources', async t 
   await symlink(target, source)
   assert.equal((await updater.status()).reason, 'source')
 })
+
+test('disposal or active login during the awaited journal save cannot start manager installation', async t => {
+  for (const action of ['dispose', 'login']) {
+    let busy = false, reached, release
+    const waiting = new Promise(resolve => { reached = resolve })
+    const gate = new Promise(resolve => { release = resolve })
+    const { updater, calls } = await fixture(t, { isBusy: () => busy })
+    const save = updater.save.bind(updater)
+    updater.save = async operation => { await save(operation); if (operation.status === 'installing') { reached(); await gate } }
+    await updater.check(); await updater.begin('7', randomUUID()); await waiting
+    if (action === 'dispose') updater.dispose(); else busy = true
+    release(); await settle(updater)
+    assert.equal(calls.length, 0)
+  }
+})

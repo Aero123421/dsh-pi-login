@@ -871,6 +871,7 @@ var PluginUpdates = class {
       const spec = latest.source === "github" ? `github:${REPOSITORY}#${candidate.tag}` : path;
       operation.status = "installing";
       await this.save(operation);
+      if (this.closed || this.isBusy()) throw new Error("busy");
       managerInvoked = true;
       const result = await latest.manager.installBundle(spec, { enabled: latest.bundle.enabled, requestId: operation.requestId, saveExact: true });
       operation.status = resultState(result, operation.version, this.version);

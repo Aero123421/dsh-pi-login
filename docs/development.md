@@ -81,4 +81,4 @@ Clientはbegin送信前にUUIDをsessionStorageへ保存します。HostはUUID�
 
 プラグインの解除は取得処理だけを中止します。開始済み導入はmanagerが所有し、その結果を書き戻す処理とprofile参照中のtgzを解除時に削除しません。承認済みbuild scriptを自動指定しません。応答生成やSDK・system promptは変更しません。
 
-検証：`npm test`（64件）、`npm run build`、`npm run test:compat`、`npm run test:runtime`、Chromiumを指定した`npm run test:browser`が成功しました。ブラウザでは更新欄が共通フッターに1つだけあり、manager不在の説明、更新確認中の重複防止、候補・再起動待ち表示、390pxの日本語表示、解除を確認しました。`npm run pack:plugin`と`npm run test:install`を使い、実DSH `0.2.1-alpha.2`の独立した空profileへ0.5.0のtgzを導入し、再起動後の実行版とmanager対応、公開Releaseの確認を検証しました。実アカウント認証、Windows・macOS実機、公開前の0.5.0タグへの更新は未検証です。
+検証：`npm test`（65件）、`npm run build`、`npm run test:compat`、`npm run test:runtime`、Chromiumを指定した`npm run test:browser`が成功しました。ブラウザでは更新欄が共通フッターに1つだけあり、manager不在の説明、更新確認中の重複防止、候補・再起動待ち表示、390pxの日本語表示、解除を確認しました。`npm run pack:plugin`と`npm run test:install`を使い、実DSH `0.2.1-alpha.2`の独立した空profileへ0.5.0のtgzを導入し、再起動後の実行版とmanager対応、公開Releaseの確認を検証しました。実アカウント認証、Windows・macOS実機、公開前の0.5.0タグへの更新は未検証です。
