@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, writeFile, readFile, lstat, rm } from 'node:fs/promises'
-import { join, isAbsolute } from 'node:path'
+import { accessSync, constants } from 'node:fs'
+import { homedir } from 'node:os'
+import { join, isAbsolute, delimiter } from 'node:path'
 import { MuseCodeError } from './muse-code.mjs'
 import { normalizeMuseCodeCatalog, normalizeMuseCodeUsage } from './muse-code-observations.mjs'
 
@@ -9,7 +11,8 @@ export const MUSE_CODE_MODELS = Object.freeze(['muse-wonder-1.0', 'muse-wonder-f
 const ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const secret = value => typeof value === 'string' && value.length > 0 && value.length <= 1024 * 1024
-const modeKey = key => /^(?:[a-z_]+\.)*contributor_mode$/.test(key)
+// Muse Code 1.4.x names it `contributor_mode_enabled` (hidden; absent until written).
+const modeKey = key => /^(?:[a-z_]+\.)*contributor_mode(?:_enabled)?$/.test(key)
 const opaqueId = value => typeof value === 'string' && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value)
 const EFFORTS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
 const fail = code => { throw new MuseCodeError(code) }
@@ -66,14 +69,29 @@ export function museCodeEnvironment(home, dataRoot, environment = process.env, p
   return env
 }
 
+/**
+ * Desktop apps started outside a shell (macOS Finder, Dock) do not inherit the
+ * shell PATH, so also try the official installer's default `~/.local/bin`.
+ */
+export function resolveMuseBin(environment = process.env, home = homedir(), platform = process.platform) {
+  if (platform === 'win32') return 'muse'
+  for (const dir of (environment.PATH ?? '').split(delimiter).filter(Boolean)) {
+    const candidate = join(dir, 'muse')
+    try { accessSync(candidate, constants.X_OK); return candidate } catch {}
+  }
+  const installed = join(home, '.local', 'bin', 'muse')
+  try { accessSync(installed, constants.X_OK); return installed } catch {}
+  return 'muse'
+}
+
 /** Actual official SDK factory. No paid request happens at spawn/handshake. */
-export function createSdkMuseHostFactory({ museBin = 'muse', sdkLoader = () => import('@muse-code/sdk') } = {}) {
+export function createSdkMuseHostFactory({ museBin, sdkLoader = () => import('@muse-code/sdk') } = {}) {
   return async ({ home, dataRoot, env, signal }) => {
     let handshake, abort
     try {
       const sdk = await sdkLoader()
       signal?.throwIfAborted()
-      handshake = sdk.spawnMspConnection({ command: museBin, args: ['serve'], cwd: home, env,
+      handshake = sdk.spawnMspConnection({ command: museBin ?? resolveMuseBin(), args: ['serve'], cwd: home, env,
         shutdownTimeoutMs: 5000 })
       abort = () => { void handshake.close().catch(() => {}) }
       signal?.addEventListener('abort', abort, { once: true })
@@ -110,7 +128,8 @@ export function createSdkMuseHostFactory({ museBin = 'muse', sdkLoader = () => i
 export function museCodeAuthDocument(value) {
   const meta = value?.providers?.meta
   if (!object(value) || !Number.isSafeInteger(value.schema_version) || value.schema_version < 1
-    || !object(meta) || meta.mechanism !== 'oauth' || !secret(meta.access_token) || !secret(meta.api_key)
+    || !object(meta) || meta.mechanism !== undefined && meta.mechanism !== 'oauth' || !secret(meta.access_token)
+    || meta.api_key !== undefined && !secret(meta.api_key)
     || meta.storage === 'keychain') fail('muse-code-login-failed')
   if (meta.api_base_url !== undefined) {
     let url
@@ -142,7 +161,10 @@ async function bounded(work, signal, timeout = 20_000) {
     return await Promise.race([Promise.resolve().then(work), cancelled])
   } catch (error) {
     if (error instanceof MuseCodeError) throw error
-    fail('muse-code-protocol-unsupported')
+    // Only a missing/experimental-gated method means the CLI lacks the surface.
+    // Every other host error is reported as unavailable, not as an outdated CLI.
+    if (['methodNotFound', 'experimentalRequired', 'capabilityRequired'].includes(error?.kind)) fail('muse-code-protocol-unsupported')
+    fail('muse-code-unavailable')
   } finally {
     clearTimeout(timeoutId)
     if (abort) combined.removeEventListener('abort', abort)
@@ -237,7 +259,8 @@ export class MuseCodeHostManager {
       const schema = await request('settings/readSchema')
       const values = await request('settings/read')
       if (schema?.schemaVersion !== 1 || !object(schema.keys) || values?.schemaVersion !== 1 || !object(values.values)) fail('muse-code-protocol-unsupported')
-      const keys = Object.keys(schema.keys).filter(key => modeKey(key) && typeof values.values[key] === 'boolean')
+      const keys = Object.keys(schema.keys).filter(key => modeKey(key) && schema.keys[key]?.type === 'boolean'
+        && ['boolean', 'undefined'].includes(typeof values.values[key]))
       if (keys.length !== 1) fail('muse-code-mode-unavailable')
       const keyPath = keys[0]
       const applyMode = async enabled => {

@@ -25,6 +25,15 @@ async function packageRoots(folder, result = new Map()) {
   return result
 }
 
+// Test files compile in parallel and share these generated inputs. A plain
+// writeFile truncates first, so a concurrent build could read an empty module.
+async function writeAtomic(path, text) {
+  const { writeFile, rename } = await import('node:fs/promises')
+  const temporary = `${path}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
+  await writeFile(temporary, text)
+  await rename(temporary, path)
+}
+
 export async function compileOfficial(entry, outfile, platform='node') {
   await ensureUpstream()
   const roots=await packageRoots(upstreamRoot)
@@ -33,9 +42,9 @@ export async function compileOfficial(entry, outfile, platform='node') {
   const llmAst=ts.createSourceFile('llm.ts',llmSource,ts.ScriptTarget.Latest,true)
   const contract=llmAst.statements.filter(node=>['LlmError','LlmAdapter','assertUsableApiKey'].includes(node.name?.text)).map(node=>node.getText(llmAst)).join('\n')
   const errors=resolve('.cache/official-llm-contract.ts')
-  await (await import('node:fs/promises')).writeFile(errors, `import { HarnessError, INVALID_CREDENTIAL_CODE } from './upstream/packages/llm/llm/src/error.ts';\nimport { normalizeApiKey } from './upstream/packages/llm/llm/src/api-key.ts';\nexport * from './upstream/packages/llm/llm/src/error.ts';\nexport * from './upstream/packages/llm/llm/src/api-key.ts';\nexport * from './upstream/packages/llm/llm/src/attribution.ts';\nexport * from './upstream/packages/llm/llm/src/brand.ts';\nexport * from './upstream/packages/llm/llm/src/content.ts';\nexport * from './upstream/packages/llm/llm/src/retry-policy.ts';\n${contract}\n`)
+  await writeAtomic(errors, `import { HarnessError, INVALID_CREDENTIAL_CODE } from './upstream/packages/llm/llm/src/error.ts';\nimport { normalizeApiKey } from './upstream/packages/llm/llm/src/api-key.ts';\nexport * from './upstream/packages/llm/llm/src/error.ts';\nexport * from './upstream/packages/llm/llm/src/api-key.ts';\nexport * from './upstream/packages/llm/llm/src/attribution.ts';\nexport * from './upstream/packages/llm/llm/src/brand.ts';\nexport * from './upstream/packages/llm/llm/src/content.ts';\nexport * from './upstream/packages/llm/llm/src/retry-policy.ts';\n${contract}\n`)
   const primitiveEntry=resolve('.cache/official-locale-primitives.ts')
-  await (await import('node:fs/promises')).writeFile(primitiveEntry, `export { Menu } from './upstream/packages/client/ui-primitives/src/Menu.tsx';\nexport { IconChevronDownOutlineRegular } from './upstream/packages/client/ui-primitives/src/icons/index.tsx';\n`)
+  await writeAtomic(primitiveEntry, `export { Menu } from './upstream/packages/client/ui-primitives/src/Menu.tsx';\nexport { IconChevronDownOutlineRegular } from './upstream/packages/client/ui-primitives/src/icons/index.tsx';\n`)
   const aliases={name:'official-source-packages',setup(builder){
     builder.onResolve({filter:/^@deepseek-ai\//},async args=>{
       if(args.path==='@deepseek-ai/dsh-llm')return {path:errors}

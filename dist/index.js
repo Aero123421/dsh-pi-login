@@ -8649,7 +8649,9 @@ var AccountUsageManager = class {
 // src/muse-code-host.mjs
 import { createHash as createHash6 } from "node:crypto";
 import { mkdir as mkdir2, mkdtemp as mkdtemp2, writeFile as writeFile2, readFile as readFile2, lstat as lstat2, rm } from "node:fs/promises";
-import { join as join2, isAbsolute } from "node:path";
+import { accessSync, constants } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join2, isAbsolute, delimiter } from "node:path";
 
 // src/muse-code-observations.mjs
 var EFFORTS = /* @__PURE__ */ new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
@@ -8744,7 +8746,7 @@ var MUSE_CODE_MODELS = Object.freeze(["muse-wonder-1.0", "muse-wonder-full-1.0"]
 var ID2 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 var object3 = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 var secret = (value) => typeof value === "string" && value.length > 0 && value.length <= 1024 * 1024;
-var modeKey = (key) => /^(?:[a-z_]+\.)*contributor_mode$/.test(key);
+var modeKey = (key) => /^(?:[a-z_]+\.)*contributor_mode(?:_enabled)?$/.test(key);
 var opaqueId = (value) => typeof value === "string" && value.length > 0 && value.length <= 200 && !/[\u0000-\u001f\u007f]/.test(value);
 var EFFORTS2 = /* @__PURE__ */ new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 var fail = (code) => {
@@ -8824,14 +8826,32 @@ function museCodeEnvironment(home, dataRoot, environment = process.env, platform
   if (platform === "win32") Object.assign(env, { APPDATA: join2(home, "AppData", "Roaming"), LOCALAPPDATA: join2(home, "AppData", "Local") });
   return env;
 }
-function createSdkMuseHostFactory({ museBin = "muse", sdkLoader = () => Promise.resolve().then(() => (init_src(), src_exports)) } = {}) {
+function resolveMuseBin(environment = process.env, home = homedir2(), platform = process.platform) {
+  if (platform === "win32") return "muse";
+  for (const dir of (environment.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const candidate = join2(dir, "muse");
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+    }
+  }
+  const installed = join2(home, ".local", "bin", "muse");
+  try {
+    accessSync(installed, constants.X_OK);
+    return installed;
+  } catch {
+  }
+  return "muse";
+}
+function createSdkMuseHostFactory({ museBin, sdkLoader = () => Promise.resolve().then(() => (init_src(), src_exports)) } = {}) {
   return async ({ home, dataRoot, env, signal }) => {
     let handshake, abort;
     try {
       const sdk = await sdkLoader();
       signal?.throwIfAborted();
       handshake = sdk.spawnMspConnection({
-        command: museBin,
+        command: museBin ?? resolveMuseBin(),
         args: ["serve"],
         cwd: home,
         env,
@@ -8879,7 +8899,7 @@ function createSdkMuseHostFactory({ museBin = "muse", sdkLoader = () => Promise.
 }
 function museCodeAuthDocument(value) {
   const meta = value?.providers?.meta;
-  if (!object3(value) || !Number.isSafeInteger(value.schema_version) || value.schema_version < 1 || !object3(meta) || meta.mechanism !== "oauth" || !secret(meta.access_token) || !secret(meta.api_key) || meta.storage === "keychain") fail("muse-code-login-failed");
+  if (!object3(value) || !Number.isSafeInteger(value.schema_version) || value.schema_version < 1 || !object3(meta) || meta.mechanism !== void 0 && meta.mechanism !== "oauth" || !secret(meta.access_token) || meta.api_key !== void 0 && !secret(meta.api_key) || meta.storage === "keychain") fail("muse-code-login-failed");
   if (meta.api_base_url !== void 0) {
     let url;
     try {
@@ -8913,7 +8933,8 @@ async function bounded(work, signal, timeout = 2e4) {
     return await Promise.race([Promise.resolve().then(work), cancelled]);
   } catch (error) {
     if (error instanceof MuseCodeError) throw error;
-    fail("muse-code-protocol-unsupported");
+    if (["methodNotFound", "experimentalRequired", "capabilityRequired"].includes(error?.kind)) fail("muse-code-protocol-unsupported");
+    fail("muse-code-unavailable");
   } finally {
     clearTimeout(timeoutId);
     if (abort) combined.removeEventListener("abort", abort);
@@ -9023,7 +9044,7 @@ var MuseCodeHostManager = class {
         const schema = await request("settings/readSchema");
         const values = await request("settings/read");
         if (schema?.schemaVersion !== 1 || !object3(schema.keys) || values?.schemaVersion !== 1 || !object3(values.values)) fail("muse-code-protocol-unsupported");
-        const keys = Object.keys(schema.keys).filter((key) => modeKey(key) && typeof values.values[key] === "boolean");
+        const keys = Object.keys(schema.keys).filter((key) => modeKey(key) && schema.keys[key]?.type === "boolean" && ["boolean", "undefined"].includes(typeof values.values[key]));
         if (keys.length !== 1) fail("muse-code-mode-unavailable");
         const keyPath = keys[0];
         const applyMode = async (enabled) => {
