@@ -111,6 +111,11 @@ try {
  assert.equal(await page.title(),'Pi login test fixture')
  assert.equal(await page.locator('vite-error-overlay, #webpack-dev-server-client-overlay').count(),0)
  try {await page.getByRole('heading',{name:'Pi接続'}).waitFor()} catch(error) {await page.screenshot({path:artifact('browser-failure.png')});console.error('Page text:',await page.locator('body').innerText());throw error}
+ assert.equal(await page.getByRole('heading', { name: /^Piプラグイン/ }).count(), 1)
+ await page.getByText('plugin managerまたは書き込み可能なprofileがありません。配布ページから手動更新してください。', { exact: true }).waitFor()
+ await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).click()
+ await page.getByText('plugin managerまたは書き込み可能なprofileがありません。配布ページから手動更新してください。', { exact: true }).waitFor()
+ assert.equal(await page.locator('.dsh-pi-card .dsh-pi-updates').count(), 0)
  await page.screenshot({path:artifact('pi-login-light.png')})
  await page.getByRole('button',{name:'ログイン',exact:true}).first().click()
  await page.getByRole('link',{name:'ブラウザで続ける'}).waitFor()
@@ -213,6 +218,8 @@ try {
   }finally{await page.unroute(statePath,terminalState)}
  }
  await page.setViewportSize({width:390,height:760})
+ await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).scrollIntoViewIfNeeded()
+ assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
  await page.screenshot({path:artifact('pi-login-mobile.png')})
  await page.getByRole('button',{name:'モデルを選ぶ',exact:true}).first().click()
  const mobileFast=page.getByRole('switch',{name:'モデルを使う: GPT-6.1 Sol Fast',exact:true})
@@ -258,6 +265,36 @@ try {
  assert.deepEqual(providers.example.enabledDiscoveredModels, ['example-new'])
  await page.screenshot({ path: artifact('pi-generic-refresh-desktop.png') })
  await page.getByRole('button', { name: '閉じる', exact: true }).last().click()
+ // Plugin updates use one shared footer and independent request state.
+ let releaseCheckCount = 0, finishReleaseCheck
+ await page.route('**/api/dsh-pi-login/update-check', async route => {
+  releaseCheckCount++
+  await new Promise(resolve => { finishReleaseCheck = resolve })
+  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'available', runtimeVersion: '0.5.0', candidate: { id: 'fixture-release', version: '0.6.0', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } } } } })
+ })
+ await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).click()
+ await page.getByText('更新を確認中…', { exact: true }).waitFor()
+ assert.equal(await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).isDisabled(), true)
+ finishReleaseCheck()
+ await page.getByRole('button', { name: 'プラグインを更新する', exact: true }).waitFor()
+ assert.equal(releaseCheckCount, 1)
+ await page.setViewportSize({ width: 390, height: 760 })
+ await page.locator('.dsh-pi-updates').scrollIntoViewIfNeeded()
+ assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+ await page.screenshot({ path: artifact('pi-plugin-update-mobile.png') })
+ let begins = 0
+ await page.route('**/api/dsh-pi-login/update-begin', async route => {
+  begins++
+  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'installing', requestId: route.request().postDataJSON().payload.requestId, version: '0.6.0' } } } })
+ })
+ await page.route('**/api/dsh-pi-login/update-reconcile', async route => {
+  await route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value: { status: 'restart-required', runtimeVersion: '0.5.0', version: '0.6.0' } } } })
+ })
+ await page.getByRole('button', { name: 'プラグインを更新する', exact: true }).click()
+ await page.getByText('導入しました。現在の作業を終えてからDSHを再起動して適用してください。', { exact: true }).waitFor()
+ assert.equal(begins, 1)
+ assert.equal(await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).isDisabled(), true)
+ await page.screenshot({ path: artifact('pi-plugin-update-restart-mobile.png') })
  await page.evaluate(async()=>{await testRuntime.locale.setLocale('en');document.documentElement.lang='en'})
  await page.getByRole('heading',{name:'Pi connections'}).waitFor()
  await page.evaluate(()=>testRuntime.dispose())

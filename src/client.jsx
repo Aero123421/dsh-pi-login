@@ -1,6 +1,7 @@
 import React, { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { LoginController } from './controller.mjs'
+import { UpdateController } from './update-controller.mjs'
 import { en, ja } from './locales.mjs'
 import css from './styles.css'
 import controlsCss from '../.cache/native-controls.css'
@@ -180,7 +181,28 @@ function ModelsDialog({ entry, controller, t, onClose }) {
   </Modal>
 }
 
-export function ConnectionUI({ controller, locale, provider }) {
+export function UpdateUI({ controller, t }) {
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  useEffect(() => { void controller.load() }, [controller])
+  const active = ['checking', 'starting', 'preparing', 'installing'].includes(state.status)
+  const messages = { idle: 'updateIdle', checking: 'updateChecking', current: 'updateCurrent', available: 'updateAvailable', blocked: 'updateBlocked', starting: 'updatePreparing', preparing: 'updatePreparing', installing: 'updateInstalling', 'restart-required': 'updateRestart', applied: 'updateApplied', failed: 'updateFailed', cancelled: 'updateCancelled', overridden: 'updateOverridden', unknown: 'updateUnknown' }
+  return <div className="dsh-pi-updates">
+    <h4>{t('updateTitle')}{state.runtimeVersion ? ` · ${state.runtimeVersion}` : ''}</h4>
+    <p role={['failed', 'blocked'].includes(state.status) ? 'alert' : 'status'}>{t(messages[state.status] || 'updateUnknown')}</p>
+    {state.reason ? <p className="dsh-pi-muted">{t(`updateReason_${state.reason}`) || t('updateReason_network')}</p> : null}
+    {state.checkedAt ? <p className="dsh-pi-muted">{t('updateChecked')}: {new Date(state.checkedAt).toLocaleString()}</p> : null}
+    {state.candidate ? <><p>{state.runtimeVersion} → {state.candidate.version} · DSH {state.candidate.compatibility}</p><p className="dsh-pi-update-notes">{state.candidate.notes}</p></> : null}
+    <div className="dsh-pi-actions">
+      <Button size="sm" variant="outline" disabled={active || state.status === 'unknown' || state.status === 'restart-required'} onClick={() => { void controller.check() }}>{t('updateCheck')}</Button>
+      {state.status === 'available' ? <Button size="sm" variant="primary" onClick={() => { void controller.begin() }}>{t('updateInstall')}</Button> : null}
+      {state.status === 'unknown' ? <Button size="sm" variant="outline" onClick={() => { void controller.load() }}>{t('updateReconcile')}</Button> : null}
+      <a className="dsh-pi-link" href="https://github.com/Aero123421/dsh-pi-login/releases" target="_blank" rel="noopener noreferrer">{t('updateManual')}</a>
+    </div>
+    {state.result?.stage ? <p className="dsh-pi-muted">{t('updateStage')}: {state.result.stage}{state.result.error?.code ? ` · ${state.result.error.code}` : ''}</p> : null}
+  </div>
+}
+
+export function ConnectionUI({ controller, updates, locale, provider }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const t = useCopy(locale)
   const [selected, setSelected] = useState('llm-pi-ai/openai')
@@ -221,6 +243,7 @@ export function ConnectionUI({ controller, locale, provider }) {
       {error ? <p role="alert">{t('saveFailed')}</p> : null}
       {!entry.writable ? <p className="dsh-pi-muted">{t('readOnly')}</p> : null}
     </> : null}
+    {!provider && updates ? <UpdateUI controller={updates} t={t} /> : null}
     {opened ? <LoginDialog {...opened} controller={controller} t={t} onClose={() => setOpened(undefined)} /> : null}
     {choosingModels && entry ? <ModelsDialog entry={entry} controller={controller} t={t} onClose={() => setChoosingModels(false)} /> : null}
   </section>
@@ -228,14 +251,16 @@ export function ConnectionUI({ controller, locale, provider }) {
 
 export function apply(ctx) {
   const controller = new LoginController(ctx.connection)
+  const updates = new UpdateController(ctx.connection)
+  ctx.effect(() => () => updates.dispose(), 'dsh-pi-login: update requests')
   ctx.effect(() => () => controller.dispose(), 'dsh-pi-login: UI requests')
   ctx.effect(() => ctx.locale.register(NS, { en, ja }), 'dsh-pi-login: copy')
   ctx.effect(() => {
     const style = document.createElement('style'); style.dataset.dshPiLogin = ''; style.textContent = controlsCss + css; document.head.append(style)
     return () => style.remove()
   }, 'dsh-pi-login: official controls')
-  ctx.on('connection/reset', () => { void controller.refresh() })
-  const inject = () => ({ controller, locale: ctx.locale })
+  ctx.on('connection/reset', () => { void controller.refresh(); void updates.load() })
+  const inject = () => ({ controller, updates, locale: ctx.locale })
   ctx.slots.inject('settings.models.footer', () => ctx.slots.register({ name: 'settings.models.footer', id: 'dsh-pi-login', order: 10, inject }, ConnectionUI))
   ctx.slots.inject('settings.models.provider-card', () => ctx.slots.register({ name: 'settings.models.provider-card', id: 'dsh-pi-login', key: 'dsh-pi-login', inject }, ConnectionUI))
 }

@@ -1,7 +1,7 @@
 {
   "name": "@local/dsh-pi-login",
-  "version": "0.4.1",
-  "description": "DeepSeek Harness用のPiログインとモデル管理",
+  "version": "0.5.0",
+  "description": "DeepSeek Harness\u7528\u306ePi\u30ed\u30b0\u30a4\u30f3\u3068\u30e2\u30c7\u30eb\u7ba1\u7406",
   "type": "module",
   "license": "MIT",
   "exports": {
@@ -54,7 +54,8 @@
     "@deepseek-ai/dsh-llm": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-timeout": "0.2.1-alpha.2",
     "@deepseek-ai/dsh-util-values": "0.2.1-alpha.2",
-    "@deepseek-ai/schemastery": "3.18.5-alpha.1"
+    "@deepseek-ai/schemastery": "3.18.5-alpha.1",
+    "@deepseek-ai/dsh-app-boot": "0.2.1-alpha.2"
   },
   "peerDependenciesMeta": {
     "@deepseek-ai/cordis": {
@@ -83,6 +84,9 @@
     },
     "@deepseek-ai/schemastery": {
       "optional": true
+    },
+    "@deepseek-ai/dsh-app-boot": {
+      "optional": true
     }
   },
   "scripts": {
@@ -92,7 +96,8 @@
     "pack:plugin": "node scripts/pack.mjs",
     "test:compat": "node scripts/compat-check.mjs",
     "test:runtime": "node scripts/runtime-check.mjs",
-    "update:pi": "node scripts/update-pi.mjs"
+    "update:pi": "node scripts/update-pi.mjs",
+    "test:install": "node scripts/install-check.mjs"
   },
   "devDependencies": {
     "clsx": "^2.1.1",
