@@ -598,7 +598,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.7.0",
+  version: "0.7.1",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -1261,10 +1261,10 @@ function validateHeaderRefs(value) {
   return { ...value };
 }
 var ConnectionManager = class {
-  constructor({ settings, credentials, registry, validateProfile = () => {
+  constructor({ settings, credentials, registry, connectionSnapshot, validateProfile = () => {
   }, onChange = () => {
   }, legacyProviders = () => ({}), extraConnections = async () => [] }) {
-    Object.assign(this, { settings, credentials, registry, validateProfile, onChange, legacyProviders, extraConnections });
+    Object.assign(this, { settings, credentials, registry, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections });
     this.closed = false;
     this.pendingLogins = /* @__PURE__ */ new Set();
     this.verified = /* @__PURE__ */ new Map();
@@ -1272,8 +1272,10 @@ var ConnectionManager = class {
   section() {
     return this.settings.describe({ redactSecrets: false }).find((row) => row.ns === NS2);
   }
+  // SettingsForms describes only ACTIVE fibers. Catalog resolution also runs
+  // during apply(), so read the owning fiber's live Config before activation.
   raw() {
-    return this.section()?.value?.connections ?? {};
+    return this.connectionSnapshot?.() ?? this.section()?.value?.connections ?? {};
   }
   lookup(connectionId2) {
     if (this.closed || typeof connectionId2 !== "string" || !Object.hasOwn(this.raw(), connectionId2)) throw new ConnectionError("connection-unavailable");
@@ -5664,6 +5666,7 @@ function apply2(ctx, config, options = {}) {
     credentials: ctx.credentials,
     registry,
     legacyProviders,
+    connectionSnapshot: () => config.connections.get(),
     validateProfile: (connection) => resolveConnectionProfiles({ check: connection }),
     onChange: (connectionId2) => {
       for (const [id, value] of sessions) {

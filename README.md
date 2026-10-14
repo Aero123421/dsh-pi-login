@@ -12,7 +12,7 @@ Pi対応プロバイダーのログイン、接続ごとのモデル選択、ア
 github:Aero123421/dsh-pi-login
 ```
 
-「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.7.0)を使えます。
+「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.7.1)を使えます。
 
 WebプロファイルではCLIからも追加できます。
 

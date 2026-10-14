@@ -36,6 +36,7 @@ export function apply(ctx, config, options = {}) {
   })) })
   const manager = new ConnectionManager({
     settings: ctx.settings, credentials: ctx.credentials, registry, legacyProviders,
+    connectionSnapshot: () => config.connections.get(),
     validateProfile: connection => resolveConnectionProfiles({ check: connection }),
     onChange: connectionId => {
       for (const [id, value] of sessions) {

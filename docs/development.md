@@ -24,7 +24,7 @@ npm run pack:plugin
 | `test:runtime` | ビルド済みプラグインと公式RPCによる旧設定の移行、独立した接続の登録・鍵変更・削除、実SDKでのAPI A+B／Gateway／OAuth A+Bのローカル生成、token refreshの世代確認、Fast・Thinking・履歴の接続境界、429・認証欠落時の切替禁止 |
 | `test:browser` | 接続追加・設定・モデル・利用状況、ログイン画面、再接続・プロフィール切替、認証・Originチェック、キーボード、明暗テーマ、390／768／1440px、多数接続、解除 |
 | `pack:plugin` | ビルド済みファイル・locale・ドキュメントを含むtgzとSHA-256 |
-| `test:install` | 独立した空profileへ実DSH `0.2.1-alpha.2`で導入・起動し、実行版・update manager・公開Release照合を確認 |
+| `test:install` | 実DSH `0.2.1-alpha.2`の空profileへ導入し、APIキー接続とMuse Codeの保存済み一覧・Contributor選択を残して再起動し、接続・認証・実行版・update manager・公開Release照合を確認 |
 
 モデル一覧更新の共通処理は単体テストで、Meta以外への委譲、未対応・不正なプロバイダーの拒否、同時更新の共有、破棄時の終了、公開する情報を確認します。Muse契約の再取得は単体テストで、OAuthとAPIキーの分離、契約状態、応答上限、取得失敗、アカウント変更を確認します。runtimeテストでは認証済みRPCからFullを選択し、実SDKによるリクエストとテスト用SSE応答を確認します。ブラウザテストでは共通の更新ボタンによるMetaと別のテスト用プロバイダーの再取得・モデル選択、未対応の案内、契約名・Full選択・APIキー優先時のエラーを確認します。いずれも実Metaアカウントや有料生成を使いません。[実アカウントで確認する項目](models.md#検証範囲と残る確認)
 
