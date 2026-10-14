@@ -279,6 +279,12 @@ var PiLoginBroker = class {
     if (optIn ? enabled : !enabled) selected.add(model);
     else selected.delete(model);
     const changes = { [field]: [...selected] };
+    if (choice.contributor && connection && enabled) {
+      const native = this.catalog(provider, profile2, connection.connectionId).find((entry) => entry.id === model)?.model;
+      if (native?.id.endsWith("-contributor") && profile2.disabledModels?.includes(native.id)) {
+        changes.disabledModels = profile2.disabledModels.filter((id) => id !== native.id);
+      }
+    }
     if (choice.discovered) {
       const disabled = new Set(profile2.disabledModels ?? []);
       if (enabled) disabled.delete(model);
@@ -598,7 +604,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.7.1",
+  version: "0.7.2",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -2477,6 +2483,7 @@ import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
 // src/catalog-metadata.mjs
 var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
 var MUSE_CONTRIBUTOR = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor");
+var MUSE_CONTRIBUTOR_ONLY = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-only");
 var MUSE_CONTRIBUTOR_HEADER = "x-tbh-contributor-mode";
 
 // src/runtime/fast.ts
@@ -2506,11 +2513,25 @@ function contributorModelId(model) {
 }
 function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ */ new Set()) {
   const ids = new Set(models.map((model) => model.id));
+  const byId = new Map(models.map((model) => [model.id, model]));
   const configuredIds = new Set(profile2.models?.map((model) => model.id) ?? []);
   return models.flatMap((model) => {
     const supported = supportsFastTier(provider, model);
     const muse = model[MUSE_CONTRIBUTOR];
     if (muse !== void 0) {
+      const contributorOnly = model[MUSE_CONTRIBUTOR_ONLY] === true;
+      if (contributorOnly) {
+        const base = byId.get(model.id.slice(0, -"-contributor".length));
+        if (base && base[MUSE_CONTRIBUTOR] !== void 0) return [];
+        return [{
+          id: model.id,
+          name: model.name,
+          model,
+          contributor: true,
+          enabled: profile2.enabledContributorModels?.includes(model.id) === true && !profile2.disabledModels?.includes(model.id),
+          headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" }
+        }];
+      }
       const standard = {
         id: model.id,
         name: model.name,
@@ -2518,15 +2539,17 @@ function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ *
         enabled: !profile2.disabledModels?.includes(model.id),
         headers: { [MUSE_CONTRIBUTOR_HEADER]: "0" }
       };
-      if (!muse) return [standard];
+      const native = byId.get(`${model.id}-contributor`);
+      const nativeContributor = native && native[MUSE_CONTRIBUTOR_ONLY] === true ? native : void 0;
+      if (!muse && !nativeContributor) return [standard];
       const id2 = contributorModelId(model.id);
       if (ids.has(id2)) throw new PiAiCatalogError(`Contributor model ID "${id2}" conflicts with a configured model`);
       return [standard, {
         id: id2,
         name: `${model.name} Contributor`,
-        model,
+        model: nativeContributor ?? model,
         contributor: true,
-        enabled: profile2.enabledContributorModels?.includes(id2) === true,
+        enabled: profile2.enabledContributorModels?.includes(id2) === true && !(nativeContributor && profile2.disabledModels?.includes(nativeContributor.id)),
         headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" }
       }];
     }
@@ -4197,6 +4220,7 @@ function registrationFacts(profiles) {
   })).sort((left, right) => left.provider.localeCompare(right.provider));
 }
 function directoryEntries(profiles, settingsNs, connectionMode = false) {
+  if (connectionMode) return [];
   const catalog = new Set(catalogProviderIds());
   const entries = /* @__PURE__ */ new Map();
   const declare = (provider, displayName, error) => {
@@ -4204,7 +4228,7 @@ function directoryEntries(profiles, settingsNs, connectionMode = false) {
       provider,
       displayName,
       settingsNs,
-      settingsPath: profiles.get(provider)?.connectionId === void 0 ? ["providers", provider] : ["connections", profiles.get(provider).connectionId, "profile"],
+      settingsPath: ["providers", provider],
       // Membership of the installed catalog, not of the settings document:
       // narrowing a shipped provider's models stores a profile too, and that
       // route is still one pi-ai knows.
@@ -4212,7 +4236,7 @@ function directoryEntries(profiles, settingsNs, connectionMode = false) {
       ...error === void 0 ? {} : { error }
     });
   };
-  if (!connectionMode) for (const provider of catalog) declare(provider, provider);
+  for (const provider of catalog) declare(provider, provider);
   for (const [provider, profile2] of profiles) declare(provider, profile2.displayName, profile2.catalogError);
   return [...entries.values()];
 }
@@ -5179,7 +5203,8 @@ function museModels(rows = []) {
     contextWindow: row.contextWindow,
     maxTokens: row.maxTokens,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    [MUSE_CONTRIBUTOR]: row.contributor === true
+    [MUSE_CONTRIBUTOR]: row.contributor === true,
+    [MUSE_CONTRIBUTOR_ONLY]: row.id.startsWith("muse-") && row.id.endsWith("-contributor")
   }]));
 }
 var MuseCodeCatalogSession = class {
@@ -5259,7 +5284,14 @@ var MuseCodeCatalogSession = class {
       if (!standard.length) throw new ProviderReadError("error");
       const contributor = await this.list(credential, "1", requestSignal).then(parseMuseCatalog, () => []);
       const offered = new Set(contributor.map((row) => row.id));
-      const rows = standard.map((row) => ({ ...row, contributor: offered.has(row.id) && !row.id.endsWith("-contributor") }));
+      const merged = new Map(standard.map((row) => [row.id, row]));
+      for (const row of contributor) {
+        if (row.id.startsWith("muse-") && row.id.endsWith("-contributor")) merged.set(row.id, row);
+      }
+      const rows = [...merged.values()].map((row) => ({
+        ...row,
+        contributor: offered.has(row.id) && !row.id.endsWith("-contributor")
+      }));
       const current = await this.credentials.read("meta");
       if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError("account-changed");
       return rows;

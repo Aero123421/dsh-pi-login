@@ -153,6 +153,15 @@ export class PiLoginBroker {
     if (optIn ? enabled : !enabled) selected.add(model)
     else selected.delete(model)
     const changes = { [field]: [...selected] }
+    if (choice.contributor && connection && enabled) {
+      const native = this.catalog(provider, profile, connection.connectionId).find(entry => entry.id === model)?.model
+      // An old native Contributor row could have been explicitly switched
+      // off. Keep that opt-out until this canonical choice is turned on;
+      // never clear the separate Standard model's disabled state.
+      if (native?.id.endsWith('-contributor') && profile.disabledModels?.includes(native.id)) {
+        changes.disabledModels = profile.disabledModels.filter(id => id !== native.id)
+      }
+    }
     if (choice.discovered) {
       const disabled = new Set(profile.disabledModels ?? [])
       if (enabled) disabled.delete(model); else disabled.add(model)

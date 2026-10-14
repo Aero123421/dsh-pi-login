@@ -479,6 +479,7 @@ function ConnectionRow({ entry, controller, t, writableRevision, onOpen, onLogin
     {settings ? <button type="button" className="dsh-pi-row-main" aria-label={`${t('connectionSettings')}: ${entry.displayName}`} onClick={() => onOpen(entry)}>{main}</button>
       : <div className="dsh-pi-row-main">{main}{external ? <a className="dsh-pi-link" href={external} target="_blank" rel="noopener noreferrer">{t('externalSettings')}</a> : null}</div>}
     <div className="dsh-pi-row-actions">
+      {settings ? <Button size="sm" variant="outline" aria-label={`${t('manageConnection')}: ${entry.displayName}`} onClick={() => onOpen(entry)}>{t('settingsShort')}</Button> : null}
       {failed ? <span role="alert" className="dsh-pi-row-meta-alert">{t('saveFailed')}</span> : null}
       {!entry.configured && entry.authMethod === 'oauth' && entry.capabilities?.auth !== false && entry.writable !== false
         ? <Button size="sm" variant="primary" onClick={() => onLogin(entry)}>{t('signIn')}</Button>

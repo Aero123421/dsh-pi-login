@@ -15,7 +15,9 @@
 
 - **ログイン:** `auth.meta.com`の端末コード（CLIと同じクライアントID）で本人確認し、`POST https://api.meta.ai/muse-code/key`でAPIキーを発行します。Pi SDKの`meta`プロバイダーがこれを行い、期限切れ時に再発行します。認証情報は接続専用の`llm-pi-ai/<credentialRecordId>`に保存します。
 - **モデル一覧:** CLIと同じ`GET https://api.meta.ai/muse-code/models`を、`x-tbh-contributor-mode: 0`と`1`の両方で読み込みます。Model APIの`/v1/models`はWonder FullなどMuse Code専用のモデルを含まないため使いません。行の`id`／`display_label`／`context_limit`／`output_limit`／`reasoning_effort_variants`を読み、画像・音声生成用のモデルや非公開の行は除外します。
-- **Contributor:** `1`の一覧にあるモデルに「<名前> Contributor」の選択肢（`<id>::contributor`）を追加します。最初はオフで、`enabledContributorModels`に保存します。送信時はContributor版に`x-tbh-contributor-mode: 1`、通常版に`0`を付け、APIへは元のモデルIDを送ります。[MetaのContributor利用条件](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode)
+- **Contributor:** `1`の一覧にあるモデルに「<名前> Contributor」の選択肢（`<id>::contributor`）を追加します。最初はオフで、`enabledContributorModels`に保存します。送信時はContributor版に`x-tbh-contributor-mode: 1`、通常版に`0`を付け、APIへは提供元が返した実モデルIDを送ります。`-contributor`付きの実IDが返る場合はその記述子・能力情報を使い、通常版と1つのContributor選択へまとめます。その実IDがなく、Contributorモードの一覧にbase IDがある場合はbase IDとヘッダーで選択します。baseが返らないContributor専用IDは、その実IDだけをオフで提示し、通常版を作りません。[MetaのContributor利用条件](https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode)
+既に保存された0.7.0/0.7.1の一覧にも同じ整理を適用します。旧native Contributor行の既定オン状態を新しい選択の承認へ変換しません。明示したContributor選択は維持し、旧native行に明示的なオフが残る場合はオフを優先します。ユーザーがまとめられたContributor選択をオンにした時だけ、その実IDの旧オフを解除し、通常版のオフには触れません。
+
 - **保存:** 読み込んだ一覧（ID・名前・上限・effort・Contributor可否のみ）を接続の`museCatalog`に保存し、再起動後もモデル選択とルーティングに使います。アカウントが途中で変わった場合は保存しません。複製した接続には一覧も認証情報も引き継ぎません。
 - **利用状況:** キー発行の応答に含まれる契約と利用枠を表示します。
 

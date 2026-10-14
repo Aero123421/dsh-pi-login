@@ -63,6 +63,16 @@ test('a failed Contributor listing still loads Standard models without Contribut
   assert.deepEqual(f.persisted.at(-1).map(entry => entry.contributor), [false])
 })
 
+test('native Contributor IDs returned only in mode 1 keep their distinct provider capabilities and persist', async () => {
+  const f = setup({ standard: { data: [row('muse-wonder-full-1.0')] },
+    contributor: { data: [row('muse-wonder-full-1.0-contributor', { output_limit: 32768 })] } })
+  await f.session.refresh()
+  const rows = f.persisted.at(-1)
+  assert.deepEqual(rows.map(row => row.id), ['muse-wonder-full-1.0', 'muse-wonder-full-1.0-contributor'])
+  assert.equal(rows[1].maxTokens, 32768)
+  assert.equal(f.session.catalog().get(rows[1].id).id, rows[1].id)
+})
+
 test('an empty or unauthorized catalog is an error and keeps the previous models', async () => {
   const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: { data: [] } })
   await f.session.refresh()

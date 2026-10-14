@@ -5,6 +5,7 @@ import { resolveRouteModels } from '../src/runtime/catalog.ts'
 import { getSupportedThinkingLevels } from '../src/runtime/models.ts'
 import { supplementCatalog } from '../src/runtime/catalog-additions.ts'
 import { modelChoices, fastModelId, streamWithTier, supportsFastTier } from '../src/runtime/fast.ts'
+import { parseMuseCatalog, museModels } from '../src/muse-code-catalog.mjs'
 
 const meta = {
   provider: 'meta',
@@ -12,6 +13,46 @@ const meta = {
   defaultMaxTokens: 32768,
   defaultInput: ['text'],
 }
+
+test('a saved Muse catalog with native Contributor IDs has one Standard and one opt-in Contributor choice per family', () => {
+  const families = ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2']
+  const rows = parseMuseCatalog(families.flatMap(id => [
+    { id: `${id}-contributor`, output_limit: 32768, reasoning_efforts: ['high'] },
+    { id, output_limit: 65536, reasoning_efforts: ['high', 'max'] },
+  ]))
+  // This is also the shape already saved by 0.7.0/0.7.1. No new HTTP
+  // listing should be needed to repair its selectable choices.
+  const models = [...museModels(rows.map(row => ({ ...row, contributor: !row.id.endsWith('-contributor') }))).values()]
+  const choices = modelChoices('meta', models, {})
+  assert.equal(choices.length, 8)
+  assert.equal(choices.filter(choice => choice.enabled).length, 4)
+  for (const id of families) {
+    const standard = choices.find(choice => choice.id === id)
+    const contributor = choices.find(choice => choice.id === `${id}::contributor`)
+    assert.equal(standard.model.id, id)
+    assert.equal(standard.headers['x-tbh-contributor-mode'], '0')
+    assert.equal(contributor.model.id, `${id}-contributor`)
+    assert.equal(contributor.headers['x-tbh-contributor-mode'], '1')
+    assert.equal(contributor.enabled, false)
+    assert.equal(contributor.model.maxTokens, 32768)
+    assert.equal(contributor.model.thinkingLevelMap.max, null)
+    assert.ok(!choices.some(choice => choice.id === `${id}-contributor`))
+  }
+  const selected = modelChoices('meta', models, { disabledModels: [families[0]], enabledContributorModels: [`${families[0]}::contributor`] })
+  assert.equal(selected.find(choice => choice.id === families[0]).enabled, false)
+  assert.equal(selected.find(choice => choice.id === `${families[0]}::contributor`).enabled, true)
+  const optedOut = modelChoices('meta', models, { disabledModels: [`${families[0]}-contributor`], enabledContributorModels: [`${families[0]}::contributor`] })
+  assert.equal(optedOut.find(choice => choice.id === `${families[0]}::contributor`).enabled, false, 'An explicit old native opt-out must survive normalization')
+})
+
+test('a Contributor-only native model keeps its real ID, starts off, and never creates a missing Standard model', () => {
+  const id = 'muse-wonder-full-1.0-contributor'
+  const models = [...museModels(parseMuseCatalog([{ id }])).values()]
+  const choices = modelChoices('meta', models, {})
+  assert.deepEqual(choices.map(choice => [choice.id, choice.model.id, choice.enabled, choice.contributor]), [[id, id, false, true]])
+  assert.equal(choices[0].headers['x-tbh-contributor-mode'], '1')
+  assert.equal(modelChoices('meta', models, { enabledContributorModels: [id] })[0].enabled, true)
+})
 
 test('Muse Wonder is selectable with its own capabilities and respects configured lists', () => {
   const wonder = resolveRouteModels(meta).models.find(model => model.id === 'muse-wonder-1.0')

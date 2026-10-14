@@ -57,7 +57,7 @@ test('actual Host registry stays dormant after empty migration and supports crea
       ctx.emit('settings/document-updated', 'dsh-pi-login')
     }
     set({ a: connection('a') })
-    assert.deepEqual(ctx.llm.listConfigurableProviders().map(entry => entry.provider), ['pi-a'])
+    assert.deepEqual(ctx.llm.listConfigurableProviders(), [], 'Connection-owned profiles have no native Edit/Delete surface')
     assert.deepEqual(ctx.llm.listProviders().map(entry => entry.id), ['pi-a'])
     catalogLookups.length = 0
     assert.doesNotThrow(() => validate({ a: { ...connection('a'), credentialGeneration: 1 } }))
@@ -67,7 +67,7 @@ test('actual Host registry stays dormant after empty migration and supports crea
     assert.deepEqual(ctx.llm.listConfigurableProviders(), [])
     assert.deepEqual(ctx.llm.listProviders(), [])
     set({ b: connection('b') })
-    assert.deepEqual(ctx.llm.listConfigurableProviders().map(entry => entry.provider), ['pi-b'])
+    assert.deepEqual(ctx.llm.listConfigurableProviders(), [])
     assert.deepEqual(ctx.llm.listProviders().map(entry => entry.id), ['pi-b'])
     await fiber.dispose()
     assert.deepEqual(ctx.llm.listConfigurableProviders(), [])

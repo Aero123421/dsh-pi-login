@@ -90,6 +90,11 @@ function directoryEntries(
   settingsNs: string,
   connectionMode = false,
 ): LlmConfigurableProvider[] {
+  // Native provider editors unset a provider profile on Delete. Connections
+  // own credentials and model selections and must use ConnectionManager's
+  // dedicated controls instead; registering their profiles here produces a
+  // second editor whose Delete resets settings but leaves the connection.
+  if (connectionMode) return []
   const catalog = new Set(catalogProviderIds())
   const entries = new Map<string, LlmConfigurableProvider>()
   const declare = (provider: string, displayName: string, error?: string): void => {
@@ -97,8 +102,7 @@ function directoryEntries(
       provider,
       displayName,
       settingsNs,
-      settingsPath: profiles.get(provider)?.connectionId === undefined
-        ? ['providers', provider] : ['connections', profiles.get(provider)!.connectionId!, 'profile'],
+      settingsPath: ['providers', provider],
       // Membership of the installed catalog, not of the settings document:
       // narrowing a shipped provider's models stores a profile too, and that
       // route is still one pi-ai knows.
@@ -106,7 +110,7 @@ function directoryEntries(
       ...error === undefined ? {} : { error },
     })
   }
-  if (!connectionMode) for (const provider of catalog) declare(provider, provider)
+  for (const provider of catalog) declare(provider, provider)
   for (const [provider, profile] of profiles) declare(provider, profile.displayName, profile.catalogError)
   return [...entries.values()]
 }
@@ -273,9 +277,9 @@ export function apply(ctx: Context, config: Config, live?: {
     }
   }
   ctx.inject(['authorization'], authorized => { authorizedContext = authorized; syncFlows() })
-  // The migrated directory contains saved connections, including disabled
-  // entries that still need a settings address. Registration contains enabled
-  // routes only; an empty connection set withdraws every Pi route.
+  // Saved connections use the dedicated AI connections UI. The native
+  // directory remains only until migration; runtime registration still
+  // exposes enabled routes to chat and agent model selectors.
   let directory: DirectoryRegistrationHandle | undefined
   let directoryFacts: unknown
   const ensureDirectory = (): void => {

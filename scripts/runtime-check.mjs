@@ -97,7 +97,7 @@ try {
   assert.equal(config.connections.get()[id].profile.reasoning, 'high')
   assert.equal((await ctx.credentials.listRecords()).length, 1, 'Migration must retain the existing record without a secret copy')
   assert.deepEqual(active, ['deepseek'])
-  assert.equal(directory.length, 1)
+  assert.equal(directory.length, 0, 'Connection profiles must not appear in the native provider editor')
   assert.ok(initial.services.length >= getBuiltinProviders().length - 3)
   assert.ok(directory.every(entry => entry.settingsNs === 'dsh-pi-login'))
   for (const provider of getBuiltinProviders()) {
@@ -213,6 +213,7 @@ try {
     await call('connection-update', { connectionId: muse.connectionId, patch: { enabled: true }, revision })
     const route = config.connections.get()[muse.connectionId].routeId
     const museRequests = []
+    let nativeCatalog = false, heldListing
     const catalogRow = (id, name) => ({ id, display_label: name, context_limit: 1048576, output_limit: 65536, reasoning_effort_variants: [{ effort: 'low' }, { effort: 'high' }] })
     const originalFetch = globalThis.fetch
     globalThis.fetch = async (input, init) => {
@@ -222,6 +223,9 @@ try {
       const mode = headers.get('x-tbh-contributor-mode')
       if (url.pathname === '/muse-code/models') {
         museRequests.push({ path: url.pathname, mode, authorization: headers.get('authorization') })
+        if (heldListing) { heldListing.enter(); await heldListing.wait }
+        if (nativeCatalog) return Response.json({ data: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2']
+          .flatMap(id => [catalogRow(`${id}-contributor`, `${id} Contributor`), catalogRow(id, id)]) })
         return Response.json({ data: mode === '1' ? [catalogRow('muse-wonder-full-1.0', 'Muse Wonder Full')]
           : [catalogRow('muse-wonder-1.0', 'Muse Wonder'), catalogRow('muse-wonder-full-1.0', 'Muse Wonder Full')] })
       }
@@ -266,7 +270,51 @@ try {
       ctx.emit('dsh-pi-login/catalog-updated')
       assert.deepEqual((await adapter.listModels(route)).map(model => model.id), ['muse-wonder-1.0', 'muse-wonder-full-1.0', 'muse-wonder-full-1.0::contributor'])
       assert.equal(museRequests.length, count)
+      // Real account lists may include both native "-contributor" IDs and
+      // base IDs in both responses. Existing opt-ins survive normalization;
+      // the native default-on rows must not create more Contributor choices.
+      nativeCatalog = true
+      const normalized = await call('refresh-models', { connectionId: muse.connectionId })
+      assert.equal(normalized.models.length, 8)
+      assert.equal(normalized.models.filter(model => model.contributor).length, 4)
+      assert.equal(normalized.models.filter(model => model.enabled).length, 5)
+      assert.ok(normalized.models.every(model => !model.id.endsWith('-contributor')))
+      assert.equal(directory.length, 0, 'Native Edit/Delete cannot target a connection-owned profile')
+      await stream('muse-wonder-full-1.0::contributor')
+      assert.equal(museRequests.at(-1).model, 'muse-wonder-full-1.0-contributor')
+      assert.equal(museRequests.at(-1).mode, '1')
+      await call('connection-update', { connectionId: muse.connectionId, patch: { profile: {
+        disabledModels: ['muse-wonder-full-1.0-contributor', 'muse-wonder-1.0'],
+      } }, revision })
+      assert.equal((await call('models', { connectionId: muse.connectionId })).models.find(row => row.id === 'muse-wonder-full-1.0::contributor').enabled, false)
+      await call('set-model', { connectionId: muse.connectionId, model: 'muse-wonder-full-1.0::contributor', enabled: true, revision })
+      assert.deepEqual(config.connections.get()[muse.connectionId].profile.disabledModels, ['muse-wonder-1.0'])
+      assert.equal((await call('models', { connectionId: muse.connectionId })).models.find(row => row.id === 'muse-wonder-full-1.0::contributor').enabled, true)
+      await call('set-model', { connectionId: muse.connectionId, model: 'muse-wonder-full-1.0::contributor', enabled: false, revision })
+      assert.ok(!(await adapter.listModels(route)).some(model => model.id === 'muse-wonder-full-1.0::contributor'))
+      assert.throws(() => adapter.prepareCall(route, 'muse-wonder-full-1.0::contributor'))
+      await call('set-model', { connectionId: muse.connectionId, model: 'muse-wonder-1.0', enabled: false, revision })
+      assert.ok(!(await adapter.listModels(route)).some(model => model.id === 'muse-wonder-1.0'))
+      const savedChoices = structuredClone(config.connections.get()[muse.connectionId].profile)
+      await call('refresh-models', { connectionId: muse.connectionId })
+      assert.deepEqual(config.connections.get()[muse.connectionId].profile, savedChoices, 'Refreshing must not undo off switches')
+      // A provider request completing after deletion cannot recreate the
+      // connection, its models or its credentials.
+      const entered = Promise.withResolvers(), held = Promise.withResolvers()
+      heldListing = { enter: entered.resolve, wait: held.promise }
+      const pendingRefresh = call('refresh-models', { connectionId: muse.connectionId }).then(() => undefined, error => error)
+      await entered.promise
+      const others = Object.fromEntries(Object.entries(config.connections.get()).filter(([id]) => id !== muse.connectionId))
+      await call('connection-delete', { connectionId: muse.connectionId, revision })
+      held.resolve()
+      assert.ok(await pendingRefresh instanceof Error)
+      await pause(); await pause()
+      assert.deepEqual(config.connections.get(), others)
+      assert.equal(await ctx.credentials.readRecord(entry.key), undefined)
+      assert.ok(!active.includes(route))
+      assert.ok((await listing()).connections.every(row => row.connectionId !== muse.connectionId))
       console.log('Meta Muse Code: SDK Meta sign-in record, account catalog in both modes, persisted catalog, Host route registration and Contributor header on real SDK streams passed')
+      console.log('Native Muse Contributor catalogs: deduplicated opt-ins, exact native SDK model/header, durable off switches and deletion during refresh without resurrection passed')
     } finally { globalThis.fetch = originalFetch }
   }
   console.log('Shipped plugin: official composition/RPC/Credentials, atomic old-profile migration, preserved routes/model/Thinking state, SDK local stream, multi-connection registration/key rotation/deletion and OAuth flow ownership passed')
