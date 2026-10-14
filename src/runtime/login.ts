@@ -166,6 +166,7 @@ export interface ConnectionLoginBinding {
   displayName: string
   credentialRef?: string
   profile?: { baseURL?: string, api?: string }
+  deletionPending?: boolean
 }
 
 function loginIdentity(connection: ConnectionLoginBinding): string {
@@ -173,6 +174,7 @@ function loginIdentity(connection: ConnectionLoginBinding): string {
     connection.integrationId, connection.serviceId, connection.credentialRecordId,
     connection.credentialGeneration, connection.authMethod, connection.credentialRef,
     connection.profile?.baseURL, connection.profile?.api,
+    connection.deletionPending,
   ])
 }
 
@@ -197,7 +199,7 @@ export function registerConnectionFlows(
     }
     for (const [id, connection] of Object.entries(current)) {
       const sdkService = sdkServiceOf(connection)
-      if (registered.has(id) || sdkService === undefined) continue
+      if (registered.has(id) || sdkService === undefined || connection.deletionPending) continue
       const provider = catalogProvider(sdkService)
       const method = loginMethods(provider).find(method => method.id === connection.authMethod)
       if (provider === undefined || method === undefined || !isCredentialKeySegment(connection.credentialRecordId)) continue

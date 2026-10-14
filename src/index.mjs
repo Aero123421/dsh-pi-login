@@ -16,6 +16,7 @@ import { ProviderCatalogs } from './provider-catalogs.mjs'
 import { DISCOVERED_MODEL } from './catalog-metadata.mjs'
 import { DEFAULT_INPUT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './runtime/config.ts'
 import { modelChoices } from './runtime/fast.ts'
+import { supportedProtocols } from './runtime/provider.ts'
 export { Config, applyLoginUI }
 export { IntegrationRegistry, ConnectionManager, connectionAuthFrom, resolveConnectionProfiles }
 export { createMuseCodeOwner }
@@ -58,6 +59,7 @@ export function apply(ctx, config, options = {}) {
         ...provider?.auth.apiKey || !provider ? [{ id: 'api-key', label: provider?.auth.apiKey?.name ?? 'API key' }] : [],
       ]
       return { serviceId, label: serviceId === 'meta' ? 'Meta Model API（Pi経由）' : provider?.name ?? serviceId, methods,
+        apis: [...supportedProtocols()],
         capabilities: { auth: methods.length > 0, models: true, settings: true, usage: ['openai-codex', 'anthropic', 'github-copilot', 'opencode-go', 'meta'].includes(serviceId) } }
     })
   }
@@ -66,7 +68,7 @@ export function apply(ctx, config, options = {}) {
   registry.register(muse)
   registry.register(external.descriptor)
   // Optional bundle-local integrations explicitly opt in; never inspect their config or credentials.
-  ctx.on('dsh-pi-login/register-integration', owner => registry.register(owner))
+  ctx.on('dsh-pi-login/register-integration', (owner, ownRegistration) => registry.register(owner, ownRegistration))
   const sessionIdentity = connection => JSON.stringify([connection.serviceId, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api])
   // Credentials address the SDK provider; currency still checks the stored connection.
   const authFor = connection => {
@@ -92,7 +94,7 @@ export function apply(ctx, config, options = {}) {
       const museSession = new MuseCodeCatalogSession({
         credentials: authFor(connection).credentials,
         snapshot: () => { try { return manager.lookup(id).museCatalog } catch { return undefined } },
-        persist: rows => manager.saveMuseCatalog(binding, rows),
+        persist: (rows, options) => manager.saveMuseCatalog(binding, rows, options),
         refreshAuth: signal => refreshAuth(manager.lookup(id), signal),
         onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
       })

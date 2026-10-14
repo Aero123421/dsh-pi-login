@@ -11,6 +11,14 @@ export { toPiAssistant, toPiReplayState } from '../src/runtime/replay.ts';
 await compileOfficial('.cache/runtime-connections-entry.ts', '.cache/runtime-connections-test.mjs')
 const { resolveConnectionProfiles, toPiAssistant, toPiReplayState } = await import('../.cache/runtime-connections-test.mjs')
 
+test('deletion recovery records produce no routes and never query their revoked catalog', () => {
+  assert.equal(resolveConnectionProfiles({ 'c-deleting': {
+    integrationId: 'pi', serviceId: 'openai', routeId: 'pi-c-deleting', displayName: 'Deleting',
+    authMethod: 'api-key', credentialRecordId: 'c-deleting', credentialGeneration: 1,
+    enabled: false, deletionPending: true, profile: {},
+  } }, () => { throw new Error('Revoked catalog must not be queried') }).size, 0)
+})
+
 const connection = (id, profile = {}) => ({
   integrationId: 'pi', serviceId: 'openai', routeId: `pi-${id}`, displayName: id,
   authMethod: 'api-key', credentialRecordId: id, credentialGeneration: 0,

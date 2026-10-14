@@ -182,7 +182,15 @@ export async function* toStreamChunks(
         break
       }
       case 'toolcall_delta': {
-        const known = toolIds.get(event.contentIndex)
+        // OpenAI-compatible streams can send the index first and identify
+        // the call on a later delta. Pi updates the partial block in place;
+        // do not freeze its empty initial identity for the whole call.
+        const previous = toolIds.get(event.contentIndex)
+        const partial = event.partial.content[event.contentIndex]
+        const known = partial?.type === 'toolCall'
+          ? { id: partial.id || previous?.id || '', name: partial.name || previous?.name || '' }
+          : previous
+        if (known !== undefined) toolIds.set(event.contentIndex, known)
         yield {
           type: 'tool-call-delta',
           index: event.contentIndex,

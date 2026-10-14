@@ -14,6 +14,8 @@ export function resolveConnectionProfiles(
 ): Map<string, ResolvedPiAiProviderProfile> {
   const routes = new Map<string, ResolvedPiAiProviderProfile>()
   for (const [connectionId, connection] of Object.entries(connections ?? {})) {
+    // Deletion tombstones are editable recovery records, never provider routes.
+    if (connection.deletionPending) continue
     // External integrations own their adapter, route, and credential plane.
     const sdkService = sdkServiceOf(connection)
     if (sdkService === undefined) continue

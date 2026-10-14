@@ -240,10 +240,28 @@ function usableProbeKey(raw: string): string {
 
 /** Host-owned profile inputs that a configuration draft deliberately omits. */
 export interface StoredModelDiscoveryProfile {
+  /** Exact saved transport to which inherited credentials belong. */
+  readonly baseURL: string | undefined
+  readonly api: string | undefined
+  /** Refuse results and credentials after the saved account/transport changes. */
+  readonly isCurrent?: () => boolean
   /** Deployment headers configured on the named route. */
   readonly headers: Readonly<Record<string, string>> | undefined
   /** Resolve the named route's credential only when the draft carries none. */
   readonly resolveApiKey: () => Promise<string | undefined>
+}
+
+function discoveryEndpoint(value: string): string {
+  let url: URL
+  try { url = new URL(value) } catch { throw new LlmError('model discovery needs a valid HTTP endpoint', 'INVALID_DISCOVERY') }
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new LlmError('model discovery needs an HTTP endpoint without credentials, query, or fragment', 'INVALID_DISCOVERY')
+  }
+  return url.href.replace(/\/+$/, '')
+}
+
+function assertDiscoveryCurrent(stored: StoredModelDiscoveryProfile | undefined): void {
+  if (stored?.isCurrent?.() === false) throw new LlmError('the saved connection changed during model discovery; retry with its current settings', 'DISCOVERY_CONNECTION_CHANGED')
 }
 
 /**
@@ -294,14 +312,27 @@ export async function discoverModels(
       'DISCOVERY_UNSUPPORTED',
     )
   }
-  const url = listingUrl(request.baseURL, api)
+  const endpoint = discoveryEndpoint(request.baseURL)
+  const url = listingUrl(endpoint, api)
   // A key typed into the form wins: it may replace the stored key that is
   // failing. The stored profile is asked past the catalog and protocol checks,
   // and its credential resolver remains lazy so a typed key cannot fail over a
   // stored credential it supersedes. A route may still authenticate through a
   // deployment-owned Authorization header when neither key exists.
-  const stored = storedProfile?.()
+  const candidate = storedProfile?.()
+  assertDiscoveryCurrent(candidate)
+  const matches = candidate !== undefined && candidate.baseURL !== undefined
+    && discoveryEndpoint(candidate.baseURL) === endpoint && candidate.api === api
+  // Naming a saved route grants no authority to send its key or headers to a
+  // draft endpoint. A one-shot key explicitly supplied for the draft can be
+  // used, but never together with headers inherited from another transport.
+  if (candidate !== undefined && !matches && request.apiKey === undefined) {
+    throw new LlmError('the draft endpoint or protocol differs from the saved connection; supply a key for this draft or restore its saved endpoint', 'DISCOVERY_CREDENTIAL_SCOPE')
+  }
+  const stored = matches ? candidate : undefined
   const supplied = request.apiKey ?? await stored?.resolveApiKey()
+  assertDiscoveryCurrent(candidate)
+  if (request.signal?.aborted) throw new LlmError('model discovery aborted by caller', 'ABORTED')
   const apiKey = supplied === undefined ? undefined : usableProbeKey(supplied)
   let response: Response
   try {
@@ -316,6 +347,9 @@ export async function discoverModels(
     for (const [name, value] of Object.entries(attributionHeaders())) headers.set(name, value)
     response = await fetch(url, {
       method: 'GET',
+      // Even an approved endpoint cannot delegate custom secret headers to a
+      // different redirect destination.
+      redirect: 'error',
       headers,
       ...request.signal === undefined ? {} : { signal: request.signal },
     })
@@ -325,6 +359,8 @@ export async function discoverModels(
     }
     throw new LlmError(`could not reach ${url}`, 'DISCOVERY_FAILED', { cause: error })
   }
+  try { assertDiscoveryCurrent(candidate) }
+  catch (error) { await response.body?.cancel(); throw error }
   if (!response.ok) {
     throw new LlmError(
       `${url} answered ${response.status}${response.status === 401 || response.status === 403 ? '; check the API key' : ''}`,
@@ -349,5 +385,6 @@ export async function discoverModels(
   } catch (error: unknown) {
     throw new LlmError(`${url} did not answer with JSON`, 'DISCOVERY_FAILED', { cause: error })
   }
+  assertDiscoveryCurrent(candidate)
   return readListing(body)
 }

@@ -124,3 +124,9 @@ Clientはbegin送信前にUUIDをsessionStorageへ保存します。HostはUUID�
 プラグインの解除は取得処理だけを中止します。開始済み導入はmanagerが所有し、その結果を書き戻す処理とprofile参照中のtgzを解除時に削除しません。承認済みbuild scriptを自動指定しません。応答生成やSDK・system promptは変更しません。
 
 検証：`npm test`（65件）、`npm run build`、`npm run test:compat`、`npm run test:runtime`、Chromiumを指定した`npm run test:browser`が成功しました。ブラウザでは更新欄が共通フッターに1つだけあり、manager不在の説明、更新確認中の重複防止、候補・再起動待ち表示、390pxの日本語表示、解除を確認しました。`npm run pack:plugin`と`npm run test:install`を使い、実DSH `0.2.1-alpha.2`の独立した空profileへ0.5.0のtgzを導入し、再起動後の実行版とmanager対応、公開Releaseの確認を検証しました。実アカウント認証、Windows・macOS実機、公開前の0.5.0タグへの更新は未検証です。
+
+## 失敗時の回帰検証
+
+[状態の所有と失敗時の復旧](design.md)に保存と認証の責任分担を記載しています。接続テストはキー作成・交換・削除の途中失敗と再起動後の回収、Museテストは再認証・両モード取得・保存・使用量のアカウント照合、discoveryテストは保存認証のendpoint/API境界を確認します。ブラウザーテストは、古い画面・保存競合・部分作成・削除と認証回収の失敗をHostのRPCへ注入し、表示と安全な再試行を操作します。
+
+実DSHの `test:install` は配布tgzの起動・保存済みMuse一覧・実Settingsのモデル切替・再起動後の保持・削除と認証除去を確認します。失敗注入のfixture検証と、この実DSH導入検証を区別して報告してください。Clientの第三者通知は `THIRD_PARTY_NOTICES.md` を配布物に含めます。

@@ -1,13 +1,13 @@
 const INITIAL = Object.freeze({ status: 'idle', entries: [], integrations: [], services: [], error: false })
 
 export class LoginController {
-  constructor(connection) { this.connection = connection; this.state = INITIAL; this.listeners = new Set(); this.pending = undefined; this.closed = false; this.tickets = new Set() }
+  constructor(connection) { this.connection = connection; this.state = INITIAL; this.listeners = new Set(); this.pending = undefined; this.closed = false; this.tickets = new Map() }
   getSnapshot = () => this.state
   subscribe = listener => { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   publish(state) { if (this.closed) return; this.state = state; for (const listener of this.listeners) listener() }
   async call(method, payload = {}, signal) {
     const result = await this.connection.rpc.call('/api', `dsh-pi-login/${method}`, payload, signal)
-    if (!result.ok) throw new Error(result.error.code)
+    if (!result.ok) { const error = new Error(result.error.code); error.code = result.error.code; throw error }
     return result.value
   }
   load() {
@@ -29,17 +29,61 @@ export class LoginController {
     previous?.abort.abort()
     return this.load()
   }
-  mutation(method, payload = {}, signal) {
-    const { profileKey, generation } = this.state
-    return this.call(method, { ...payload, profileKey, generation }, signal)
+  scope() { const { profileKey, generation } = this.state; return { profileKey, generation } }
+  isCurrent(scope) {
+    if (this.closed || scope.profileKey !== this.state.profileKey || scope.generation !== this.state.generation) return false
+    if (scope.credentialGeneration !== undefined) return this.state.entries.some(entry => entry.connectionId === scope.connectionId && entry.credentialGeneration === scope.credentialGeneration)
+    return true
   }
-  async start(connectionId, method) {
-    const result = await this.mutation('start', { connectionId, method })
+  assertCurrent(scope) {
+    if (this.isCurrent(scope)) return
+    const code = !this.closed && scope.profileKey === this.state.profileKey && scope.generation === this.state.generation ? 'connection-changed' : 'profile-changed'
+    const error = new Error(code); error.code = code; throw error
+  }
+  // Dialogs own the profile they were opened in. Delayed work must not acquire
+  // a newer profile's authority from a shared controller at send time.
+  scoped(entry) {
+    const scope = { ...this.scope(), ...(entry?.credentialGeneration !== undefined ? { connectionId: entry.connectionId, credentialGeneration: entry.credentialGeneration } : {}) }
+    const call = async (method, payload = {}, signal) => {
+      this.assertCurrent(scope)
+      const result = await this.call(method, { ...payload, ...scope }, signal)
+      this.assertCurrent(scope)
+      return result
+    }
+    const scoped = {
+      scoped: () => scoped,
+      tickets: this.tickets, call, mutation: call,
+      start: (id, method) => this.start(id, method, scope),
+      cancel: ticket => this.cancel(ticket, scope),
+      refresh: async () => { this.assertCurrent(scope); await this.refresh(); this.assertCurrent(scope) },
+      getSnapshot: this.getSnapshot,
+    }
+    return scoped
+  }
+  mutation(method, payload = {}, signal) {
+    return this.call(method, { ...payload, ...this.scope() }, signal)
+  }
+  async start(connectionId, method, scope = this.scope()) {
+    this.assertCurrent(scope)
+    const result = await this.call('start', { connectionId, method, ...scope })
     if (typeof result.ticket !== 'string') throw new Error('invalid ticket')
-    if (this.closed) { await this.mutation('cancel', result); throw new Error('disposed') }
-    this.tickets.add(result.ticket)
+    if (!this.isCurrent(scope)) {
+      // The start may have been accepted before the profile/reset/unload.
+      // Cancel with its original authority, never with the new profile.
+      await this.call('cancel', { ...result, ...scope }).catch(() => {})
+      this.assertCurrent(scope)
+    }
+    this.tickets.set(result.ticket, scope)
     return result.ticket
   }
-  async cancel(ticket) { this.tickets.delete(ticket); try { await this.mutation('cancel', { ticket }) } finally { await this.refresh() } }
-  dispose() { this.closed = true; this.pending?.abort.abort(); this.pending = undefined; this.listeners.clear(); for (const ticket of this.tickets) void this.mutation('cancel', { ticket }).catch(() => {}); this.tickets.clear() }
+  async cancel(ticket, scope = this.tickets.get(ticket) ?? this.scope()) {
+    this.tickets.delete(ticket)
+    try { await this.call('cancel', { ticket, ...scope }) }
+    finally { if (this.isCurrent(scope)) await this.refresh() }
+  }
+  dispose() {
+    this.closed = true; this.pending?.abort.abort(); this.pending = undefined; this.listeners.clear()
+    for (const [ticket, scope] of this.tickets) void this.call('cancel', { ticket, ...scope }).catch(() => {})
+    this.tickets.clear()
+  }
 }

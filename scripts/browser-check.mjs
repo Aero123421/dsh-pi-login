@@ -23,7 +23,7 @@ const capabilities = { auth: true, models: true, usage: true, settings: true }
 const services = [
  { serviceId: 'openai-codex', label: 'OpenAI Codex', methods: [{ id: 'oauth', label: 'OAuth' }, { id: 'api-key', label: 'API key' }], capabilities },
  { serviceId: 'meta', label: 'Meta Model API（Pi経由）', methods: [{ id: 'oauth', label: 'OAuth' }], capabilities },
- { serviceId: 'example', label: 'Example API', methods: [{ id: 'api-key', label: 'API key' }], capabilities },
+ { serviceId: 'example', label: 'Example API', apis: ['openai-completions', 'openai-responses'], methods: [{ id: 'api-key', label: 'API key' }], capabilities },
 ]
 const registry = new IntegrationRegistry('browser-profile')
 registry.register({ integrationId: 'pi', label: 'Pi', source: 'internal', listServices: () => services, listConnections: () => [] })
@@ -224,6 +224,36 @@ try {
  await page.getByRole('dialog').waitFor({ state: 'hidden' })
  assert.equal(await modelsButton('個人Pro').evaluate(element => element === document.activeElement), true)
  await page.screenshot({ path: artifact('keyboard-return-focus.png') })
+ // A model switch waiting for its latest revision cannot cross a profile reset.
+ // Hold the real read response; the new profile keeps the same connection ids.
+ await modelsButton('個人Pro').click()
+ await modelSwitch.waitFor()
+ let releaseModelRead, heldModelRead, finishModelRead
+ const modelReadHeld = new Promise(resolve => { heldModelRead = resolve })
+ const modelReadFinished = new Promise(resolve => { finishModelRead = resolve })
+ const modelReadGate = new Promise(resolve => { releaseModelRead = resolve })
+ const holdModelRead = async route => {
+  const response = await route.fetch()
+  heldModelRead()
+  await modelReadGate
+  await route.fulfill({ response }).catch(() => {})
+  finishModelRead()
+ }
+ await page.route('**/api/dsh-pi-login/models', holdModelRead, { times: 1 })
+ const beforeResetModels = structuredClone(settingsValue.connections['c-personal'].profile)
+ const writesBeforeReset = writes.length
+ await modelSwitch.click()
+ await modelReadHeld
+ assert.equal(await page.getByRole('dialog').getByRole('button', { name: '閉じる', exact: true }).last().isDisabled(), true)
+ registry.switchProfile('browser-profile-new')
+ await page.evaluate(() => testRuntime.ctx.emit('connection/reset'))
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
+ releaseModelRead()
+ await modelReadFinished
+ await page.waitForTimeout(100)
+ assert.equal(writes.length, writesBeforeReset, 'An old model dialog wrote after profile reset')
+ assert.deepEqual(settingsValue.connections['c-personal'].profile, beforeResetModels)
+ await page.unroute('**/api/dsh-pi-login/models', holdModelRead)
  // Refresh retains a prior catalog on a provider failure.
  await modelsButton('Muse個人').click()
  await page.getByRole('button', { name: 'モデル一覧を更新', exact: true }).click()
@@ -243,6 +273,18 @@ try {
  await page.getByRole('button', { name: '接続を追加', exact: true }).click()
  await page.getByRole('button', { name: 'サービス', exact: true }).click()
  await page.getByRole('menuitem', { name: 'Example API', exact: true }).click()
+ // Switching services must discard hidden endpoint/protocol settings.
+ await page.getByText('詳細設定', { exact: true }).click()
+ await page.getByLabel('接続先URL（任意）', { exact: true }).fill('https://previous-provider.example/v1')
+ await page.getByRole('button', { name: '通信方式', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'openai-completions', exact: true }).click()
+ await page.getByRole('button', { name: 'サービス', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'OpenAI Codex', exact: true }).click()
+ await page.getByRole('button', { name: 'サービス', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'Example API', exact: true }).click()
+ await page.getByText('詳細設定', { exact: true }).click()
+ assert.equal(await page.getByLabel('接続先URL（任意）', { exact: true }).inputValue(), '')
+ assert.equal(await page.getByRole('button', { name: '通信方式', exact: true }).innerText(), 'プロバイダーの既定値')
  await page.getByLabel('接続名', { exact: true }).fill('追加API')
  const keyInput = page.getByLabel('APIキー', { exact: true })
  const masked = () => keyInput.evaluate(element => element.type === 'password' || getComputedStyle(element).webkitTextSecurity === 'disc')
@@ -275,9 +317,83 @@ try {
  assert.equal((await ctx.credentials.describeRecord(`llm-pi-ai/${copied.credentialRecordId}`)).configured, false)
  await page.getByRole('button', { name: '接続を削除', exact: true }).click()
  await page.getByText('この接続と保存済みの認証情報を削除しますか？この接続のモデルは利用できなくなります。', { exact: true }).waitFor()
+ // Force credential cleanup to fail after the durable pending-delete commit.
+ // The UI must keep a disabled, recoverable connection rather than report success.
+ const deleteRecord = ctx.credentials.deleteRecord.bind(ctx.credentials)
+ let failCopiedDeletion = true
+ ctx.credentials.deleteRecord = async key => {
+  if (failCopiedDeletion && key === `llm-pi-ai/${copied.credentialRecordId}`) throw new Error('fixture-secret-cleanup-failed')
+  return deleteRecord(key)
+ }
+ await page.getByRole('button', { name: 'この接続を削除する', exact: true }).click()
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
+ await settingsButton('追加API改 コピー').click()
+ await page.getByRole('dialog').getByText('削除が未完了です。この接続はオフになっています。残っている認証情報を削除するには、削除を再試行してください。', { exact: true }).first().waitFor()
+ assert.equal(await page.getByText('fixture-secret-cleanup-failed', { exact: true }).count(), 0)
+ assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '追加API改 コピー').deletionPending, true)
+ assert.equal(await page.getByLabel('接続名', { exact: true }).isDisabled(), true)
+ assert.equal(await page.getByRole('button', { name: '設定を複製', exact: true }).isDisabled(), true)
+ assert.equal(await row('追加API改 コピー').getByRole('switch').count(), 0)
+ assert.equal(await modelsButton('追加API改 コピー').count(), 0)
+ failCopiedDeletion = false
+ await page.getByRole('button', { name: '削除を再試行', exact: true }).click()
  await page.getByRole('button', { name: 'この接続を削除する', exact: true }).click()
  await settingsButton('追加API改 コピー').waitFor({ state: 'hidden' })
+ ctx.credentials.deleteRecord = deleteRecord
  assert.equal(await page.getByText('new-private-fixture-key', { exact: true }).count(), 0)
+ // A partially created API connection is shown, never duplicated by retrying Add.
+ const modifyRecord = ctx.credentials.modifyRecord.bind(ctx.credentials)
+ ctx.credentials.modifyRecord = async () => { throw new Error('fixture-private-write-failure') }
+ await page.getByRole('button', { name: '接続を追加', exact: true }).click()
+ await page.getByRole('button', { name: 'サービス', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'Example API', exact: true }).click()
+ await page.getByLabel('接続名', { exact: true }).fill('保存失敗API')
+ await page.getByLabel('APIキー', { exact: true }).fill('fixture-write-failure-key')
+ await page.getByRole('button', { name: '追加', exact: true }).click()
+ await page.getByText('接続は作成しましたが、認証情報を保存できませんでした。この画面を閉じ、作成した接続の「設定」からキーを再入力するか接続を削除してください。', { exact: true }).waitFor()
+ assert.equal(await page.getByRole('button', { name: '追加', exact: true }).isDisabled(), true)
+ assert.equal(Object.values(settingsValue.connections).filter(entry => entry.displayName === '保存失敗API').length, 1)
+ assert.equal(await page.getByText('fixture-private-write-failure', { exact: true }).count(), 0)
+ ctx.credentials.modifyRecord = modifyRecord
+ await page.getByRole('dialog').getByRole('button', { name: 'キャンセル', exact: true }).click()
+ const failedCreated = Object.values(settingsValue.connections).find(entry => entry.displayName === '保存失敗API')
+ // Key replacement can commit successfully while old-key cleanup still fails.
+ ctx.credentials.deleteRecord = async key => {
+  if (key === `llm-pi-ai/${failedCreated.credentialRecordId}`) throw new Error('fixture-private-cleanup-failure')
+  return deleteRecord(key)
+ }
+ await settingsButton('保存失敗API').click()
+ await page.getByLabel('APIキー', { exact: true }).fill('fixture-recovered-new-key')
+ await page.getByRole('button', { name: '保存', exact: true }).click()
+ await page.getByText('接続の変更は保存しましたが、以前の認証情報を削除できませんでした。認証情報の削除を再試行してください。', { exact: true }).waitFor()
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
+ await settingsButton('保存失敗API').click()
+ const newActiveRecord = Object.values(settingsValue.connections).find(entry => entry.displayName === '保存失敗API').credentialRecordId
+ assert.notEqual(newActiveRecord, failedCreated.credentialRecordId)
+ assert.equal((await ctx.credentials.describeRecord(`llm-pi-ai/${newActiveRecord}`)).configured, true)
+ assert.equal(await page.getByText('fixture-private-cleanup-failure', { exact: true }).count(), 0)
+ ctx.credentials.deleteRecord = deleteRecord
+ await page.getByRole('button', { name: '認証情報の削除を再試行', exact: true }).click()
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
+ assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '保存失敗API').credentialCleanupIds, undefined)
+ assert.equal((await ctx.credentials.describeRecord(`llm-pi-ai/${newActiveRecord}`)).configured, true)
+ await settingsButton('保存失敗API').click()
+ await page.getByRole('button', { name: '接続を削除', exact: true }).click()
+ await page.getByRole('button', { name: 'この接続を削除する', exact: true }).click()
+ await settingsButton('保存失敗API').waitFor({ state: 'hidden' })
+ // A saved protocol override can be cleared back to the actual provider default.
+ await settingsButton('追加API改').click()
+ await page.getByText('詳細設定', { exact: true }).click()
+ await page.getByRole('button', { name: '通信方式', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'openai-completions', exact: true }).click()
+ await page.getByRole('button', { name: '保存', exact: true }).click()
+ assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '追加API改').profile.api, 'openai-completions')
+ await settingsButton('追加API改').click()
+ await page.getByText('詳細設定', { exact: true }).click()
+ await page.getByRole('button', { name: '通信方式', exact: true }).click()
+ await page.getByRole('menuitem', { name: 'プロバイダーの既定値', exact: true }).click()
+ await page.getByRole('button', { name: '保存', exact: true }).click()
+ assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '追加API改').profile.api, undefined)
  // A custom origin requires Host trust and gives a specific actionable error.
  await settingsButton('追加API改').click()
  await page.getByText('詳細設定', { exact: true }).click()
@@ -345,6 +461,40 @@ try {
  }
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
  await page.setViewportSize({ width: 1000, height: 900 })
+ // A stale Delete confirmation must retain the account the user reviewed.
+ // Reauthentication in another tab keeps the same profile and connection id.
+ await settingsButton('個人Pro').click()
+ await page.getByRole('button', { name: '接続を削除', exact: true }).click()
+ const accountBeforeConfirm = structuredClone(settingsValue.connections['c-personal'])
+ settingsValue.connections['c-personal'].credentialGeneration++
+ revision++
+ const refreshedAccount = page.waitForResponse(response => response.url().endsWith('/api/dsh-pi-login/connection-list'))
+ await page.evaluate(() => testRuntime.ctx.emit('connection/reset'))
+ await refreshedAccount
+ await page.waitForTimeout(50)
+ await page.getByRole('dialog').getByText('この接続と保存済みの認証情報を削除しますか？この接続のモデルは利用できなくなります。', { exact: true }).waitFor()
+ await page.getByRole('button', { name: 'この接続を削除する', exact: true }).click()
+ await page.getByText('この接続のアカウントが変わりました。画面を開き直して現在のアカウントとモデル選択を確認してください。', { exact: true }).waitFor()
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
+ assert.equal(settingsValue.connections['c-personal'].deletionPending, undefined)
+ assert.equal(settingsValue.connections['c-personal'].credentialRecordId, accountBeforeConfirm.credentialRecordId)
+ assert.equal((await ctx.credentials.describeRecord(`llm-pi-ai/${accountBeforeConfirm.credentialRecordId}`)).configured, true)
+ // A background list refresh must not lend a newer revision to stale edits.
+ await settingsButton('個人Pro').click()
+ await page.getByLabel('接続名', { exact: true }).fill('古い編集で上書きしない')
+ const originalPersonalName = settingsValue.connections['c-personal'].displayName
+ settingsValue.connections['c-personal'].displayName = '別操作で変更済み'
+ revision++
+ await page.evaluate(() => testRuntime.ctx.emit('connection/reset'))
+ await page.getByText('別操作で変更済み', { exact: true }).waitFor()
+ await page.getByRole('button', { name: '保存', exact: true }).click()
+ await page.getByRole('alert').filter({ hasText: '別の操作で設定が変わりました' }).waitFor()
+ assert.equal(settingsValue.connections['c-personal'].displayName, '別操作で変更済み')
+ await page.keyboard.press('Escape')
+ settingsValue.connections['c-personal'].displayName = originalPersonalName
+ revision++
+ await page.evaluate(() => testRuntime.ctx.emit('connection/reset'))
+ await page.getByText(originalPersonalName, { exact: true }).waitFor()
  // Usage loads inside an account's settings only, without rebuilding model choices.
  const usageBefore = usageCalls
  await settingsButton('個人Pro').click()
@@ -401,7 +551,7 @@ try {
  await page.evaluate(() => testRuntime.dispose())
  assert.equal(await page.locator('style[data-dsh-pi-login]').count(), 0)
  assert.deepEqual(errors, []); assert.deepEqual(consoleErrors, [])
- console.log('Official primitives/slots, authenticated CRUD/OAuth/model isolation, lazy usage states, keyboard focus, 50 connections, 390/768/1440 light/dark, locale and unload passed')
+ console.log('Official primitives/slots, authenticated CRUD/OAuth/model isolation, stale dialog cancellation, recoverable credential deletion, protocol defaults, lazy usage states, keyboard focus, 50 connections, 390/768/1440 light/dark, locale and unload passed')
 } catch (error) {
  if (browser) for (const page of browser.contexts().flatMap(context => context.pages())) {
   await page.screenshot({ path: artifact('browser-failure.png'), fullPage: true })

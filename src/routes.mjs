@@ -19,7 +19,7 @@ export function applyLoginUI(ctx, options = {}) {
     ...options.updates,
   })
   ctx.effect(() => () => { updates.dispose(); broker.dispose() }, 'dsh-pi-login: private attempts and update retrieval')
-  const connectionMutations = ['connection-create', 'connection-update', 'connection-clone', 'connection-delete']
+  const connectionMutations = ['connection-create', 'connection-update', 'connection-clone', 'connection-delete', 'connection-cleanup']
   for (const method of ['connection-list', ...connectionMutations, 'usage', 'list', 'start', 'state', 'answer', 'cancel', 'enable', 'models', 'refresh-models', 'set-model', 'set-provider', 'use-login', 'update-status', 'update-check', 'update-begin', 'update-reconcile']) {
     const endpoint = `dsh-pi-login/${method}`
     ctx.connection.fetch.register({
@@ -55,6 +55,7 @@ export function applyLoginUI(ctx, options = {}) {
                 if (method === 'connection-create') value = await options.connections.create(payload, payload.revision)
                 else if (method === 'connection-update') value = await options.connections.update(payload.connectionId, payload.patch, payload.revision)
                 else if (method === 'connection-clone') value = await options.connections.clone(payload.connectionId, payload.displayName, payload.revision)
+                else if (method === 'connection-cleanup') value = await options.connections.cleanupCredentials(payload.connectionId, payload.revision)
                 else value = await options.connections.delete(payload.connectionId, payload.revision)
               } else if (method === 'connection-list') {
                 if (!options.connections) throw new LoginError('unavailable')

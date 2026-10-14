@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-pi-login",
-  "version": "0.7.2",
+  "version": "0.7.3",
   "description": "DeepSeek Harness用のPiログインとモデル管理",
   "type": "module",
   "license": "MIT",
@@ -17,6 +17,7 @@
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "docs",
     "src/runtime/UPSTREAM.md",
     "upstream.json"

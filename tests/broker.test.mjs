@@ -187,8 +187,7 @@ test('Host registers authenticated Connection routes, rejects malformed envelope
  apply({get:()=>undefined,authorization:fixture.authorization,credentials:fixture.credentials,settings:fixture.settings,effect:body=>{effects.push(body())},connection:{fetch:{register:route=>routes.set(route.path,route)}}})
  t.after(async()=>{for(const effect of effects.reverse())await effect?.();await fixture.broker.dispose()})
  const route=routes.get('/api/dsh-pi-login/start')
- assert.equal(routes.size,21)
- for(const method of ['connection-list','connection-create','connection-update','connection-clone','connection-delete','usage']) assert.ok(routes.has(`/api/dsh-pi-login/${method}`))
+ for(const method of ['connection-list','connection-create','connection-update','connection-clone','connection-delete','connection-cleanup','usage']) assert.ok(routes.has(`/api/dsh-pi-login/${method}`))
  const call=payload=>route.fetch(new Request('http://localhost/api/dsh-pi-login/start',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)}))
  assert.equal((await call({})).status,400)
  const response=await call({type:'client-request',rpcId:'test-id',method:'dsh-pi-login/start',payload:{key:'other/credential',method:'oauth'}})
@@ -438,4 +437,25 @@ test('unverified configured gateway models retain their independent capability w
  connected.broker.catalog=()=>[{id:'gateway-model',name:'Gateway model',capabilityUnverified:true}]
  assert.equal(connected.broker.models('c-account-a').models[0].capabilityUnverified,true)
  assert.equal(connected.broker.models('c-account-a').models[0].discovered,undefined)
+})
+
+test('scoped model reads and writes reject previous profile and authentication generations before any catalog work', async t => {
+ const f=connectionSetup(async()=>{})
+ t.after(()=>f.broker.dispose())
+ const id='c-account-a'
+ const before=structuredClone(f.raw[id].profile)
+ let validated=0
+ f.catalogs.get(id).validate=async()=>{validated++}
+ const old=f.payload({connectionId:id,credentialGeneration:0})
+ assert.equal((await dispatch(f.broker,'models',old)).connectionId,id)
+ assert.equal(validated,1)
+ await f.connections.beginLogin(id)
+ for(const method of ['models','refresh-models','set-model']) {
+  await assert.rejects(dispatch(f.broker,method,{...old,model:'regular',enabled:false,revision:f.revision}),error=>error.code==='connection-changed')
+ }
+ assert.equal(validated,1)
+ assert.deepEqual(f.raw[id].profile,before)
+ f.registry.switchProfile('other-profile')
+ await assert.rejects(dispatch(f.broker,'models',{...old,credentialGeneration:1}),error=>error.code==='profile-changed')
+ assert.equal(validated,1)
 })

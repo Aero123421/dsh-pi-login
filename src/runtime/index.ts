@@ -311,7 +311,22 @@ export function apply(ctx: Context, config: Config, live?: {
     if (provider === undefined) return undefined
     const profile = profiles().get(provider)
     if (profile === undefined) return undefined
+    const model = profile.piProvider?.getModels()[0]
+    const transport = (value: ResolvedPiAiProviderProfile): unknown => ({
+      connectionId: value.connectionId, serviceId: value.serviceId,
+      credentialRecordId: value.credentialRecordId, credentialGeneration: value.credentialGeneration,
+      apiKeyEnv: value.apiKeyEnv, headerRefs: value.headerRefs, headers: value.headers,
+      baseURL: value.baseURL ?? value.piProvider?.baseUrl ?? value.piProvider?.getModels()[0]?.baseUrl,
+      api: value.api ?? value.piProvider?.getModels()[0]?.api,
+    })
+    const identity = transport(profile)
     return {
+      baseURL: profile.baseURL ?? profile.piProvider?.baseUrl ?? model?.baseUrl,
+      api: profile.api ?? model?.api,
+      isCurrent: () => {
+        const current = profiles().get(provider)
+        return current !== undefined && deepEqualJson(transport(current), identity)
+      },
       headers: profile.headers,
       resolveApiKey: () => resolveApiKey(provider, profile),
     }

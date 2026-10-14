@@ -11,10 +11,16 @@ const filename = `local-dsh-pi-login-${version}.tgz`
 const download = `https://github.com/${REPOSITORY}/releases/download/${tag}/`
 const release = { id: 7, tag_name: tag, html_url: `https://github.com/${REPOSITORY}/releases/tag/${tag}`, draft: false, prerelease: false, body: 'Changes', assets: [filename, 'SHA256SUMS'].map((name, i) => ({ name, id: i + 1, size: 50, browser_download_url: download + name })) }
 const pkg = { name: PACKAGE, version, dsh: { bundle: { patch: './cordis.patch.yml' } }, peerDependencies: { '@deepseek-ai/dsh-llm': '0.2.1-alpha.2' } }
-function tarPackage(value = pkg) {
-  const content = Buffer.from(JSON.stringify(value)), header = Buffer.alloc(512)
-  header.write('package/package.json'); header.write(content.length.toString(8).padStart(11, '0'), 124); header[156] = 48
-  return gzipSync(Buffer.concat([header, content, Buffer.alloc(512 - content.length % 512), Buffer.alloc(1024)]))
+function tarEntry(name, content = '', type = 48) {
+  content = Buffer.from(content)
+  const header = Buffer.alloc(512)
+  header.write(name); header.write(content.length.toString(8).padStart(11, '0'), 124); header[156] = type
+  header.fill(32, 148, 156)
+  header.write(header.reduce((sum, byte) => sum + byte, 0).toString(8).padStart(6, '0') + '\0 ', 148)
+  return Buffer.concat([header, content, Buffer.alloc((512 - content.length % 512) % 512)])
+}
+function tarPackage(value = pkg, entries = []) {
+  return gzipSync(Buffer.concat([...entries, tarEntry('package/package.json', JSON.stringify(value)), Buffer.alloc(1024)]))
 }
 const bytes = tarPackage(), hash = createHash('sha256').update(bytes).digest('hex')
 function fetcher(input) {
@@ -52,6 +58,22 @@ test('release schema, stable channel, exact assets and compatibility are fail cl
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '^0.2.1' } }, candidate, '0.2.1'), /compatibility-unknown/)
   for (const value of [{ ...release, prerelease: true }, { ...release, draft: true }, { ...release, assets: [...release.assets, release.assets[0]] }, { ...release, assets: [] }, { ...release, tag_name: 'garbage' }]) assert.throws(() => releaseCandidate(value, '0.5.0'))
   assert.deepEqual(packageManifest(bytes), pkg)
+})
+test('archive validation refuses traversal, links, rewriting headers, duplicates and corrupt records', () => {
+  for (const path of ['../outside', '/package/outside', 'package/../outside', 'package/./file', 'package//file', 'package\\outside']) {
+    assert.throws(() => packageManifest(tarPackage(pkg, [tarEntry(path)])), /metadata/)
+  }
+  for (const type of [49, 50, 120, 103, 76, 75]) {
+    assert.throws(() => packageManifest(tarPackage(pkg, [tarEntry('package/file', '', type)])), /metadata/)
+  }
+  assert.throws(() => packageManifest(tarPackage(pkg, [tarEntry('package/file'), tarEntry('package/file')])), /metadata/)
+  const corrupt = tarEntry('package/file'); corrupt[0] = 88
+  assert.throws(() => packageManifest(tarPackage(pkg, [corrupt])), /metadata/)
+  const missingEnd = Buffer.concat([tarEntry('package/package.json', JSON.stringify(pkg))])
+  assert.throws(() => packageManifest(gzipSync(missingEnd)), /metadata/)
+  assert.throws(() => packageManifest(gzipSync(Buffer.concat([missingEnd, Buffer.alloc(1023)]))), /metadata/)
+  assert.throws(() => packageManifest(Buffer.from('not gzip')), /metadata/)
+  assert.deepEqual(packageManifest(tarPackage(pkg, [tarEntry('package/', '', 53), tarEntry('package/docs/', '', 53)])), pkg)
 })
 test('source provenance preserves Github and tarball family and refuses arbitrary local/registry', () => {
   for (const source of [`github:${REPOSITORY}#v0.5.0`, `git+https://github.com/${REPOSITORY}.git#abc`]) assert.equal(sourceKind(source), 'github')
@@ -106,6 +128,43 @@ test('missing manager/read-only/source reject before networking; login or save b
   const busy = await fixture(t, { isBusy: () => true })
   await busy.updater.check()
   await assert.rejects(busy.updater.begin('7', randomUUID(), busy.updater.base().profileKey), /busy/)
+})
+test('external installation without a receipt reports restart before offering another update', async t => {
+  const { updater, bundle, calls } = await fixture(t, { fetcher: async () => { throw new Error('unexpected fetch') } })
+  bundle.version = version
+  const status = await updater.status()
+  assert.equal(status.status, 'restart-required')
+  assert.equal(status.runtimeVersion, '0.5.0')
+  assert.equal(status.installedVersion, version)
+  assert.equal((await updater.check()).status, 'restart-required')
+  assert.equal(updater.candidate, null)
+  assert.equal(calls.length, 0)
+  updater.version = version
+  assert.equal((await updater.status()).status, 'idle')
+})
+test('later external installation supersedes a completed receipt and remains restart-required until running it', async t => {
+  const { updater, bundle } = await fixture(t)
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  bundle.version = '0.7.0'
+  assert.equal((await updater.status()).status, 'restart-required')
+  assert.equal((await updater.reconcile(id)).installedVersion, '0.7.0')
+  updater.version = '0.7.0'
+  assert.equal((await updater.status()).status, 'overridden')
+  assert.equal((await updater.reconcile(id)).requestId, id)
+})
+test('matching checksum cannot admit an unsafe archive to the manager', async t => {
+  const unsafe = tarPackage(pkg, [tarEntry('package/../../outside', 'fixture')])
+  const unsafeHash = createHash('sha256').update(unsafe).digest('hex')
+  const { updater, calls } = await fixture(t, { fetcher: async url => String(url).endsWith('SHA256SUMS') ? new Response(`${unsafeHash}  ${filename}`) : String(url).endsWith('.tgz') ? new Response(unsafe) : fetcher(url) })
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 0)
+  assert.equal((await updater.reconcile(id)).reason, 'metadata')
 })
 test('checksum or manifest mismatch prevents manager call; tgz stages a persistent verified file', async t => {
   const bad = await fixture(t, { fetcher: async url => String(url).endsWith('SHA256SUMS') ? new Response(`${'0'.repeat(64)}  ${filename}`) : fetcher(url) })

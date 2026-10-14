@@ -12,7 +12,7 @@ Pi対応プロバイダーのログイン、接続ごとのモデル選択、ア
 github:Aero123421/dsh-pi-login
 ```
 
-「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.7.2)を使えます。
+「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.7.3)を使えます。
 
 WebプロファイルではCLIからも追加できます。
 
@@ -86,6 +86,6 @@ MetaでMuseログインを使っている場合は、行の「モデル」→「
 
 テストには公式ソース、Pi SDK、モック認証、ローカルの生成サーバーを使っています。実アカウントのOAuth、実プロバイダーへの生成リクエスト、公式デスクトップへのインストール、Windows・macOS実機は未検証です。
 
-[開発・テスト・更新手順](docs/development.md) · [元アダプターと変更点](src/runtime/UPSTREAM.md)
+[設計と失敗時の復旧](docs/design.md) · [開発・テスト・更新手順](docs/development.md) · [元アダプターと変更点](src/runtime/UPSTREAM.md)
 
 コードは[MIT](LICENSE)です。DeepSeekの著作権表示を保持しています。

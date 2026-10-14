@@ -79,7 +79,8 @@ function Prompt({ prompt, ticket, controller, t, onFailure }) {
   </form>
 }
 
-function LoginDialog({ entry, method, controller, t, onClose, onModels }) {
+function LoginDialog({ entry, method, controller: sourceController, t, onClose, onModels }) {
+  const [controller] = useState(() => sourceController.scoped())
   const ticketRef = useRef()
   const [ticket, setTicket] = useState()
   const [state, setState] = useState({ status: 'running' })
@@ -151,7 +152,8 @@ function LoginDialog({ entry, method, controller, t, onClose, onModels }) {
   </Modal>
 }
 
-function ModelsDialog({ entry, controller, t, onClose }) {
+function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
+  const [controller] = useState(() => sourceController.scoped(entry))
   const [snapshot, setSnapshot] = useState()
   const [search, setSearch] = useState('')
   const [pending, setPending] = useState(() => new Set())
@@ -161,10 +163,11 @@ function ModelsDialog({ entry, controller, t, onClose }) {
   const refreshAbort = useRef()
   const generation = useRef(0)
   const queue = useRef(Promise.resolve())
+  const lifetime = useRef(new AbortController())
   useEffect(() => {
     const abort = new AbortController()
-    void controller.call('models', { connectionId: entry.connectionId }, abort.signal).then(setSnapshot, () => { if (!abort.signal.aborted) setError(true) })
-    return () => { abort.abort(); refreshAbort.current?.abort(); generation.current++ }
+    void controller.call('models', { connectionId: entry.connectionId }, abort.signal).then(value => { if (!abort.signal.aborted) setSnapshot(value) }, () => { if (!abort.signal.aborted) setError(true) })
+    return () => { lifetime.current.abort(); abort.abort(); refreshAbort.current?.abort(); generation.current++ }
   }, [entry.connectionId])
   async function reload() {
     const request = ++generation.current
@@ -176,7 +179,7 @@ function ModelsDialog({ entry, controller, t, onClose }) {
       if (!abort.signal.aborted && request === generation.current) setSnapshot(next)
     } catch (error) {
       if (!abort.signal.aborted && request === generation.current) {
-        const code = error.message.split('/').pop()
+        const code = String(error.code ?? error.message).split('/').pop()
         setRefreshError(snapshot?.refresh?.errors?.[code] ?? 'catalogRefreshFailed')
       }
     } finally { if (!abort.signal.aborted && request === generation.current) setReloading(false) }
@@ -187,20 +190,29 @@ function ModelsDialog({ entry, controller, t, onClose }) {
     setPending(current => new Set(current).add(model))
     setSnapshot(current => ({ ...current, models: current.models.map(row => row.id === model ? { ...row, enabled } : row) }))
     queue.current = queue.current.then(async () => {
+      const signal = lifetime.current.signal
+      if (signal.aborted) return
       try {
-        const latest = await controller.call('models', { connectionId: entry.connectionId })
-        await controller.mutation('set-model', { connectionId: entry.connectionId, model, enabled, revision: latest.revision })
-      } catch { setError(true) }
-      try { setSnapshot(await controller.call('models', { connectionId: entry.connectionId })) } catch {}
-      setPending(current => { const next = new Set(current); next.delete(model); return next })
+        const latest = await controller.call('models', { connectionId: entry.connectionId }, signal)
+        if (signal.aborted) return
+        await controller.mutation('set-model', { connectionId: entry.connectionId, model, enabled, revision: latest.revision }, signal)
+      } catch { if (!signal.aborted) setError(true) }
+      if (signal.aborted) return
+      try {
+        const latest = await controller.call('models', { connectionId: entry.connectionId }, signal)
+        if (!signal.aborted) setSnapshot(latest)
+      } catch { if (!signal.aborted) setError(true) }
+      if (!signal.aborted) setPending(current => { const next = new Set(current); next.delete(model); return next })
     })
-    void queue.current.then(() => controller.refresh()).catch(() => {})
+    void queue.current.then(() => { if (!lifetime.current.signal.aborted) return controller.refresh() }).catch(() => {})
   }
+  const saving = pending.size > 0
+  const close = () => { if (!saving) onClose() }
   const needle = search.trim().toLowerCase()
   const models = snapshot?.models.filter(model => `${model.id} ${model.name}`.toLowerCase().includes(needle))
   const count = snapshot?.models.filter(model => model.enabled).length ?? 0
-  return <Modal open title={entry.displayName} description={t('modelsHint')} closeLabel={t('close')} onClose={onClose}
-    className="dsh-pi-login dsh-pi-dialog dsh-pi-models-dialog" contentClassName="dsh-pi-modal-content" footer={<Button variant="outline" onClick={onClose}>{t('close')}</Button>}>
+  return <Modal open title={entry.displayName} description={t('modelsHint')} closeLabel={t('close')} onClose={close}
+    className="dsh-pi-login dsh-pi-dialog dsh-pi-models-dialog" contentClassName="dsh-pi-modal-content" footer={<Button variant="outline" disabled={saving} onClick={close}>{t('close')}</Button>}>
     {snapshot && snapshot.models.length > 8 ? <Input icon={<IconSearchOutlineRegular size={16} />} aria-label={t('searchModels')} placeholder={t('searchModels')} data-modal-autofocus value={search} onChange={event => setSearch(event.target.value)} /> : null}
     <div className="dsh-pi-toolbar dsh-pi-models-toolbar">
       {snapshot ? <span className="dsh-pi-muted">{t('modelsOn').replace('{count}', String(count))}</span> : <span role="status">{error ? '' : t('loading')}</span>}
@@ -227,8 +239,14 @@ function ModelsDialog({ entry, controller, t, onClose }) {
 }
 
 function connectionError(error) {
-  const code = error.message.split('/').pop()
+  const code = String(error.code ?? error.message).split('/').pop()
   if (code === 'endpoint-untrusted') return 'endpointUntrusted'
+  if (code === 'credential-delete-failed') return 'deletionPending'
+  if (code === 'credential-cleanup-failed') return 'credentialCleanupFailed'
+  if (code === 'credential-save-failed') return 'credentialSaveFailed'
+  if (code === 'profile-changed') return 'profileChanged'
+  if (code === 'connection-changed') return 'connectionChanged'
+  if (code === 'settings-changed') return 'settingsChanged'
   if (code?.startsWith('muse-code-')) return Object.hasOwn(en, `error_${code}`) ? `error_${code}` : 'error_muse-code-unavailable'
   return 'saveFailed'
 }
@@ -267,7 +285,8 @@ function usageWindow(window, t) {
   return window.scope === 'account' ? t('accountQuota') : Object.hasOwn(en, `usageScope_${window.scope}`) ? t(`usageScope_${window.scope}`) : window.scope
 }
 
-function UsagePanel({ entry, controller, t }) {
+function UsagePanel({ entry, controller: sourceController, t }) {
+  const [controller] = useState(() => sourceController.scoped())
   const [snapshot, setSnapshot] = useState()
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -279,7 +298,7 @@ function UsagePanel({ entry, controller, t }) {
     const abort = new AbortController(); request.current = abort
     setBusy(true); setFailed(false)
     try {
-      const result = await controller.mutation('usage', { connectionId: entry.connectionId, refresh }, abort.signal)
+      const result = await controller.mutation('usage', { connectionId: entry.connectionId, credentialGeneration: entry.credentialGeneration, refresh }, abort.signal)
       if (!abort.signal.aborted && current === generation.current) setSnapshot(result)
     } catch { if (!abort.signal.aborted && current === generation.current) setFailed(true) }
     finally { if (!abort.signal.aborted && current === generation.current) setBusy(false) }
@@ -322,7 +341,8 @@ function SecretField({ value, onChange, t, disabled, saved }) {
 function serviceKey(service) { return `${service.integrationId}/${service.serviceId ?? service.id}` }
 
 /** Adding is one form: pick a service, name it, then sign in or paste a key. */
-function AddDialog({ state, controller, t, onClose, onLogin, onSaved }) {
+function AddDialog({ state, controller: sourceController, t, onClose, onLogin, onSaved }) {
+  const [controller] = useState(() => sourceController.scoped())
   const services = state.services
   const labels = new Map()
   for (const service of services) {
@@ -359,13 +379,16 @@ function AddDialog({ state, controller, t, onClose, onLogin, onSaved }) {
         const next = controller.getSnapshot().entries.find(item => item.connectionId === created.connectionId)
         if (next) onLogin(next)
       }
-    } catch (error) { setError(connectionError(error)) } finally { setBusy(false) }
+    } catch (error) {
+      setError(connectionError(error) === 'credentialSaveFailed' ? 'createdCredentialFailed' : connectionError(error))
+      await controller.refresh().catch(() => {})
+    } finally { setBusy(false) }
   }
-  return <Modal open title={t('addConnection')} closeLabel={t('close')} onClose={onClose} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
+  return <Modal open title={t('addConnection')} closeLabel={t('close')} onClose={() => { if (!busy) onClose() }} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
     footer={<><Button variant="outline" onClick={onClose} disabled={busy}>{t('cancel')}</Button>
-      <Button variant="primary" disabled={busy || !service || unavailable || service.writable === false || !name || method === 'api-key' && !apiKey.trim()} onClick={() => { void save() }}>{t(busy ? 'loading' : method === 'oauth' ? 'addAndSignIn' : 'add')}</Button></>}>
+      <Button variant="primary" disabled={busy || error === 'createdCredentialFailed' || !service || unavailable || service.writable === false || !name || method === 'api-key' && !apiKey.trim()} onClick={() => { void save() }}>{t(busy ? 'loading' : method === 'oauth' ? 'addAndSignIn' : 'add')}</Button></>}>
     <Choice label={t('service')} value={service ? serviceKey(service) : ''} options={services.map(item => ({ id: serviceKey(item), label: serviceLabel(item) }))} disabled={busy}
-      onChange={value => { setKey(value); setAuthMethod(services.find(item => serviceKey(item) === value)?.methods?.[0]?.id ?? 'oauth'); setApiKey('') }} />
+      onChange={value => { setKey(value); setAuthMethod(services.find(item => serviceKey(item) === value)?.methods?.[0]?.id ?? 'oauth'); setApiKey(''); setEndpointUrl(''); setApi('') }} />
     {unavailable ? <p role="status">{t(service.unavailableReason === 'muse-code-bridge-unverified' ? `serviceUnavailable_${service.unavailableReason}` : 'serviceUnavailable')}</p> : null}
     {methods.length > 1 ? <Choice label={t('method')} value={method} options={methods.map(item => ({ id: item.id, label: t(item.id === 'oauth' ? 'oauth' : 'apiKey') }))} disabled={busy} onChange={value => { setAuthMethod(value); setApiKey('') }} /> : null}
     <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label>
@@ -374,13 +397,14 @@ function AddDialog({ state, controller, t, onClose, onLogin, onSaved }) {
       <SecretField value={apiKey} onChange={setApiKey} t={t} disabled={busy} />
       <details className="dsh-pi-advanced"><summary>{t('advanced')}</summary>
         <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} {...noAutofill} type="url" value={endpointUrl} disabled={busy} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
-        {service?.apis?.length ? <Choice label={t('protocol')} value={api || service.apis[0]} options={service.apis.map(value => ({ id: value, label: value }))} disabled={busy} onChange={setApi} /> : null}
+        {service?.apis?.length ? <Choice label={t('protocol')} value={api} options={[{ id: '', label: t('providerDefault') }, ...service.apis.map(value => ({ id: value, label: value }))]} disabled={busy} onChange={setApi} /> : null}
       </details></> : <p className="dsh-pi-muted">{t('oauthHint')}</p>}
     {error ? <p role="alert">{t(error)}</p> : null}
   </Modal>
 }
 
 function statusOf(entry) {
+  if (entry.deletionPending) return { dot: 'warning', copy: 'deletionPendingShort' }
   if (entry.inFlight || entry.authStatus === 'updating') return { dot: 'ongoing', copy: 'busy' }
   if (entry.authStatus === 'expired') return { dot: 'error', copy: 'authExpired' }
   if (entry.authStatus === 'unavailable') return { dot: 'warning', copy: 'authUnavailable' }
@@ -390,7 +414,9 @@ function statusOf(entry) {
 }
 
 /** One place for an account: status, usage, settings and removal. */
-function ConnectionDialog({ entry, state, controller, t, onClose, onLogin, onSaved }) {
+function ConnectionDialog({ entry, state, controller: sourceController, t, onClose, onLogin, onSaved }) {
+  const [controller] = useState(() => sourceController.scoped())
+  const [editRevision] = useState(entry.revision ?? state.revision)
   const methods = state.services.find(item => item.integrationId === entry.integrationId && (item.serviceId ?? item.id) === entry.serviceId)?.methods ?? entry.methods ?? []
   const [authMethod, setAuthMethod] = useState(entry.authMethod)
   const [displayName, setDisplayName] = useState(entry.displayName ?? '')
@@ -402,46 +428,64 @@ function ConnectionDialog({ entry, state, controller, t, onClose, onLogin, onSav
   const [confirm, setConfirm] = useState()
   const fieldId = useId()
   const service = state.services.find(item => item.integrationId === entry.integrationId && (item.serviceId ?? item.id) === entry.serviceId)
+  const cleanupPending = state.entries.find(item => item.connectionId === entry.connectionId)?.credentialCleanupPending ?? entry.credentialCleanupPending
+  const deletionPending = state.entries.find(item => item.connectionId === entry.connectionId)?.deletionPending ?? entry.deletionPending
   const writable = entry.writable !== false
+  const editable = writable && !deletionPending
   const methodChanged = authMethod !== entry.authMethod
   const dirty = displayName.trim() !== entry.displayName || methodChanged || !!apiKey || endpointUrl.trim() !== (entry.profile?.baseURL ?? '') || api !== (entry.profile?.api ?? '')
-  const status = statusOf(entry)
+  const status = statusOf({ ...entry, deletionPending })
+  async function recover(error) {
+    const copy = connectionError(error)
+    setError(copy)
+    try {
+      await controller.refresh()
+      const current = controller.getSnapshot().entries.find(item => item.connectionId === entry.connectionId)
+      // A committed tombstone/key swap changes the authority captured by this
+      // dialog. Close with persistent feedback; retry only from a fresh entry.
+      if (current && current.credentialGeneration !== entry.credentialGeneration) onSaved(copy)
+    } catch {}
+  }
   async function save() {
     if (methodChanged && confirm !== 'method') { setConfirm('method'); return }
     setBusy(true); setError('')
     try {
       const fields = { displayName: displayName.trim(), ...(methodChanged ? { authMethod } : {}), ...(apiKey ? { apiKey } : {}),
-        ...(endpointUrl.trim() ? { endpointUrl: endpointUrl.trim() } : entry.profile?.baseURL ? { endpointUrl: '' } : {}), ...(api ? { api } : {}) }
-      await controller.mutation('connection-update', { connectionId: entry.connectionId, patch: fields, revision: state.revision })
+        ...(endpointUrl.trim() ? { endpointUrl: endpointUrl.trim() } : entry.profile?.baseURL ? { endpointUrl: '' } : {}), ...(api !== (entry.profile?.api ?? '') ? { api } : {}) }
+      await controller.mutation('connection-update', { connectionId: entry.connectionId, patch: fields, revision: editRevision, credentialGeneration: entry.credentialGeneration })
       setApiKey(''); await controller.refresh(); onSaved()
-    } catch (error) { setError(connectionError(error)) } finally { setBusy(false) }
+    } catch (error) { await recover(error) } finally { setBusy(false) }
   }
   async function destructive(action) {
     setBusy(true); setError('')
     try {
-      await controller.mutation(`connection-${action}`, { connectionId: entry.connectionId, revision: state.revision, ...(action === 'clone' ? { displayName: `${displayName} ${t('copySuffix')}` } : {}) })
+      const retry = action === 'delete' && entry.deletionPending || action === 'cleanup' && entry.credentialCleanupPending
+      await controller.mutation(`connection-${action}`, { connectionId: entry.connectionId, revision: retry ? state.revision : editRevision, credentialGeneration: entry.credentialGeneration, ...(action === 'clone' ? { displayName: `${displayName} ${t('copySuffix')}` } : {}) })
       await controller.refresh(); onSaved(action)
-    } catch { setError('saveFailed') } finally { setBusy(false) }
+    } catch (error) { await recover(error) } finally { setBusy(false) }
   }
-  const canSignIn = entry.authMethod === 'oauth' && entry.capabilities?.auth !== false
-  return <Modal open title={entry.displayName} description={`${entry.serviceLabel} · ${t(entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')}`} closeLabel={t('close')} onClose={onClose} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
+  const canSignIn = !deletionPending && entry.authMethod === 'oauth' && entry.capabilities?.auth !== false
+  return <Modal open title={entry.displayName} description={`${entry.serviceLabel} · ${t(entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')}`} closeLabel={t('close')} onClose={() => { if (!busy) onClose() }} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
     footer={<><Button variant="outline" onClick={onClose} disabled={busy}>{t('close')}</Button>
-      <Button variant="primary" disabled={busy || !writable || !dirty || service?.capabilities?.settings === false || confirm === 'delete' || !displayName.trim()} onClick={() => { void save() }}>{t(busy ? 'loading' : confirm === 'method' ? 'confirmSave' : 'save')}</Button></>}>
+      <Button variant="primary" disabled={busy || !editable || !dirty || service?.capabilities?.settings === false || confirm === 'delete' || !displayName.trim()} onClick={() => { void save() }}>{t(busy ? 'loading' : confirm === 'method' ? 'confirmSave' : 'save')}</Button></>}>
     <div className="dsh-pi-status-card">
       <span className="dsh-pi-status"><StateDot state={status.dot} size={8} />{t(status.copy)}</span>
       {canSignIn ? <Button size="sm" variant={entry.configured && entry.authStatus !== 'expired' ? 'outline' : 'primary'} disabled={busy || !writable || methodChanged} onClick={() => onLogin(entry)}>{t(entry.configured ? 'signInAgain' : 'signIn')}</Button> : null}
     </div>
-    {entry.configured && entry.capabilities?.usage !== false ? <UsagePanel entry={entry} controller={controller} t={t} /> : null}
+    {cleanupPending && !deletionPending ? <div className="dsh-pi-confirm"><p role="alert">{t('credentialCleanupPending')}</p>
+      <Button size="sm" variant="outline" disabled={busy || !writable} onClick={() => { void destructive('cleanup') }}>{t('retryCredentialCleanup')}</Button></div> : null}
+    {deletionPending ? <p role="alert">{t('deletionPending')}</p> : null}
+    {!deletionPending && entry.configured && entry.capabilities?.usage !== false ? <UsagePanel entry={entry} controller={controller} t={t} /> : null}
     <section className="dsh-pi-section" aria-label={t('connectionSettings')}>
       <h4>{t('connectionSettings')}</h4>
-      <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label><Input id={`${fieldId}-name`} {...noAutofill} maxLength={80} value={displayName} disabled={busy || !writable} placeholder={t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
-      {methods.length > 1 ? <Choice label={t('method')} value={authMethod} options={methods.map(method => ({ id: method.id, label: t(method.id === 'oauth' ? 'oauth' : 'apiKey') }))} disabled={busy || !writable} onChange={value => { setAuthMethod(value); setApiKey(''); setConfirm(undefined) }} /> : null}
+      <div className="dsh-pi-field"><label htmlFor={`${fieldId}-name`}>{t('connectionName')}</label><Input id={`${fieldId}-name`} {...noAutofill} maxLength={80} value={displayName} disabled={busy || !editable} placeholder={t('namePlaceholder')} onChange={event => setDisplayName(event.target.value)} /></div>
+      {methods.length > 1 ? <Choice label={t('method')} value={authMethod} options={methods.map(method => ({ id: method.id, label: t(method.id === 'oauth' ? 'oauth' : 'apiKey') }))} disabled={busy || !editable} onChange={value => { setAuthMethod(value); setApiKey(''); setConfirm(undefined) }} /> : null}
       {methodChanged ? <p role="alert">{t('methodChangeWarning')}</p> : null}
       {authMethod === 'api-key' ? <>
-        <SecretField value={apiKey} onChange={setApiKey} t={t} disabled={busy || !writable} saved={entry.configured && !methodChanged} />
+        <SecretField value={apiKey} onChange={setApiKey} t={t} disabled={busy || !editable} saved={entry.configured && !methodChanged} />
         <details className="dsh-pi-advanced" open={entry.profile?.baseURL ? true : undefined}><summary>{t('advanced')}</summary>
-          <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} {...noAutofill} type="url" value={endpointUrl} disabled={busy || !writable} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
-          {service?.apis?.length ? <Choice label={t('protocol')} value={api || service.apis[0]} options={service.apis.map(value => ({ id: value, label: value }))} disabled={busy || !writable} onChange={setApi} /> : null}
+          <div className="dsh-pi-field"><label htmlFor={`${fieldId}-url`}>{t('endpoint')}</label><Input id={`${fieldId}-url`} {...noAutofill} type="url" value={endpointUrl} disabled={busy || !editable} placeholder="https://…" onChange={event => setEndpointUrl(event.target.value)} /></div>
+          {service?.apis?.length ? <Choice label={t('protocol')} value={api} options={[{ id: '', label: t('providerDefault') }, ...service.apis.map(value => ({ id: value, label: value }))]} disabled={busy || !editable} onChange={setApi} /> : null}
         </details></> : null}
     </section>
     {error ? <p role="alert">{t(error)}</p> : null}
@@ -451,8 +495,8 @@ function ConnectionDialog({ entry, state, controller, t, onClose, onLogin, onSav
         <div className="dsh-pi-inline-actions"><Button size="sm" variant="outline" disabled={busy} onClick={() => setConfirm(undefined)}>{t('cancel')}</Button>
           <Button size="sm" variant="primary" disabled={busy} onClick={() => { void destructive('delete') }}>{t('confirmDelete')}</Button></div></div>
         : <div className="dsh-pi-inline-actions">
-          <Button size="sm" disabled={busy || !writable} title={t('cloneHint')} onClick={() => { void destructive('clone') }}>{t('cloneConnection')}</Button>
-          <Button size="sm" className="dsh-pi-danger-button" disabled={busy || !writable} onClick={() => setConfirm('delete')}>{t('deleteConnection')}</Button>
+          <Button size="sm" disabled={busy || !editable} title={t('cloneHint')} onClick={() => { void destructive('clone') }}>{t('cloneConnection')}</Button>
+          <Button size="sm" className="dsh-pi-danger-button" disabled={busy || !writable} onClick={() => setConfirm('delete')}>{t(deletionPending ? 'retryDelete' : 'deleteConnection')}</Button>
         </div>}
     </section>
   </Modal>
@@ -463,7 +507,7 @@ function ConnectionRow({ entry, controller, t, writableRevision, onOpen, onLogin
   const [failed, setFailed] = useState(false)
   const status = statusOf(entry)
   const ownerManaged = entry.authStatus === 'owner-managed'
-  const settings = entry.capabilities?.settings !== false
+  const settings = entry.deletionPending || entry.capabilities?.settings !== false
   const external = !settings && entry.settingsUrl ? safeUrl(entry.settingsUrl) : undefined
   async function setEnabled(enabled) {
     setBusy(true); setFailed(false)
@@ -480,8 +524,9 @@ function ConnectionRow({ entry, controller, t, writableRevision, onOpen, onLogin
       : <div className="dsh-pi-row-main">{main}{external ? <a className="dsh-pi-link" href={external} target="_blank" rel="noopener noreferrer">{t('externalSettings')}</a> : null}</div>}
     <div className="dsh-pi-row-actions">
       {settings ? <Button size="sm" variant="outline" aria-label={`${t('manageConnection')}: ${entry.displayName}`} onClick={() => onOpen(entry)}>{t('settingsShort')}</Button> : null}
+      {entry.credentialCleanupPending && !entry.deletionPending ? <span role="alert" className="dsh-pi-row-meta-alert">{t('credentialCleanupShort')}</span> : null}
       {failed ? <span role="alert" className="dsh-pi-row-meta-alert">{t('saveFailed')}</span> : null}
-      {!entry.configured && entry.authMethod === 'oauth' && entry.capabilities?.auth !== false && entry.writable !== false
+      {entry.deletionPending ? <span role="alert" className="dsh-pi-row-meta-alert">{t('deletionPendingShort')}</span> : !entry.configured && entry.authMethod === 'oauth' && entry.capabilities?.auth !== false && entry.writable !== false
         ? <Button size="sm" variant="primary" onClick={() => onLogin(entry)}>{t('signIn')}</Button>
         : entry.authStatus === 'expired' && entry.authMethod === 'oauth' && entry.writable !== false
           ? <Button size="sm" variant="primary" onClick={() => onLogin(entry)}>{t('signInAgain')}</Button>
@@ -513,11 +558,11 @@ export function ConnectionUI({ controller, updates, locale }) {
   const close = () => setOpened(undefined)
   function onLogin(entry) { setNotice(''); setOpened({ kind: 'login', entry, method: entry.authMethod }) }
   function onModels(entry) { setOpened({ kind: 'models', entry: controller.getSnapshot().entries.find(item => item.connectionId === entry.connectionId) ?? entry }) }
-  function onSaved(action) { setOpened(undefined); setNotice(action === 'delete' ? 'deleted' : action === 'clone' ? 'cloned' : 'saved') }
+  function onSaved(action) { setOpened(undefined); setNotice(action === 'delete' ? 'deleted' : action === 'clone' ? 'cloned' : action && action !== 'cleanup' ? action : 'saved') }
   return <section className="dsh-pi-login dsh-pi-footer" aria-labelledby={titleId}>
     <div className="dsh-pi-toolbar"><h3 id={titleId}>{t('title')}</h3>
       <Button variant="outline" size="sm" onClick={() => { setNotice(''); setOpened({ kind: 'add' }) }} disabled={state.status !== 'ready' || state.services.length === 0}>{t('addConnection')}</Button></div>
-    {notice ? <p role="status" className="dsh-pi-success">{t(notice)}</p> : null}
+    {notice ? <p role={['saved', 'deleted', 'cloned'].includes(notice) ? 'status' : 'alert'} className={['saved', 'deleted', 'cloned'].includes(notice) ? 'dsh-pi-success' : undefined}>{t(notice)}</p> : null}
     {state.error ? <p role="alert">{t('loadFailed')} <Button size="sm" onClick={() => { void controller.refresh() }}>{t('retry')}</Button></p> : null}
     {state.status === 'loading' && state.entries.length === 0 ? <p role="status" className="dsh-pi-loading">{t('loading')}</p> : null}
     {state.entries.length > 8 ? <div className="dsh-pi-search"><Input aria-label={t('searchConnections')} placeholder={t('searchConnections')} icon={<IconSearchOutlineRegular size={16} />} value={search} onChange={event => setSearch(event.target.value)} /></div> : null}
