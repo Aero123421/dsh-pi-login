@@ -24,6 +24,8 @@ npm run pack:plugin
 | `test:runtime` | ビルド済みプラグインと公式RPCによる旧設定の移行、独立した接続の登録・鍵変更・削除、実SDKでのAPI A+B／Gateway／OAuth A+Bのローカル生成、token refreshの世代確認、Fast・Thinking・履歴の接続境界、429・認証欠落時の切替禁止 |
 | `test:browser` | 接続追加・設定・モデル・利用状況、ログイン画面、再接続・プロフィール切替、認証・Originチェック、キーボード、明暗テーマ、390／768／1440px、多数接続、解除 |
 | `pack:plugin` | ビルド済みファイル・locale・ドキュメントを含むtgzとSHA-256 |
+| `test:peers` | `package.json` の `@deepseek-ai/dsh*` peer が 0.2.1-alpha.2 から 0.2.x を受け入れ、0.3.0 のプレリリースを拒否すること。オフラインでなければ npm の `@deepseek-ai/dsh@alpha` も同じ範囲に入ること |
+| `test:boot` | 実DSHの空profileへtgzを導入して起動し、互換性不足で行が無効にならず `update-status` が実行版を返すこと |
 | `test:install` | 実DSH `0.2.1-alpha.2`の空profileへ導入し、APIキー接続とMuse Codeの保存済み一覧・Contributor選択を残して再起動し、接続・認証・実行版・update manager・公開Release照合を確認。実Settings画面で8選択肢・オフの再起動保持・確認付き接続削除・Credentials削除・再起動後の非復活を検証 |
 
 モデル一覧更新の共通処理は単体テストで、Meta以外への委譲、未対応・不正なプロバイダーの拒否、同時更新の共有、破棄時の終了、公開する情報を確認します。Muse契約の再取得は単体テストで、OAuthとAPIキーの分離、契約状態、応答上限、取得失敗、アカウント変更を確認します。runtimeテストでは認証済みRPCからFullを選択し、実SDKによるリクエストとテスト用SSE応答を確認します。ブラウザテストでは共通の更新ボタンによるMetaと別のテスト用プロバイダーの再取得・モデル選択、未対応の案内、契約名・Full選択・APIキー優先時のエラーを確認します。いずれも実Metaアカウントや有料生成を使いません。[実アカウントで確認する項目](models.md#検証範囲と残る確認)
@@ -35,6 +37,14 @@ npm run pack:plugin
 ```sh
 npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.2 pnpm@11.28.5
 PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install
+```
+
+`test:boot`は配布tgzの起動と、peer不足で行が無効にならないことを確認します。CLIはnpmの`alpha` dist-tagです。
+
+```sh
+npm run pack:plugin
+npm install --prefix .cache/dsh-cli-alpha --ignore-scripts @deepseek-ai/dsh@alpha pnpm@11.28.5
+PATH="$PWD/.cache/dsh-cli-alpha/node_modules/.bin:$PATH" npm run test:boot
 ```
 
 CLI依存の導入と配布tgzの追加ではbuild scriptsを許可しません。CLIやpnpmが見つからない場合は、段階・終了コード・安全なエラー分類を表示し、rawの設定出力は公開しません。
@@ -53,7 +63,7 @@ GitHub Actionsにも同じチェックを設定しています（`.github/workfl
 
 設定は`dsh-pi-login/connections`です。`connectionId`、DSH履歴の`routeId`、Pi SDKのnative `serviceId`、`credentialRecordId`を別々に扱います。接続名の変更でIDは変わりません。新しい認証情報は`llm-pi-ai/<credentialRecordId>`、移行した認証は元の`llm-pi-ai/<provider>`を参照します。OpenAI OAuthのインストールIDは`dsh-pi-login/installation`です。本体の標準フォームはこの設定名前空間に未対応なので、公式Slot内の操作欄を使います。
 
-各接続のSDK collectionとCredentials storeはnative serviceを1件のrecordへ対応付けます。別接続のrecord列挙や環境変数による認証への切替はしません。再ログイン・APIキー変更で認証世代を進め、遅れて完了した古いOAuth refreshの保存を拒否します。呼び出し開始時の設定と認証を保持し、次の呼び出しから変更を使います。replayのopaque状態はroute・接続・認証世代・endpoint・protocolを確認し、境界が変わった場合は本文だけを再利用します。
+各接続のSDK collectionとCredentials storeはnative serviceを1件のrecordへ対応付けます。別接続のrecord列挙や環境変数による認証への切替はしません。`apiKeyEnv` の解決順はHostのCredentialsが決めます。DSH 0.2.1-alpha.3以降、保存済みの参照が起動時の環境変数、project `.env`、`$DSH_HOME/.env` より先です。プラグインは `credentials.resolve()` が値を返したとき、その値を環境変数で置き換えません。接続専用の保存recordは環境変数を読みません。Models画面の埋め込み先 `settings.models.footer` は 0.2.1-alpha.2 と 0.2.1-alpha.3 で同じslotです。0.2.1-alpha.3では設定を開く操作がサイドバーのボタンからアカウントメニューの項目に移っています。Modelsの中身は同じです。再ログイン・APIキー変更で認証世代を進め、遅れて完了した古いOAuth refreshの保存を拒否します。呼び出し開始時の設定と認証を保持し、次の呼び出しから変更を使います。replayのopaque状態はroute・接続・認証世代・endpoint・protocolを確認し、境界が変わった場合は本文だけを再利用します。
 
 独自endpointはHost設定の`trustedEndpointOrigins`にoriginを列挙してから使用します。RPCのURL指定では信頼を追加できません。URLのuser/password/query/fragmentは拒否し、秘密ヘッダーは`headerRefs`からCredentialsで解決します。生のキー・ヘッダー値は設定一覧、Client、利用状況、公開イベントへ返しません。
 
@@ -111,11 +121,13 @@ npm run update:pi -- 1.1.0
 
 1. `upstream.json`のコミットとバージョンを変更し、古い`.cache/upstream`を退避します。
 2. `src/runtime`と[元アダプター](../src/runtime/UPSTREAM.md)を比較します。
-3. HostのpeerDependencies、UI部品、認証・LLM APIの互換性を確認し、ビルドとテストを実行します。
+3. HostのpeerDependencies、UI部品、認証・LLM APIの互換性を確認し、ビルドとテストを実行します。`upstream.json` は画面部品と runtime の取り込み元です。peer 範囲はそれとは別に、起動時チェックが受け入れる DSH 版です。
 
 ## プラグイン更新UI（0.5.0）
 
-更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。現行配布版のexact DSH peerと実行版が一致する場合だけ候補にします。範囲指定など判定できない互換性は導入せず表示します。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
+更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。候補の `@deepseek-ai/dsh*` peerは、DSH起動時の `evaluatePluginCompatibility` と同じく prerelease を含む semver で実行版を満たす必要があります。peerが無い、または文字列でない場合は互換性不明として導入しません。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
+
+HMR有効時、`installBundle` が `error.code: already-installed` を返したら `removeBundle` のpromiseに続く導入を付けます。削除は呼び出し元のプラグインを止めるため、続く `installBundle` はこのプラグインの停止フラグを見ません。`stop-profile` のときはパッケージが残っているので、上書きの `installBundle` に戻します。それ以外の削除失敗では再導入しません。
 
 GitHub shorthand／git+httpsの導入元は明示タグへ、Release URL／保存済み検証tgz／`local-dsh-pi-login-<導入版>.tgz`という名前の`file:`導入元は検証済みtgzへ更新します。ファイル名は配布経路の分類にだけ使い、旧ファイルの真正性を保証するものとは扱いません。その他の導入元は手動更新です。
 

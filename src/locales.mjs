@@ -37,6 +37,7 @@ export const en = {
   "updateReason_size": "The release exceeded its download size limit.",
   "updateReason_stale-candidate": "The release or installation changed. Check again.",
   "updateReason_release-unavailable": "The release service returned no accessible release.",
+  "updateReason_replace": "DSH will not install over the current package. Removing it and installing the release did not finish. Saved credentials stay in the profile.",
 
   metaRateLimited: 'Meta limited the account check. Wait before trying again.',
   reloadModels: 'Update model list',
@@ -108,6 +109,7 @@ export const ja = {
   "updateReason_size": "配布ファイルが取得サイズ上限を超えました。",
   "updateReason_stale-candidate": "配布情報または導入状態が変わりました。再度確認してください。",
   "updateReason_release-unavailable": "取得できる配布版がありません。",
+  "updateReason_replace": "このDSHは導入済みパッケージへ上書き導入しません。パッケージを削除してから導入し直す処理が完了しませんでした。保存済みの認証情報はprofileに残ります。",
 
   metaRateLimited: 'Metaの契約確認が回数制限に達しました。時間を置いて再試行してください。',
   reloadModels: 'モデル一覧を更新',

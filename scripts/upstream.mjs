@@ -1,4 +1,4 @@
-import { readFile, readdir, access, mkdir } from 'node:fs/promises'
+import { readFile, readdir, access, mkdir, rm } from 'node:fs/promises'
 import { resolve, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { build } from 'esbuild'
@@ -6,13 +6,45 @@ import ts from 'typescript'
 
 export const upstreamRoot = resolve('.cache/upstream')
 const pinned = JSON.parse(await readFile('upstream.json', 'utf8'))
-export async function ensureUpstream() {
-  try { await access(join(upstreamRoot, 'packages/client/locale/src/client/index.ts')); return } catch {}
+const upstreamMarker = join(upstreamRoot, 'packages/client/locale/src/client/index.ts')
+const upstreamLock = resolve('.cache/upstream.lock')
+
+async function upstreamReady() {
+  try { await access(upstreamMarker); return true } catch { return false }
+}
+
+// Test files are separate processes and all call this on a cold cache.
+async function withUpstreamLock(fetchSource) {
   await mkdir('.cache', { recursive: true })
-  for (const args of [['init',upstreamRoot],['-C',upstreamRoot,'fetch','--depth=1',pinned.repository,pinned.commit],['-C',upstreamRoot,'checkout','--detach','FETCH_HEAD']]) {
-    const result = spawnSync('git', args, { stdio:'inherit' })
-    if (result.status !== 0) throw new Error('Could not fetch the pinned official Harness source')
+  const deadline = Date.now() + 15 * 60 * 1000
+  for (;;) {
+    try {
+      await mkdir(upstreamLock)
+      break
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error
+      if (await upstreamReady()) return
+      if (Date.now() > deadline) throw new Error('Timed out waiting for the pinned official Harness source')
+      await new Promise(resolveWait => setTimeout(resolveWait, 250))
+    }
   }
+  try {
+    if (!(await upstreamReady())) await fetchSource()
+  } finally {
+    await rm(upstreamLock, { recursive: true, force: true })
+  }
+}
+
+export async function ensureUpstream() {
+  if (await upstreamReady()) return
+  await withUpstreamLock(async () => {
+    await rm(upstreamRoot, { recursive: true, force: true })
+    await mkdir('.cache', { recursive: true })
+    for (const args of [['init', upstreamRoot], ['-C', upstreamRoot, 'fetch', '--depth=1', pinned.repository, pinned.commit], ['-C', upstreamRoot, 'checkout', '--detach', 'FETCH_HEAD']]) {
+      const result = spawnSync('git', args, { stdio: 'inherit' })
+      if (result.status !== 0) throw new Error('Could not fetch the pinned official Harness source')
+    }
+  })
 }
 
 async function packageRoots(folder, result = new Map()) {

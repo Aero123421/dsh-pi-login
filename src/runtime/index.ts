@@ -200,6 +200,8 @@ export function apply(ctx: Context, config: Config, live?: {
     // deployment meant to authenticate differently.
     if (ref === undefined) return undefined
     const credentials = ctx.get('credentials')
+    // The credentials service orders a stored ref ahead of the launch
+    // environment (DSH 0.2.1-alpha.3). Do not read the environment first.
     const hit = credentials !== undefined
       ? (await credentials.resolve(ref))?.value
       // Without the seam the environment is the whole credential plane.

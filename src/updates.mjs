@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, writeFile, readFile, rename, lstat } from 'node:fs/promises'
 import { join, resolve, sep, basename, win32 } from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import semver from 'semver'
 import { updateRequestId } from './update-request-id.ts'
 import manifest from '../package.json' with { type: 'json' }
 
@@ -13,7 +14,7 @@ const MAX_PACKAGE = 32 * 1024 * 1024
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
 
 function reasonOf(error) {
-  const allowed = ['manager-unavailable', 'read-only', 'source', 'metadata', 'asset', 'channel', 'incompatible', 'compatibility-unknown', 'busy', 'checksum', 'redirect', 'size', 'stale-candidate', 'release-unavailable', 'storage', 'interrupted']
+  const allowed = ['manager-unavailable', 'read-only', 'source', 'metadata', 'asset', 'channel', 'incompatible', 'compatibility-unknown', 'busy', 'checksum', 'redirect', 'size', 'stale-candidate', 'release-unavailable', 'storage', 'interrupted', 'replace']
   return allowed.includes(error?.message) ? error.message : 'network'
 }
 
@@ -108,17 +109,50 @@ export function releaseCandidate(release, current) {
   const candidate = { id: String(release.id), version, tag: release.tag_name, url: expectedLink, notes: release.body.slice(0, 6000), filename, tarball: asset(filename), checksum: asset('SHA256SUMS') }
   return compareVersions(version, current) > 0 ? candidate : null
 }
+const WORKSPACE_PEER = new Set(['workspace:^', 'workspace:~', 'workspace:*'])
+
+/** Whether one DSH peer range accepts the running host.
+ * Matches app-boot's boot check: `semver.satisfies` with prereleases included.
+ * `workspace:*`, `workspace:^`, and `workspace:~` mean the running version.
+ */
+export function dshPeerSatisfied(range, runtime) {
+  semanticVersion(runtime)
+  if (typeof range !== 'string' || range.trim() === '') return false
+  if (WORKSPACE_PEER.has(range)) return true
+  return semver.satisfies(runtime, range, { includePrerelease: true })
+}
+
 export function checkCompatibility(packageJson, candidate, runtime) {
   semanticVersion(runtime)
   if (!packageJson || packageJson.name !== PACKAGE || packageJson.version !== candidate.version || typeof packageJson.dsh?.bundle?.patch !== 'string') throw new Error('metadata')
   const peers = Object.entries(packageJson.peerDependencies ?? {}).filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
   if (!peers.length || peers.some(([, range]) => typeof range !== 'string')) throw new Error('compatibility-unknown')
-  // Published Pi releases declare exact DSH peers. Other ranges require review.
-  for (const [, range] of peers) {
-    try { semanticVersion(range) } catch { throw new Error('compatibility-unknown') }
-    if (range !== runtime) throw new Error('incompatible')
-  }
+  if (peers.some(([, range]) => !dshPeerSatisfied(range, runtime))) throw new Error('incompatible')
   return runtime
+}
+
+/** Install a package, and when HMR refuses an installed package, remove it first.
+ * The follow-up install is the continuation of `removeBundle`'s promise. Removal
+ * disposes the bundle that called it, so this function must not read that
+ * bundle's closed flag or abort signal. `stop-profile` means HMR is off and the
+ * package stayed installed; installing over it is still the supported path.
+ * A failed removal is returned as-is and is not followed by another install.
+ */
+export function installPreservingPackage(manager, name, spec, options) {
+  return Promise.resolve(manager.installBundle(spec, options)).then(result => {
+    if (result?.error?.code !== 'already-installed' || typeof manager.removeBundle !== 'function') {
+      return { result, replaced: false }
+    }
+    return Promise.resolve(manager.removeBundle(name)).then(removed => {
+      if (removed?.error?.code === 'stop-profile') {
+        return Promise.resolve(manager.installBundle(spec, options)).then(installed => ({ result: installed, replaced: true }))
+      }
+      if (!removed || removed.application === 'failed' || removed.error) {
+        return { result: removed ?? { application: 'failed' }, replaced: true }
+      }
+      return Promise.resolve(manager.installBundle(spec, options)).then(installed => ({ result: installed, replaced: true }))
+    })
+  })
 }
 export function packageManifest(bytes) {
   let tar
@@ -358,11 +392,17 @@ export class PluginUpdates {
       if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error('busy')
       if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error('stale-candidate')
       managerInvoked = true
-      const result = await final.manager.installBundle(spec, {
+      // Capture the manager and the ON/OFF bit before removal. removeBundle
+      // disposes this plugin; installPreservingPackage continues on the manager.
+      const admission = await installPreservingPackage(final.manager, PACKAGE, spec, {
         enabled: final.bundle.enabled,
         requestId: operation.requestId,
         saveExact: true,
       })
+      const result = admission.result
+      if (result?.error?.code === 'already-installed' || (admission.replaced && (result?.application === 'failed' || result?.error))) {
+        operation.reason = 'replace'
+      }
       operation.result = safeResult(result)
       const installed = (await final.manager.listBundles()).find(item => item.name === PACKAGE)
       operation.status = resultState(result, operation.version, this.version, installed)
