@@ -152,7 +152,7 @@ test('later external installation supersedes a completed receipt and remains res
   assert.equal((await updater.status()).status, 'restart-required')
   assert.equal((await updater.reconcile(id)).installedVersion, '0.7.0')
   updater.version = '0.7.0'
-  assert.equal((await updater.status()).status, 'overridden')
+  assert.equal((await updater.status()).status, 'superseded')
   assert.equal((await updater.reconcile(id)).requestId, id)
 })
 test('matching checksum cannot admit an unsafe archive to the manager', async t => {

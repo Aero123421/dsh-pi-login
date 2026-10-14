@@ -410,7 +410,9 @@ export class PluginUpdates {
     if (operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
       compareVersions(installed, operation.version) > 0) {
       return { ...this.base(), ...operation, installedVersion: installed,
-        status: this.version === installed ? 'overridden' : 'restart-required' }
+        // The recorded operation is older than the bundle now running. That is
+        // not a settings override of this operation's own install.
+        status: this.version === installed ? 'superseded' : 'restart-required' }
     }
     if (
       ['installing', 'restart-required', 'unknown', 'applied'].includes(operation.status) &&

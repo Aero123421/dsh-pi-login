@@ -256,7 +256,7 @@ export function UpdateUI({ controller, t }) {
   const [checked, setChecked] = useState(false)
   useEffect(() => { void controller.load() }, [controller])
   const active = ['checking', 'starting', 'preparing', 'installing'].includes(state.status)
-  const messages = { idle: 'updateIdle', checking: 'updateChecking', current: 'updateCurrent', available: 'updateAvailable', blocked: 'updateBlocked', starting: 'updatePreparing', preparing: 'updatePreparing', installing: 'updateInstalling', 'restart-required': 'updateRestart', applied: 'updateApplied', failed: 'updateFailed', cancelled: 'updateCancelled', overridden: 'updateOverridden', unknown: 'updateUnknown' }
+  const messages = { idle: 'updateIdle', checking: 'updateChecking', current: 'updateCurrent', available: 'updateAvailable', blocked: 'updateBlocked', starting: 'updatePreparing', preparing: 'updatePreparing', installing: 'updateInstalling', 'restart-required': 'updateRestart', applied: 'updateApplied', failed: 'updateFailed', cancelled: 'updateCancelled', overridden: 'updateOverridden', superseded: 'updateSuperseded', unknown: 'updateUnknown' }
   // Before the user asks, only states that need attention are shown.
   const quiet = !checked && ['idle', 'blocked', 'current'].includes(state.status)
   return <div className="dsh-pi-updates">
@@ -309,8 +309,9 @@ function UsagePanel({ entry, controller: sourceController, t }) {
   return <section className="dsh-pi-section dsh-pi-usage" aria-busy={busy} aria-label={t('usageTab')}>
     <div className="dsh-pi-toolbar"><h4>{t('usageTab')}</h4>
       <Button variant="ghost" size="sm" disabled={busy || limited} onClick={() => { void load(true) }}>{t(busy ? 'loading' : 'refreshUsage')}</Button></div>
-    {failed ? <p role="alert">{t('usageFailed')}</p> : null}
-    {snapshot && (!windows.length || snapshot.status !== 'available') ? <p role="status" className="dsh-pi-muted">{t(`usage_${snapshot.status}`)}</p> : null}
+    {failed ? <p role="alert">{t(snapshot ? 'usageRefreshFailed' : 'usageFailed')}</p> : null}
+    {failed && snapshot ? <p role="status" className="dsh-pi-muted">{t('usageRetained')}</p> : null}
+    {snapshot && !failed && (!windows.length || snapshot.status !== 'available') ? <p role="status" className="dsh-pi-muted">{t(`usage_${snapshot.status}`)}</p> : null}
     {limited && snapshot.retryAt ? <p className="dsh-pi-muted dsh-pi-small">{t('retryAt')}: {time(snapshot.retryAt)}</p> : null}
     {windows.map(window => <div key={window.id} className="dsh-pi-usage-window">
       <div className="dsh-pi-toolbar"><span>{usageWindow(window, t)}</span>

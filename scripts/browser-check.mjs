@@ -87,7 +87,7 @@ ctx.authorization.registerFlow({ key: 'llm-pi-ai/openai-codex', label: 'OpenAI C
 } })
 const model = getBuiltinModels('openai-codex').find(model => model.id === 'gpt-6.1-sol')
 const fast = fastModelId(model.id)
-let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, museLoaded = false, usageCalls = 0, usageStatus = 'available'
+let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, museLoaded = false, usageCalls = 0, usageStatus = 'available', usageFail = false
 const full = 'muse-wonder-full-1.0'
 const catalogs = new host.ProviderCatalogs({
  meta: {
@@ -102,6 +102,7 @@ const plugin = ctx.plugin({ inject: ['authorization', 'credentials', 'connection
  connections: manager, registry, syncFlows: syncMuseFlows, catalogsFor: () => catalogs,
  usage: { get: async connection => {
   usageCalls++
+  if (usageFail) throw new Error('usage-down')
   return { integrationId: connection.integrationId, serviceId: connection.serviceId, connectionId: connection.connectionId, source: 'internal-http', sourceObservedAt: '2026-10-13T12:00:00.000Z', checkedAt: '2026-10-13T12:01:00.000Z', status: usageStatus, ...(usageStatus === 'rate-limited' ? { retryAt: '2099-01-01T00:00:00.000Z' } : {}), windows: [
    { id: 'primary', scope: 'account', usedPercent: 42, resetsAt: '2026-10-13T17:00:00.000Z', windowSeconds: 18000 },
    { id: 'secondary', scope: 'account', usedPercent: null, quotaState: 'unlimited', resetsAt: null, windowSeconds: null },
@@ -502,6 +503,12 @@ try {
  await page.getByText('無制限', { exact: true }).waitFor()
  assert.equal(usageCalls, usageBefore + 1)
  const beforeUsage = structuredClone(settingsValue.connections)
+ usageFail = true
+ await page.getByRole('button', { name: '利用状況を更新', exact: true }).click()
+ await page.getByRole('alert').filter({ hasText: '利用状況を更新できませんでした。再試行してください。' }).waitFor()
+ await page.getByText('下の数値は前回の取得結果です。今回の更新では確認できていません。', { exact: true }).waitFor()
+ await page.getByText('42% 使用', { exact: true }).waitFor()
+ usageFail = false
  for (const status of ['stale', 'auth-required', 'unobserved', 'error', 'rate-limited']) {
   usageStatus = status
   await page.getByRole('button', { name: '利用状況を更新', exact: true }).click()
