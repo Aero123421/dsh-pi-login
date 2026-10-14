@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ProviderCache, ProviderReadError } from './provider-cache.mjs'
 import { readProviderJson, parseMuseUsage } from './account-usage-providers.mjs'
-import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_HEADER } from './catalog-metadata.mjs'
+import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_ONLY, MUSE_CONTRIBUTOR_HEADER } from './catalog-metadata.mjs'
 
 /**
  * Muse Code's own account catalog. The official CLI lists models from
@@ -70,6 +70,7 @@ export function museModels(rows = []) {
     input: [...row.input], contextWindow: row.contextWindow, maxTokens: row.maxTokens,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     [MUSE_CONTRIBUTOR]: row.contributor === true,
+    [MUSE_CONTRIBUTOR_ONLY]: row.id.startsWith('muse-') && row.id.endsWith('-contributor'),
   }]))
 }
 
@@ -122,8 +123,17 @@ export class MuseCodeCatalogSession {
       if (!standard.length) throw new ProviderReadError('error')
       // Contributor choices exist only for models the account lists in that mode.
       const contributor = await this.list(credential, '1', requestSignal).then(parseMuseCatalog, () => [])
+      // Keep provider-returned IDs intact, including native Contributor IDs.
+      // Choices pair those with their base instead of offering both a native
+      // row and a synthetic duplicate. Contributor-only rows must not become
+      // ordinary, default-on models when the account catalog is persisted.
       const offered = new Set(contributor.map(row => row.id))
-      const rows = standard.map(row => ({ ...row, contributor: offered.has(row.id) && !row.id.endsWith('-contributor') }))
+      const merged = new Map(standard.map(row => [row.id, row]))
+      for (const row of contributor) {
+        if (row.id.startsWith('muse-') && row.id.endsWith('-contributor')) merged.set(row.id, row)
+      }
+      const rows = [...merged.values()].map(row => ({ ...row,
+        contributor: offered.has(row.id) && !row.id.endsWith('-contributor') }))
       const current = await this.credentials.read('meta')
       if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError('account-changed')
       return rows

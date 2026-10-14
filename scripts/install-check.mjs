@@ -1,9 +1,10 @@
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { parse, stringify } from 'yaml'
+import { checkConnectionControls } from './connection-install-ui.mjs'
 const home = await mkdtemp(join(tmpdir(), 'pi-update-clean-'))
 const env = { ...process.env, DSH_HOME: home }
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
@@ -104,11 +105,32 @@ try {
   const entry = patches.find(entry => entry.id === 'dsh-pi-login')
   assert.ok(entry?.config?.connections?.[crud.museId])
   Object.assign(entry.config.connections[crud.museId], {
+    enabled: true,
     museCode: { modelId: 'muse-wonder-1.0', contributorMode: false },
-    museCatalog: [{ id: 'muse-wonder-1.0', name: 'Restart Muse Wonder', contextWindow: 1048576,
-      maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true }],
-    profile: { enabledContributorModels: ['muse-wonder-1.0::contributor'] },
+    museCatalog: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2'].flatMap(id => [
+      { id: `${id}-contributor`, name: `${id}-contributor`, contextWindow: 1048576, maxTokens: 32768, input: ['text', 'image'], efforts: ['high'], contributor: false },
+      { id, name: id, contextWindow: 1048576, maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true },
+    ]),
+    profile: { enabledContributorModels: ['muse-wonder-full-1.0::contributor'] },
   })
+  const credentialKey = `llm-pi-ai/${entry.config.connections[crud.museId].credentialRecordId}`
+  const fixtureModule = join(home, 'install-credential-fixture.mjs')
+  await writeFile(fixtureModule, `
+import { access, writeFile } from 'node:fs/promises';
+export const inject = ['credentials', 'connection'];
+export async function apply(ctx) {
+  const marker = ${JSON.stringify(join(home, 'fixture-seeded'))};
+  let seeded = false; try { await access(marker); seeded = true } catch {}
+  if (!seeded) {
+    await ctx.credentials.modifyRecord(${JSON.stringify(credentialKey)}, () => ({ kind: 'grant',
+      payload: { type: 'oauth', refresh: 'fixture-muse-identity', access: 'fixture-muse-access', expires: Date.now() + 86400000 } }));
+    await writeFile(marker, 'seeded');
+  }
+  ctx.connection.fetch.register({ path: '/api/install-fixture/credential-check', methods: ['POST'], requestBody: 'buffered',
+    async fetch() { return Response.json({ configured: (await ctx.credentials.describeRecord(${JSON.stringify(credentialKey)})).configured }); } });
+}
+`)
+  patches.push({ insert: [{ id: 'install-credential-fixture', name: fixtureModule }] })
   await writeFile(patchPath, stringify(patches))
   startApp()
   page=await browser.newPage(); await page.goto(await appURL())
@@ -139,9 +161,33 @@ try {
     if (envelope.result?.ok !== true) throw new Error('Restarted models: ' + envelope.result?.error?.code)
     return envelope.result.value
   }, crud.museId)
-  assert.deepEqual(restoredModels.models.map(model => [model.id, model.enabled]),
-    [['muse-wonder-1.0', true], ['muse-wonder-1.0::contributor', true]])
+  assert.equal(restoredModels.models.length, 8)
+  assert.equal(restoredModels.models.filter(model => model.enabled).length, 5)
+  assert.ok(restoredModels.models.every(model => !model.id.endsWith('-contributor')))
   console.log('Clean DSH profile: restart with saved API-key and Muse connections, Credentials, persisted catalog/Contributor selection, migration and fresh profile generation passed')
+  const artifacts = process.env.DSH_TEST_ARTIFACT_DIR
+  if (artifacts) await mkdir(artifacts, { recursive: true })
+  await checkConnectionControls(page, { connectionId: crud.museId, mode: 'toggle', artifacts })
+  await page.close(); await stopApp(); startApp()
+  page = await browser.newPage(); await page.goto(await appURL())
+  await checkConnectionControls(page, { connectionId: crud.museId, mode: 'verify', artifacts })
+  await page.close(); await stopApp(); startApp()
+  page = await browser.newPage(); await page.goto(await appURL())
+  await checkConnectionControls(page, { connectionId: crud.museId, mode: 'delete', artifacts })
+  const deletedCredential = await page.evaluate(async () => (await fetch('/api/install-fixture/credential-check', { method: 'POST' })).json())
+  assert.equal(deletedCredential.configured, false)
+  await page.close(); await stopApp(); startApp()
+  page = await browser.newPage(); await page.goto(await appURL())
+  const afterDelete = await page.evaluate(async () => {
+    const method = 'dsh-pi-login/connection-list'
+    const envelope = await (await fetch('/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'after-delete', method, payload: {} }) })).json()
+    if (!envelope.result?.ok) throw new Error('Listing after deleted connection restart failed')
+    return envelope.result.value
+  })
+  assert.ok(!afterDelete.connections.some(row => row.connectionId === crud.museId))
+  assert.equal(afterDelete.connections.find(row => row.connectionId === crud.fixtureId)?.configured, true)
+  console.log('Real DSH Settings UI: no duplicate native editor, eight Muse choices, durable off switches, confirmed connection/Credentials deletion and restart without resurrection passed')
   const update=await page.evaluate(async()=>{
     const method='dsh-pi-login/update-check'
     return (await fetch('/api/'+method,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'smoke-check',method,payload:{}})})).json()

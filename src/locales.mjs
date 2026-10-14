@@ -142,6 +142,8 @@ export const ja = {
 }
 
 Object.assign(en, {
+  settingsShort: 'Settings',
+  manageConnection: 'Manage connection',
   title: 'AI connections & usage', description: 'Manage each account and its models. Open usage details when needed.',
   connectionsTab: 'Connections & models', usageTab: 'Usage', addConnection: 'Add connection', connectionSettings: 'Connection settings',
   manageModels: 'Manage models', searchConnections: 'Search connections', filterStatus: 'Status', filter_all: 'All', filter_connected: 'Connected', filter_disconnected: 'Not connected',
@@ -168,6 +170,8 @@ Object.assign(en, {
 
 })
 Object.assign(ja, {
+  settingsShort: '設定',
+  manageConnection: '接続を管理',
   title: 'AI接続・利用状況', description: 'アカウントごとに接続とモデルを管理します。利用状況は必要なときに開けます。',
   connectionsTab: '接続とモデル', usageTab: '利用状況', addConnection: '接続を追加', connectionSettings: '接続設定',
   manageModels: 'モデルを管理', searchConnections: '接続を検索', filterStatus: '接続状態', filter_all: 'すべて', filter_connected: '接続済み', filter_disconnected: '未接続',
