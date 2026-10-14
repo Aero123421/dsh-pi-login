@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
+import { parse, stringify } from 'yaml'
 const home = await mkdtemp(join(tmpdir(), 'pi-update-clean-'))
 const env = { ...process.env, DSH_HOME: home }
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
@@ -88,13 +89,28 @@ try {
     await call('connection-delete', { ...token(), connectionId: copied.connectionId })
     view = await call('connection-list')
     if (!view.connections.find(row => row.connectionId === created.connectionId)?.configured) throw new Error('Deleting clone affected original credentials')
-    await call('connection-delete', { ...token(), connectionId: created.connectionId })
+    const muse = await call('connection-create', { ...token(), integrationId: 'meta-muse-code', serviceId: 'muse-code', authMethod: 'oauth', displayName: 'Restart Muse fixture' })
     view = await call('connection-list')
-    return { originalIds, finalIds: view.connections.map(row => row.connectionId).sort(), profileKey: view.profileKey, generation: view.generation }
+    return { originalIds, fixtureId: created.connectionId, museId: muse.connectionId,
+      finalIds: view.connections.map(row => row.connectionId).sort(), profileKey: view.profileKey, generation: view.generation }
   })
-  assert.deepEqual(crud.finalIds, crud.originalIds)
-  console.log('Clean DSH profile: authenticated connection CRUD, actual Credentials persistence, isolated clone and deletion passed; no generation request was sent')
-  await page.close(); await stopApp(); startApp()
+  assert.equal(crud.finalIds.length, crud.originalIds.length + 2)
+  console.log('Clean DSH profile: authenticated connection CRUD, actual Credentials persistence, isolated clone and deletion passed; fixtures retained for restart; no generation request was sent')
+  await page.close(); await stopApp()
+  // Exercise both CLI-era Muse settings and a persisted 0.7 account catalog.
+  // All values are local fixtures; no Meta credential or request is involved.
+  const patchPath = join(home, 'profiles', 'smoke', 'cordis.patch.yml')
+  const patches = parse(await readFile(patchPath, 'utf8'))
+  const entry = patches.find(entry => entry.id === 'dsh-pi-login')
+  assert.ok(entry?.config?.connections?.[crud.museId])
+  Object.assign(entry.config.connections[crud.museId], {
+    museCode: { modelId: 'muse-wonder-1.0', contributorMode: false },
+    museCatalog: [{ id: 'muse-wonder-1.0', name: 'Restart Muse Wonder', contextWindow: 1048576,
+      maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true }],
+    profile: { enabledContributorModels: ['muse-wonder-1.0::contributor'] },
+  })
+  await writeFile(patchPath, stringify(patches))
+  startApp()
   page=await browser.newPage(); await page.goto(await appURL())
   const restarted = await page.evaluate(async () => {
     const value = {}
@@ -108,10 +124,24 @@ try {
     return value
   })
   assert.equal(restarted['update-status'].runtimeVersion, packageJson.version)
-  assert.deepEqual(restarted['connection-list'].connections.map(row => row.connectionId).sort(), crud.originalIds)
+  assert.deepEqual(restarted['connection-list'].connections.map(row => row.connectionId).sort(), crud.finalIds)
+  const restored = restarted['connection-list'].connections.find(row => row.connectionId === crud.fixtureId)
+  assert.equal(restored.configured, true)
+  assert.equal(restored.enabled, true)
+  assert.equal(restored.authMethod, 'api-key')
   assert.equal(restarted['connection-list'].profileKey, crud.profileKey)
   assert.notEqual(restarted['connection-list'].generation, crud.generation)
-  console.log('Clean DSH profile: restart after deleting all fixture connections, persisted migration and fresh profile generation passed')
+  const restoredModels = await page.evaluate(async museId => {
+    const method = 'dsh-pi-login/models'
+    const response = await fetch('/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'restart-models', method, payload: { connectionId: museId } }) })
+    const envelope = await response.json()
+    if (envelope.result?.ok !== true) throw new Error('Restarted models: ' + envelope.result?.error?.code)
+    return envelope.result.value
+  }, crud.museId)
+  assert.deepEqual(restoredModels.models.map(model => [model.id, model.enabled]),
+    [['muse-wonder-1.0', true], ['muse-wonder-1.0::contributor', true]])
+  console.log('Clean DSH profile: restart with saved API-key and Muse connections, Credentials, persisted catalog/Contributor selection, migration and fresh profile generation passed')
   const update=await page.evaluate(async()=>{
     const method='dsh-pi-login/update-check'
     return (await fetch('/api/'+method,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'smoke-check',method,payload:{}})})).json()

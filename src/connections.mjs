@@ -38,14 +38,16 @@ export function validateHeaderRefs(value) {
 
 /** Connection metadata and credential ownership; all public values are allowlisted. */
 export class ConnectionManager {
-  constructor({ settings, credentials, registry, validateProfile = () => {}, onChange = () => {}, legacyProviders = () => ({}), extraConnections = async () => [] }) {
-    Object.assign(this, { settings, credentials, registry, validateProfile, onChange, legacyProviders, extraConnections })
+  constructor({ settings, credentials, registry, connectionSnapshot, validateProfile = () => {}, onChange = () => {}, legacyProviders = () => ({}), extraConnections = async () => [] }) {
+    Object.assign(this, { settings, credentials, registry, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections })
     this.closed = false
     this.pendingLogins = new Set()
     this.verified = new Map()
   }
   section() { return this.settings.describe({ redactSecrets: false }).find(row => row.ns === NS) }
-  raw() { return this.section()?.value?.connections ?? {} }
+  // SettingsForms describes only ACTIVE fibers. Catalog resolution also runs
+  // during apply(), so read the owning fiber's live Config before activation.
+  raw() { return this.connectionSnapshot?.() ?? this.section()?.value?.connections ?? {} }
   lookup(connectionId) {
     if (this.closed || typeof connectionId !== 'string' || !Object.hasOwn(this.raw(), connectionId)) throw new ConnectionError('connection-unavailable')
     return { ...structuredClone(this.raw()[connectionId]), connectionId }
