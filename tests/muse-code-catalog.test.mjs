@@ -57,10 +57,10 @@ test('refresh lists both modes, offers Contributor only where the account lists 
   assert.doesNotMatch(JSON.stringify(f.persisted), /key-a|identity-a/)
 })
 
-test('a failed Contributor listing still loads Standard models without Contributor choices', async () => {
+test('a failed Contributor listing rejects instead of publishing an incomplete catalog', async () => {
   const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: new Response('no', { status: 403 }) })
-  await f.session.refresh()
-  assert.deepEqual(f.persisted.at(-1).map(entry => entry.contributor), [false])
+  await assert.rejects(f.session.refresh(), error => error.code === 'auth-required')
+  assert.equal(f.persisted.length, 0)
 })
 
 test('native Contributor IDs returned only in mode 1 keep their distinct provider capabilities and persist', async () => {
@@ -112,4 +112,127 @@ test('usage reads the subscription quota and keeps the freshly minted key for th
   assert.equal(f.stored.access, 'key-minted')
   assert.equal(f.requests[0].authorization, 'Bearer identity-a')
   assert.equal(f.session.state().account.tierName, 'Power Usage')
+})
+
+test('a new sign-in hides the saved account catalog when its refresh fails', async () => {
+  const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: { data: [] } })
+  await f.session.refresh()
+  f.stored = { ...f.stored, refresh: 'identity-b', access: 'key-b' }
+  f.session.invalidate()
+  f.session.fetch = async () => { throw new Error('offline') }
+  await assert.rejects(f.session.refresh(), error => error.code === 'error')
+  assert.deepEqual([...f.session.catalog().keys()], [])
+  assert.equal(f.persisted.length, 1)
+})
+
+test('a same-account offline restart retains its saved catalog', async () => {
+  const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: { data: [] } })
+  await f.session.refresh()
+  const saved = structuredClone(f.persisted.at(-1))
+  f.session.dispose()
+  const restarted = new MuseCodeCatalogSession({ credentials: { read: async () => f.stored }, snapshot: () => saved,
+    fetch: async () => { throw new Error('offline') } })
+  await restarted.validate()
+  assert.deepEqual([...restarted.catalog().keys()], ['muse-wonder-1.0'])
+  await assert.rejects(restarted.refresh(), error => error.code === 'error')
+  assert.deepEqual([...restarted.catalog().keys()], ['muse-wonder-1.0'])
+  restarted.dispose()
+})
+
+test('a failed catalog save rejects and retains the previous durable and published catalog', async () => {
+  const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: { data: [row('muse-wonder-1.0')] } })
+  await f.session.refresh()
+  const before = [...f.session.catalog().keys()]
+  f.session.fetch = async () => Response.json({ data: [row('muse-spark-1.3')] })
+  f.session.persist = async () => { throw new Error('disk failure SECRET') }
+  await assert.rejects(f.session.refresh(), error => error.code === 'error' && error.message === 'error')
+  assert.deepEqual([...f.session.catalog().keys()], before)
+  assert.deepEqual(f.persisted.at(-1).map(entry => entry.id), before)
+  assert.equal(f.session.state().error, 'error')
+})
+
+test('a transient Contributor-mode failure preserves the complete previous choices', async () => {
+  const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: { data: [row('muse-wonder-1.0')] } })
+  await f.session.refresh()
+  f.session.fetch = async (_url, init) => new Headers(init.headers).get('x-tbh-contributor-mode') === '1'
+    ? new Response('', { status: 429, headers: { 'retry-after': '60' } }) : Response.json({ data: [row('muse-spark-1.3')] })
+  await assert.rejects(f.session.refresh(), error => error.code === 'rate-limited')
+  assert.equal(f.session.catalog().get('muse-wonder-1.0')[MUSE_CONTRIBUTOR], true)
+  assert.equal(f.persisted.length, 1)
+})
+
+test('an account switched during a delayed save is never published or reused as a saved fallback', async () => {
+  const f = setup({ standard: { data: [row('muse-wonder-1.0')] }, contributor: { data: [] } })
+  let started, release
+  const saving = new Promise(resolve => { started = resolve })
+  const saved = new Promise(resolve => { release = resolve })
+  const persist = f.session.persist
+  f.session.persist = async rows => { started(); await saved; await persist(rows) }
+  const pending = f.session.refresh()
+  await saving
+  f.stored = { ...f.stored, refresh: 'identity-b' }
+  release()
+  await assert.rejects(pending, error => error.code === 'account-changed')
+  assert.deepEqual([...f.session.catalog().keys()], [])
+})
+
+test('a late old-account quota response never publishes its tier or minted key', async () => {
+  const f = setup()
+  let started, release
+  const fetching = new Promise(resolve => { started = resolve })
+  const response = new Promise(resolve => { release = resolve })
+  f.session.fetch = async () => { started(); return response }
+  const pending = f.session.usage()
+  await fetching
+  f.stored = { ...f.stored, refresh: 'identity-b', access: 'key-b' }
+  release(Response.json({ is_subs_active: true, subs_tier_name: 'Other account tier', api_key: 'key-a-minted' }))
+  await assert.rejects(pending, error => error.code === 'account-changed')
+  assert.equal(f.session.state().account, undefined)
+  assert.equal(f.stored.access, 'key-b')
+})
+
+test('disposal while a quota request ignores cancellation cannot publish a subscription or key', async () => {
+  const f = setup()
+  let started, release
+  const fetching = new Promise(resolve => { started = resolve })
+  const response = new Promise(resolve => { release = resolve })
+  f.session.fetch = async () => { started(); return response }
+  const pending = f.session.usage()
+  await fetching
+  f.session.dispose()
+  release(Response.json({ is_subs_active: true, subs_tier_name: 'Power Usage', api_key: 'key-minted' }))
+  await assert.rejects(pending, error => error.code === 'aborted')
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(f.session.state().account, undefined)
+  assert.equal(f.stored.access, 'key-a')
+})
+
+test('a fresh quota cache is not reused after an external grant replacement', async () => {
+  const f = setup()
+  await f.session.usage()
+  f.stored = { ...f.stored, refresh: 'identity-b', access: 'key-b' }
+  f.session.fetch = async () => Response.json({ is_subs_active: false, subs_tier_name: 'New account tier' })
+  await f.session.usage()
+  assert.deepEqual(f.session.state().account, { active: false, tierName: 'New account tier' })
+  assert.equal(f.stored.access, 'key-b')
+})
+
+test('identity checks cannot hang quota reads beyond the provider timeout', async t => {
+  const session = new MuseCodeCatalogSession({ credentials: { read: () => new Promise(() => {}) }, timeout: 15 })
+  const keepAlive = setTimeout(() => {}, 50)
+  t.after(() => { clearTimeout(keepAlive); session.dispose() })
+  await assert.rejects(session.usage(), error => error.code === 'error')
+})
+
+test('disposal cancels an identity read even when the credential store ignores cancellation', async () => {
+  const session = new MuseCodeCatalogSession({ credentials: { read: () => new Promise(() => {}) } })
+  const pending = session.usage()
+  session.dispose()
+  await assert.rejects(pending, error => error.code === 'aborted')
+})
+
+test('a credential-store failure has a fixed public error without raw diagnostics', async () => {
+  const session = new MuseCodeCatalogSession({ credentials: { read: () => { throw Error('SECRET credential diagnostic') } } })
+  await assert.rejects(session.usage(), error => error.code === 'error' && error.message === 'error')
+  session.dispose()
 })

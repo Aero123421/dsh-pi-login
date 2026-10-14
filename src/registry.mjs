@@ -27,17 +27,26 @@ export class IntegrationRegistry {
     const event = { type, profileKey: this.profileKey, generation: this.generation, integrationId, connectionId }
     for (const listener of this.listeners) listener(event)
   }
-  register(owner) {
+  register(owner, ownRegistration) {
     if (this.closed || !ID.test(owner.integrationId) || this.integrations.has(owner.integrationId)) throw new RegistryError('integration-conflict')
     if (typeof owner.listServices !== 'function' || typeof owner.listConnections !== 'function') throw new RegistryError('invalid-integration')
     this.integrations.set(owner.integrationId, owner)
     this.emit('registered', owner.integrationId)
-    return () => {
+    const unregister = () => {
       if (this.integrations.get(owner.integrationId) !== owner) return
       this.integrations.delete(owner.integrationId)
       for (const [routeId, entry] of this.routes) if (entry.integrationId === owner.integrationId) this.routes.delete(routeId)
       this.emit('unregistered', owner.integrationId)
     }
+    // Cordis emit() discards listener return values. An optional owner can
+    // explicitly attach this disposer to its own context through the callback.
+    try {
+      if (ownRegistration !== undefined) {
+        if (typeof ownRegistration !== 'function') throw new RegistryError('invalid-integration')
+        ownRegistration(unregister)
+      }
+    } catch (error) { unregister(); throw error }
+    return unregister
   }
   owner(integrationId) {
     const owner = this.integrations.get(integrationId)
@@ -49,6 +58,7 @@ export class IntegrationRegistry {
       integrationId: owner.integrationId, serviceId: service.serviceId,
       label: String(service.label ?? service.serviceId),
       methods: (service.methods ?? []).map(({ id, label }) => ({ id, label })),
+      ...Array.isArray(service.apis) ? { apis: service.apis.filter(api => typeof api === 'string') } : {},
       capabilities: Object.fromEntries(['auth', 'models', 'usage', 'settings'].map(key => [key, service.capabilities?.[key] === true])),
       ...service.unavailableReason ? { unavailableReason: service.unavailableReason } : {},
       ...service.executionKind ? { executionKind: service.executionKind } : {},

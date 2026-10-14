@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { isDeepStrictEqual } from 'node:util'
 import { RegistryError, newConnectionId, routeForConnection } from './registry.mjs'
 import { sdkServiceOf } from './sdk-service.mjs'
 
@@ -42,20 +43,23 @@ export class ConnectionManager {
     Object.assign(this, { settings, credentials, registry, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections })
     this.closed = false
     this.pendingLogins = new Set()
+    this.pendingDeletes = new Set()
+    this.pendingCredentialWrites = new Set()
     this.verified = new Map()
   }
   section() { return this.settings.describe({ redactSecrets: false }).find(row => row.ns === NS) }
   // SettingsForms describes only ACTIVE fibers. Catalog resolution also runs
   // during apply(), so read the owning fiber's live Config before activation.
   raw() { return this.connectionSnapshot?.() ?? this.section()?.value?.connections ?? {} }
-  lookup(connectionId) {
+  lookup(connectionId, { allowDeleting = false } = {}) {
     if (this.closed || typeof connectionId !== 'string' || !Object.hasOwn(this.raw(), connectionId)) throw new ConnectionError('connection-unavailable')
+    if (this.raw()[connectionId].deletionPending && !allowDeleting) throw new ConnectionError('connection-deleting')
     return { ...structuredClone(this.raw()[connectionId]), connectionId }
   }
   isCurrent(binding) {
     if (this.closed) return false
     const connection = this.raw()[binding.connectionId]
-    return this.registry.isCurrent(binding) && !!connection && connection.serviceId === binding.serviceId && connection.credentialRecordId === binding.credentialRecordId && connection.credentialGeneration === binding.credentialGeneration
+    return this.registry.isCurrent(binding) && !!connection && !connection.deletionPending && connection.integrationId === binding.integrationId && connection.serviceId === binding.serviceId && connection.credentialRecordId === binding.credentialRecordId && connection.credentialGeneration === binding.credentialGeneration
   }
   binding(connection) { return { ...connection, profileKey: this.registry.profileKey, generation: this.registry.generation } }
   authKey(connection) {
@@ -66,8 +70,13 @@ export class ConnectionManager {
     this.verified.set(connectionId, { record: connection.credentialRecordId, credentialGeneration: connection.credentialGeneration, verifiedAt: new Date().toISOString() })
   }
   guard(payload, { optional = false } = {}) {
-    if (optional && payload.profileKey === undefined && payload.generation === undefined) return
-    if (payload.profileKey !== this.registry.profileKey || payload.generation !== this.registry.generation) throw new ConnectionError('profile-changed')
+    if (!(optional && payload.profileKey === undefined && payload.generation === undefined)
+      && (payload.profileKey !== this.registry.profileKey || payload.generation !== this.registry.generation)) throw new ConnectionError('profile-changed')
+    if (payload.credentialGeneration !== undefined) {
+      const current = this.raw()[payload.connectionId]
+      if (!current) throw new ConnectionError('connection-unavailable')
+      if (!Number.isSafeInteger(payload.credentialGeneration) || payload.credentialGeneration !== current.credentialGeneration) throw new ConnectionError('connection-changed')
+    }
   }
   writable(revision) {
     if (this.closed) throw new ConnectionError('connection-unavailable')
@@ -76,15 +85,22 @@ export class ConnectionManager {
     if (!Number.isSafeInteger(revision) || section.revision !== revision) throw new ConnectionError('settings-changed')
     return section
   }
-  validate(connections) {
+  validate(connections, previous) {
     const routes = new Set()
     const records = new Set()
     for (const [id, connection] of Object.entries(connections)) {
       if (!NAME.test(id) || !NAME.test(connection.routeId) || !NAME.test(connection.credentialRecordId) || routes.has(connection.routeId)) throw new ConnectionError('route-conflict')
-      const record = `${connection.integrationId}/${connection.credentialRecordId}`
+      // Integrations may own the same Credentials namespace (Pi and Muse do).
+      const record = connection.integrationId === 'pi' || this.registry.integrations.has(connection.integrationId)
+        ? this.authKey(connection) : `${connection.integrationId}/${connection.credentialRecordId}`
       if (records.has(record)) throw new ConnectionError('credential-conflict')
       records.add(record)
       routes.add(connection.routeId)
+      if (connection.credentialCleanupIds !== undefined && (!Array.isArray(connection.credentialCleanupIds) || connection.integrationId !== 'pi' && connection.credentialCleanupIds.length > 0 || connection.credentialCleanupIds.some(id => typeof id !== 'string' || !NAME.test(id) || id === connection.credentialRecordId))) throw new ConnectionError('invalid-request')
+      // A temporarily unmounted optional owner must not freeze unrelated
+      // edits. Its unchanged record stays intact; new/changed records still
+      // require the owner's own validation and writable service contract.
+      if (previous && isDeepStrictEqual(connection, previous[id])) continue
       const service = this.registry.service(connection.integrationId, connection.serviceId)
       if (!service.capabilities.settings) throw new ConnectionError('unsupported')
       if (!['oauth', 'api-key'].includes(connection.authMethod)) throw new ConnectionError('unsupported-method')
@@ -104,7 +120,7 @@ export class ConnectionManager {
   async write(connections, revision, extra = [], token = this.registry.token()) {
     if (this.closed || !this.registry.isCurrent(token)) throw new ConnectionError('profile-changed')
     this.writable(revision)
-    this.validate(connections)
+    this.validate(connections, this.raw())
     try { await this.settings.mutate(NS, [{ op: 'set', path: ['connections'], value: connections }, ...extra], revision) }
     catch (error) {
       if (error?.code === 'SETTINGS_CONFLICT') throw new ConnectionError('settings-changed')
@@ -119,8 +135,7 @@ export class ConnectionManager {
     this.changed()
   }
   changed(connectionId) {
-    for (const integrationId of new Set(Object.values(this.raw()).map(value => value.integrationId))) this.registry.replaceConnections(integrationId, this.raw())
-    if (!Object.values(this.raw()).some(value => value.integrationId === 'pi') && this.registry.integrations.has('pi')) this.registry.replaceConnections('pi', {})
+    for (const integrationId of this.registry.integrations.keys()) this.registry.replaceConnections(integrationId, this.raw())
     this.registry.emit('changed', undefined, connectionId)
     this.onChange(connectionId)
   }
@@ -128,7 +143,7 @@ export class ConnectionManager {
     const token = this.registry.token()
     const section = this.section()
     const connections = await Promise.all(Object.keys(this.raw()).map(async id => {
-      const connection = this.lookup(id)
+      const connection = this.lookup(id, { allowDeleting: true })
       try {
       const service = this.registry.service(connection.integrationId, connection.serviceId)
       const owner = this.registry.owner(connection.integrationId)
@@ -145,9 +160,9 @@ export class ConnectionManager {
         routeId: connection.routeId, displayName: connection.displayName, authMethod: connection.authMethod,
         credentialGeneration: connection.credentialGeneration,
         configured, writable: section?.writable !== false && record.writable !== false,
-        enabled: connection.enabled !== false, inFlight: this.pendingLogins.has(id),
+        enabled: !connection.deletionPending && connection.enabled !== false, deletionPending: connection.deletionPending === true, credentialCleanupPending: !!connection.credentialCleanupIds?.length, inFlight: this.pendingLogins.has(id) || this.pendingDeletes.has(id) || this.pendingCredentialWrites.has(id),
         methods: service.methods.filter(method => method.id === connection.authMethod),
-        authStatus: this.pendingLogins.has(id) ? 'updating' : expired ? 'expired' : configured && isVerified ? 'verified' : record.authStatus ?? (configured ? 'saved' : 'auth-required'), capabilities: service.capabilities,
+        authStatus: connection.deletionPending ? 'deletion-pending' : this.pendingLogins.has(id) ? 'updating' : expired ? 'expired' : configured && isVerified ? 'verified' : record.authStatus ?? (configured ? 'saved' : 'auth-required'), capabilities: connection.deletionPending ? { auth: false, models: false, usage: false, settings: true } : service.capabilities,
         ...isVerified ? { verifiedAt: verified.verifiedAt } : {},
         profile: { ...connection.profile?.baseURL ? { baseURL: connection.profile.baseURL } : {}, ...connection.profile?.api ? { api: connection.profile.api } : {} },
         revision: section?.revision,
@@ -155,7 +170,7 @@ export class ConnectionManager {
       } catch {
         return { connectionId: id, integrationId: connection.integrationId, integrationLabel: connection.integrationId,
           serviceId: connection.serviceId, serviceLabel: connection.serviceId, routeId: connection.routeId,
-          displayName: connection.displayName, authMethod: connection.authMethod, enabled: connection.enabled !== false,
+          displayName: connection.displayName, authMethod: connection.authMethod, enabled: !connection.deletionPending && connection.enabled !== false, deletionPending: connection.deletionPending === true, credentialCleanupPending: !!connection.credentialCleanupIds?.length,
           configured: false, writable: false, inFlight: false, methods: [], authStatus: 'unavailable',
           capabilities: { auth: false, models: false, settings: false, usage: false }, revision: section?.revision }
       }
@@ -187,26 +202,47 @@ export class ConnectionManager {
     if (input.api) connection.profile.api = text(input.api, 100)
     if (input.headerRefs) connection.headerRefs = validateHeaderRefs(input.headerRefs)
     const next = { ...this.raw(), [id]: connection }
-    this.validate(next)
-    let stored = false
+    this.validate(next, this.raw())
+    const secret = input.apiKey === undefined ? undefined : text(input.apiKey, 16384)
+    if (secret !== undefined && input.authMethod !== 'api-key') throw new ConnectionError('unsupported-method')
+    // The metadata row owns the record before a secret can be written. A
+    // failed second store is visible and deletable instead of becoming orphaned.
+    this.pendingCredentialWrites.add(id)
+    let metadataCommitted = false
     try {
-      if (input.apiKey !== undefined) {
-        if (input.authMethod !== 'api-key') throw new ConnectionError('unsupported-method')
-        const secret = text(input.apiKey, 16384)
-        await this.credentials.modifyRecord(credentialKey(id), () => ({ kind: 'api-key', key: secret }))
-        stored = true; connection.enabled = true
-      }
       await this.write(next, revision, [], token)
-    } catch (error) {
-      if (stored && !error.metadataCommitted) await this.credentials.deleteRecord(credentialKey(id)).catch(() => {})
+      metadataCommitted = true
+      if (secret !== undefined) {
+        const current = () => {
+          if (this.closed || !this.registry.isCurrent(token)) throw new ConnectionError('profile-changed')
+          const saved = this.raw()[id]
+          if (!saved || saved.deletionPending || saved.credentialRecordId !== id || saved.credentialGeneration !== 0) throw new ConnectionError('connection-changed')
+        }
+        current()
+        try { await this.credentials.modifyRecord(credentialKey(id), () => { current(); return { kind: 'api-key', key: secret } }) }
+        catch (cause) {
+          if (cause instanceof ConnectionError) { cause.metadataCommitted = true; throw cause }
+          const error = new ConnectionError('credential-save-failed'); error.cause = cause; error.metadataCommitted = true; throw error
+        }
+        current()
+        await this.write({ ...this.raw(), [id]: { ...this.raw()[id], enabled: true } }, this.section()?.revision, [], token)
+      }
+    } catch (cause) {
+      if (!metadataCommitted || ['profile-changed', 'connection-changed', 'credential-save-failed'].includes(cause?.code)) throw cause
+      // Activation can fail after both the row and its key were saved. Report
+      // that partial create just like a failed key save so Add cannot duplicate it.
+      const error = new ConnectionError('credential-save-failed')
+      error.cause = cause
+      error.metadataCommitted = true
       throw error
-    }
+    } finally { this.pendingCredentialWrites.delete(id) }
     return { connectionId: id, saved: true }
   }
   async update(connectionId, patch, revision) {
     const token = this.registry.token()
     const section = this.writable(revision)
     const connection = this.lookup(connectionId)
+    if (this.pendingCredentialWrites.has(connectionId) || this.pendingDeletes.has(connectionId)) throw new ConnectionError('busy')
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ConnectionError('invalid-request')
     const allowed = new Set(['displayName', 'enabled', 'apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod'])
     if (Object.keys(patch).some(key => !allowed.has(key))) throw new ConnectionError('invalid-request')
@@ -232,7 +268,9 @@ export class ConnectionManager {
       Object.assign(connection.profile, patch.profile)
     }
     const oldRecordId = connection.credentialRecordId
-    let newRecordId
+    const cleanupIds = new Set(connection.credentialCleanupIds ?? [])
+    let staged = false
+    this.pendingCredentialWrites.add(connectionId)
     try {
       if (patch.authMethod !== undefined && patch.authMethod !== connection.authMethod) {
         if (!['oauth', 'api-key'].includes(patch.authMethod)) throw new ConnectionError('unsupported-method')
@@ -243,46 +281,137 @@ export class ConnectionManager {
       }
       if (patch.apiKey !== undefined) {
         if (connection.authMethod !== 'api-key') throw new ConnectionError('unsupported-method')
-        newRecordId = newConnectionId()
-        await this.credentials.modifyRecord(credentialKey(newRecordId), () => ({ kind: 'api-key', key: text(patch.apiKey, 16384) }))
+        const secret = text(patch.apiKey, 16384)
+        this.validate({ ...this.raw(), [connectionId]: connection }, this.raw())
+        const newRecordId = newConnectionId()
+        const original = this.raw()[connectionId]
+        const generation = original.credentialGeneration + 1
+        // Retire a reserved record before writing it. Until the swap commits,
+        // the current key stays active and the new key is recoverable garbage.
+        await this.write({ ...this.raw(), [connectionId]: { ...original, credentialGeneration: generation, credentialCleanupIds: [...cleanupIds, newRecordId] } }, revision, [], token)
+        staged = true
+        const stagedConnection = structuredClone(this.raw()[connectionId])
+        const current = () => {
+          if (this.closed || !this.registry.isCurrent(token)) throw new ConnectionError('profile-changed')
+          const saved = this.raw()[connectionId]
+          if (!saved || !isDeepStrictEqual(saved, stagedConnection)) throw new ConnectionError('connection-changed')
+        }
+        current()
+        try { await this.credentials.modifyRecord(credentialKey(newRecordId), () => { current(); return { kind: 'api-key', key: secret } }) }
+        catch (cause) {
+          if (cause instanceof ConnectionError) { cause.metadataCommitted = true; throw cause }
+          const error = new ConnectionError('credential-save-failed'); error.cause = cause; error.metadataCommitted = true; throw error
+        }
+        current()
         connection.credentialRecordId = newRecordId; connection.credentialGeneration++
         delete connection.credentialRef
         delete connection.profile.apiKeyEnv
       }
+      if (connection.integrationId === 'pi' && connection.credentialRecordId !== oldRecordId) cleanupIds.add(oldRecordId)
+      if (cleanupIds.size) connection.credentialCleanupIds = [...cleanupIds]
+      else delete connection.credentialCleanupIds
       delete connection.connectionId
-      await this.write({ ...this.raw(), [connectionId]: connection }, revision, [], token)
-    } catch (error) {
-      if (newRecordId && !error.metadataCommitted) await this.credentials.deleteRecord(credentialKey(newRecordId)).catch(() => {})
-      throw error
+      await this.write({ ...this.raw(), [connectionId]: connection }, staged ? this.section()?.revision : revision, [], token)
+    } finally {
+      this.pendingCredentialWrites.delete(connectionId)
     }
-    if (connection.integrationId === 'pi' && connection.credentialRecordId !== oldRecordId && !Object.values(this.raw()).some(value => value.integrationId === 'pi' && value.credentialRecordId === oldRecordId)) await this.credentials.deleteRecord(credentialKey(oldRecordId)).catch(() => {})
+    if (connection.credentialCleanupIds?.length) await this.cleanupCredentials(connectionId, this.section()?.revision)
     return { saved: true }
   }
   async clone(connectionId, displayName, revision) {
     const token = this.registry.token()
     const original = this.lookup(connectionId)
+    if (this.pendingCredentialWrites.has(connectionId)) throw new ConnectionError('busy')
     const id = newConnectionId()
     const owner = this.registry.owner(original.integrationId)
     const copy = { ...original, routeId: original.integrationId === 'pi' ? routeForConnection(id) : owner.routeIdFor(id), credentialRecordId: id, credentialGeneration: 0,
       displayName: text(displayName ?? `${original.displayName} (copy)`), enabled: false }
-    delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute; delete copy.museCatalog
+    delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute; delete copy.museCatalog; delete copy.credentialCleanupIds
     delete copy.profile.apiKeyEnv; delete copy.profile.headers
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token)
     return { saved: true, connectionId: id }
   }
+  /** Retry only the Pi record IDs durably retired by this connection. */
+  async cleanupCredentials(connectionId, revision) {
+    const token = this.registry.token()
+    this.writable(revision)
+    const connection = this.lookup(connectionId)
+    if (connection.integrationId !== 'pi') throw new ConnectionError('owner-managed')
+    if (this.pendingCredentialWrites.has(connectionId) || this.pendingDeletes.has(connectionId)) throw new ConnectionError('busy')
+    this.pendingCredentialWrites.add(connectionId)
+    const current = () => {
+      if (this.closed || !this.registry.isCurrent(token)) throw new ConnectionError('profile-changed')
+      const saved = this.lookup(connectionId)
+      if (saved.credentialRecordId !== connection.credentialRecordId || saved.credentialGeneration !== connection.credentialGeneration) throw new ConnectionError('connection-changed')
+      return saved
+    }
+    try {
+      for (const id of connection.credentialCleanupIds ?? []) {
+        current()
+        const key = credentialKey(id)
+        if (Object.values(this.raw()).some(value => value.credentialRecordId === id || (value.integrationId === 'pi' || this.registry.integrations.has(value.integrationId)) && this.authKey(value) === key)) throw new ConnectionError('credential-conflict')
+        try { await this.credentials.deleteRecord(key) }
+        catch (cause) { const error = new ConnectionError('credential-cleanup-failed'); error.cause = cause; error.metadataCommitted = true; throw error }
+        const saved = current()
+        saved.credentialCleanupIds = saved.credentialCleanupIds.filter(value => value !== id)
+        if (!saved.credentialCleanupIds.length) delete saved.credentialCleanupIds
+        delete saved.connectionId
+        await this.write({ ...this.raw(), [connectionId]: saved }, this.section()?.revision, [], token)
+      }
+      return { saved: true }
+    } finally { this.pendingCredentialWrites.delete(connectionId) }
+  }
   async delete(connectionId, revision) {
     const token = this.registry.token()
-    const connection = this.lookup(connectionId)
-    const next = { ...this.raw() }; delete next[connectionId]
-    await this.write(next, revision, [], token)
-    if (!Object.values(next).some(value => value.integrationId === connection.integrationId && value.credentialRecordId === connection.credentialRecordId)) {
-      if (connection.integrationId === 'pi') await this.credentials.deleteRecord(credentialKey(connection.credentialRecordId))
-      else await this.registry.owner(connection.integrationId).deleteCredentials(connection)
+    this.writable(revision)
+    const connection = this.lookup(connectionId, { allowDeleting: true })
+    if (this.pendingDeletes.has(connectionId) || this.pendingCredentialWrites.has(connectionId)) throw new ConnectionError('busy')
+    this.pendingDeletes.add(connectionId)
+    try {
+      // Persist the revocation before touching Credentials. A failed cleanup or
+      // a restart keeps an inert, visible row that the same Delete can retry.
+      if (!connection.deletionPending) {
+        connection.deletionPending = true
+        connection.enabled = false
+        connection.credentialGeneration++
+        delete connection.connectionId
+        await this.write({ ...this.raw(), [connectionId]: connection }, revision, [], token)
+      }
+      const current = () => {
+        if (this.closed || !this.registry.isCurrent(token)) throw new ConnectionError('profile-changed')
+        const saved = this.raw()[connectionId]
+        if (!saved?.deletionPending || saved.credentialRecordId !== connection.credentialRecordId || saved.credentialGeneration !== connection.credentialGeneration || saved.integrationId !== connection.integrationId) throw new ConnectionError('connection-changed')
+      }
+      current()
+      try {
+        for (const recordId of new Set([connection.credentialRecordId, ...connection.credentialCleanupIds ?? []])) {
+          current()
+          const key = this.authKey({ ...connection, credentialRecordId: recordId })
+          if (Object.entries(this.raw()).some(([id, value]) => id !== connectionId && (
+            value.credentialRecordId === recordId
+            || (value.integrationId === 'pi' || this.registry.integrations.has(value.integrationId)) && this.authKey(value) === key
+          ))) throw new ConnectionError('credential-conflict')
+          if (connection.integrationId === 'pi') await this.credentials.deleteRecord(key)
+          else await this.registry.owner(connection.integrationId).deleteCredentials(connection)
+        }
+      } catch (cause) {
+        const error = new ConnectionError('credential-delete-failed')
+        error.cause = cause
+        throw error
+      }
+      current()
+      // Preserve concurrent changes to other connections; SettingsForms still
+      // checks the revision atomically if another writer wins from here.
+      const next = { ...this.raw() }; delete next[connectionId]
+      await this.write(next, this.section()?.revision, [], token)
+      return { deleted: true }
+    } finally {
+      this.pendingDeletes.delete(connectionId)
     }
-    return { deleted: true }
   }
   /** Store the account catalog a Muse Code refresh returned; no model is enabled by this. */
-  async saveMuseCatalog(binding, rows) {
+  async saveMuseCatalog(binding, rows, { signal } = {}) {
+    signal?.throwIfAborted()
     if (!this.isCurrent(binding)) throw new ConnectionError('connection-changed')
     const token = this.registry.token()
     const connection = this.lookup(binding.connectionId)
@@ -294,10 +423,17 @@ export class ConnectionManager {
   async beginLogin(connectionId) {
     const token = this.registry.token()
     const connection = this.lookup(connectionId)
-    if (this.pendingLogins.has(connectionId)) throw new ConnectionError('busy')
+    if (this.pendingLogins.has(connectionId) || this.pendingCredentialWrites.has(connectionId)) throw new ConnectionError('busy')
     this.pendingLogins.add(connectionId)
     const section = this.section()
     connection.credentialGeneration++
+    // Re-authentication may commit a different account before the catalog
+    // refresh succeeds. Revoke the old durable account catalog in this same
+    // write, never after credential commit where a crash could preserve it.
+    if (connection.integrationId === 'meta-muse-code') {
+      delete connection.museCatalog
+      delete connection.museCode
+    }
     delete connection.connectionId
     try { await this.write({ ...this.raw(), [connectionId]: connection }, section?.revision, [], token) }
     catch (error) { this.pendingLogins.delete(connectionId); throw error }
@@ -354,5 +490,5 @@ export class ConnectionManager {
     ], token)
     return true
   }
-  dispose() { this.closed = true; this.pendingLogins.clear(); this.verified.clear() }
+  dispose() { this.closed = true; this.pendingLogins.clear(); this.pendingDeletes.clear(); this.pendingCredentialWrites.clear(); this.verified.clear() }
 }

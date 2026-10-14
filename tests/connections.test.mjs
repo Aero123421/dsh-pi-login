@@ -122,7 +122,7 @@ test('secret header migration requires repair and never partially converts a sec
   assert.deepEqual(f.mutations, [])
 })
 
-test('create and key rotation roll back orphan credentials on failed metadata write', async () => {
+test('failed create and rotation staging writes never create unowned credentials', async () => {
   const f = fixture()
   f.failWrite = true
   await assert.rejects(f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-create' }, f.revision))
@@ -155,9 +155,11 @@ test('a create suspended in credential storage cannot write the next profile wit
   f.registry.switchProfile('profile-b')
   release()
   await assert.rejects(create, error => error.code === 'profile-changed')
-  assert.deepEqual(f.value.connections, {})
+  const staged = Object.values(f.value.connections)
+  assert.equal(staged.length, 1)
+  assert.equal(staged[0].enabled, false)
   assert.equal(f.records.size, 0)
-  assert.deepEqual(f.mutations, [])
+  assert.equal(f.mutations.length, 1)
 })
 
 test('connection listing cannot stamp old entries with the profile token after a delayed credential read', async () => {
@@ -178,7 +180,8 @@ test('connection listing cannot stamp old entries with the profile token after a
 test('a profile switch after metadata commit preserves the credential of the committed connection', async () => {
   const f = fixture()
   const original = f.settings.mutate
-  f.settings.mutate = async (...args) => { await original(...args); f.registry.switchProfile('profile-b') }
+  let commits = 0
+  f.settings.mutate = async (...args) => { await original(...args); if (++commits === 2) f.registry.switchProfile('profile-b') }
   await assert.rejects(f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-committed-a' }, f.revision), error => error.code === 'profile-changed' && error.metadataCommitted === true)
   assert.equal(Object.keys(f.value.connections).length, 1)
   const connection = Object.values(f.value.connections)[0]
@@ -264,4 +267,295 @@ test('two metadata connections cannot share one credential record even with dist
   }, f.revision), error => error.code === 'credential-conflict')
   assert.deepEqual(f.value.connections, {})
   assert.deepEqual(f.mutations, [])
+})
+
+test('failed credential cleanup retains a disabled deletion record that can be retried after restart', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-delete' }, f.revision)
+  const { connectionId: otherId } = await f.manager.create({ integrationId: 'pi', serviceId: 'deepseek', authMethod: 'api-key', apiKey: 'fixture-other' }, f.revision)
+  const other = structuredClone(f.value.connections[otherId])
+  const binding = f.manager.binding(f.manager.lookup(connectionId))
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async () => { throw Object.assign(new Error('fixture storage failure'), { code: 'EIO' }) }
+  await assert.rejects(f.manager.delete(connectionId, f.revision), error => error.code === 'credential-delete-failed' && error.cause.code === 'EIO')
+  assert.equal(f.value.connections[connectionId].deletionPending, true)
+  assert.equal(f.value.connections[connectionId].enabled, false)
+  assert.equal(f.manager.isCurrent(binding), false)
+  assert.equal(f.records.size, 2)
+  for (const operation of [() => f.manager.update(connectionId, { enabled: true }, f.revision), () => f.manager.clone(connectionId, 'Clone', f.revision), () => f.manager.beginLogin(connectionId), () => f.manager.saveMuseCatalog(binding, [])]) await assert.rejects(operation())
+  const row = (await f.manager.list()).connections.find(row => row.connectionId === connectionId)
+  assert.equal(row.deletionPending, true)
+  assert.equal(row.authStatus, 'deletion-pending')
+  assert.equal(row.capabilities.auth, false)
+  assert.equal(row.capabilities.models, false)
+  assert.equal(row.capabilities.settings, true)
+  f.manager.dispose()
+  f.registry.switchProfile('profile-a')
+  const restarted = new ConnectionManager({ settings: f.settings, credentials: f.credentials, registry: f.registry })
+  f.credentials.deleteRecord = original
+  assert.deepEqual(await restarted.delete(connectionId, f.revision), { deleted: true })
+  assert.equal(f.value.connections[connectionId], undefined)
+  assert.equal(f.records.size, 1)
+  assert.deepEqual(f.value.connections[otherId], other)
+  assert.equal(f.records.get(`llm-pi-ai/${other.credentialRecordId}`).key, 'fixture-other')
+})
+
+test('final deletion metadata failure remains retryable without restoring removed credentials', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-delete' }, f.revision)
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async key => { await original(key); f.failWrite = true }
+  await assert.rejects(f.manager.delete(connectionId, f.revision), error => error.code === 'settings-changed')
+  assert.equal(f.records.size, 0)
+  assert.equal(f.value.connections[connectionId].deletionPending, true)
+  f.failWrite = false
+  f.credentials.deleteRecord = original
+  await f.manager.delete(connectionId, f.revision)
+  assert.deepEqual(f.value.connections, {})
+  assert.equal(f.records.size, 0)
+})
+
+test('deletion revokes stale bindings before cleanup and preserves concurrent edits to other connections', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-delete' }, f.revision)
+  const { connectionId: otherId } = await f.manager.clone(connectionId, 'Other', f.revision)
+  const binding = f.manager.binding(f.manager.lookup(connectionId))
+  let entered, release
+  const reached = new Promise(resolve => { entered = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async key => { entered(); await gate; await original(key) }
+  const deletion = f.manager.delete(connectionId, f.revision)
+  await reached
+  assert.equal(f.manager.isCurrent(binding), false)
+  await assert.rejects(f.manager.delete(connectionId, f.revision), error => error.code === 'busy')
+  await f.manager.update(otherId, { displayName: 'Edited while cleanup waited' }, f.revision)
+  release()
+  await deletion
+  assert.equal(f.value.connections[connectionId], undefined)
+  assert.equal(f.value.connections[otherId].displayName, 'Edited while cleanup waited')
+  assert.equal(f.deletes.length, 1)
+})
+
+test('failed revocation never deletes credentials; profile changes after cleanup never write the new profile', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-delete' }, f.revision)
+  const before = structuredClone(f.value.connections[connectionId])
+  f.failWrite = true
+  await assert.rejects(f.manager.delete(connectionId, f.revision))
+  assert.deepEqual(f.value.connections[connectionId], before)
+  assert.equal(f.records.size, 1)
+  assert.deepEqual(f.deletes, [])
+  f.failWrite = false
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async key => { await original(key); f.registry.switchProfile('profile-b') }
+  await assert.rejects(f.manager.delete(connectionId, f.revision), error => error.code === 'profile-changed')
+  assert.equal(f.value.connections[connectionId].deletionPending, true)
+  assert.equal(f.records.size, 0)
+  assert.equal(f.mutations.length, 3)
+})
+
+test('Muse deletion retries partial cleanup of both SDK and CLI-era credentials', async () => {
+  const connection = { integrationId: 'meta-muse-code', serviceId: 'muse-code', routeId: 'muse-c-muse', displayName: 'Muse', authMethod: 'oauth', credentialRecordId: 'c-muse', credentialGeneration: 0, enabled: true, profile: {} }
+  const f = fixture({ connections: { 'c-muse': connection } }, { 'llm-pi-ai/c-muse': { kind: 'grant', payload: {} }, 'dsh-muse-code/c-muse': { kind: 'grant', payload: {} } })
+  f.registry.register(createMuseCodeOwner({ ctx: { credentials: f.credentials }, connections: f.manager }))
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async key => { if (key.startsWith('dsh-muse-code/')) throw new Error('fixture CLI record write failed'); await original(key) }
+  await assert.rejects(f.manager.delete('c-muse', f.revision), error => error.code === 'credential-delete-failed')
+  assert.equal(f.records.has('llm-pi-ai/c-muse'), false)
+  assert.equal(f.records.has('dsh-muse-code/c-muse'), true)
+  assert.equal(f.value.connections['c-muse'].deletionPending, true)
+  f.credentials.deleteRecord = original
+  await f.manager.delete('c-muse', f.revision)
+  assert.equal(f.records.size, 0)
+  assert.deepEqual(f.value.connections, {})
+})
+
+test('Pi and Muse cannot share an actual credential namespace record across integration IDs', async () => {
+  const f = fixture()
+  f.registry.register(createMuseCodeOwner({ ctx: { credentials: f.credentials }, connections: f.manager }))
+  const common = { authMethod: 'oauth', displayName: 'One', credentialRecordId: 'shared-record', credentialGeneration: 0, enabled: true, profile: {} }
+  await assert.rejects(f.manager.write({
+    'c-one': { ...common, integrationId: 'pi', serviceId: 'openai', routeId: 'pi-c-one' },
+    'c-two': { ...common, integrationId: 'meta-muse-code', serviceId: 'muse-code', routeId: 'muse-c-two' },
+  }, f.revision), error => error.code === 'credential-conflict')
+  assert.deepEqual(f.value.connections, {})
+})
+
+test('re-authentication atomically revokes a Muse account catalog before any new grant can be stored', async () => {
+  const profile = { disabledModels: ['muse-wonder-1.0'], enabledContributorModels: ['muse-wonder-1.0::contributor'] }
+  const entry = { integrationId: 'meta-muse-code', serviceId: 'muse-code', routeId: 'muse-c-muse', displayName: 'Muse', authMethod: 'oauth', credentialRecordId: 'c-muse', credentialGeneration: 0, enabled: true, profile, museCode: { modelId: 'old-account-only' }, museCatalog: [{ id: 'old-account-only' }] }
+  const f = fixture({ connections: { 'c-muse': entry } }, { 'llm-pi-ai/c-muse': { kind: 'grant', payload: { access: 'fixture-old-account' } } })
+  f.registry.register(createMuseCodeOwner({ ctx: { credentials: f.credentials }, connections: f.manager }))
+  const before = structuredClone(f.value.connections['c-muse'])
+  f.failWrite = true
+  await assert.rejects(f.manager.beginLogin('c-muse'))
+  assert.deepEqual(f.value.connections['c-muse'], before)
+  assert.equal(f.manager.pendingLogins.has('c-muse'), false)
+  f.failWrite = false
+  await f.manager.beginLogin('c-muse')
+  const saved = f.value.connections['c-muse']
+  assert.equal(saved.credentialGeneration, 1)
+  assert.equal(saved.museCatalog, undefined)
+  assert.equal(saved.museCode, undefined)
+  assert.deepEqual(saved.profile, profile)
+  assert.equal(f.records.get('llm-pi-ai/c-muse').payload.access, 'fixture-old-account')
+  f.manager.endLogin('c-muse')
+  f.manager.dispose()
+  const restarted = new ConnectionManager({ settings: f.settings, credentials: f.credentials, registry: f.registry })
+  assert.equal(restarted.lookup('c-muse').museCatalog, undefined)
+  assert.deepEqual(restarted.lookup('c-muse').profile, profile)
+})
+
+test('an unavailable optional owner preserves its connection without blocking unrelated create, rename or delete', async () => {
+  const optional = { integrationId: 'optional', serviceId: 'gateway', routeId: 'optional-c-extra', displayName: 'Extra', authMethod: 'api-key', credentialRecordId: 'c-extra', credentialGeneration: 0, enabled: true, profile: {} }
+  const f = fixture({ connections: { 'c-extra': optional } })
+  f.manager.changed()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-good' }, f.revision)
+  await f.manager.update(connectionId, { displayName: 'Renamed' }, f.revision)
+  const list = await f.manager.list()
+  assert.equal(list.connections.find(row => row.connectionId === 'c-extra').authStatus, 'unavailable')
+  assert.equal(list.connections.find(row => row.connectionId === connectionId).displayName, 'Renamed')
+  await assert.rejects(f.manager.update('c-extra', { displayName: 'Requires owner' }, f.revision), error => error.code === 'service-unavailable')
+  await f.manager.delete(connectionId, f.revision)
+  assert.deepEqual(f.value.connections, { 'c-extra': optional })
+  assert.equal(f.records.size, 0)
+  assert.equal(f.registry.routes.size, 0)
+})
+
+test('optional credential generation guards reject old account views before resolving fresh connection data', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'oauth' }, f.revision)
+  const payload = { ...f.registry.token(), connectionId, credentialGeneration: 0 }
+  assert.doesNotThrow(() => f.manager.guard(payload))
+  await f.manager.beginLogin(connectionId)
+  assert.throws(() => f.manager.guard(payload), error => error.code === 'connection-changed')
+  assert.throws(() => f.manager.guard({ connectionId, credentialGeneration: 0 }, { optional: true }), error => error.code === 'connection-changed')
+  assert.throws(() => f.manager.guard({ ...payload, credentialGeneration: NaN }), error => error.code === 'connection-changed')
+  assert.doesNotThrow(() => f.manager.guard({ connectionId, credentialGeneration: 1 }, { optional: true }))
+  assert.throws(() => f.manager.guard({ ...payload, connectionId: 'c-missing' }), error => error.code === 'connection-unavailable')
+})
+
+test('failed create credential save leaves a visible disabled row that can be repaired or deleted', async () => {
+  const f = fixture()
+  const original = f.credentials.modifyRecord
+  f.credentials.modifyRecord = async () => { throw Object.assign(new Error('fixture save failure'), { code: 'EIO' }) }
+  await assert.rejects(f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-key' }, f.revision), error => error.code === 'credential-save-failed' && error.metadataCommitted === true)
+  const [[id, saved]] = Object.entries(f.value.connections)
+  assert.equal(saved.enabled, false)
+  assert.equal(f.records.size, 0)
+  assert.equal((await f.manager.list()).connections[0].configured, false)
+  f.credentials.modifyRecord = original
+  await f.manager.update(id, { apiKey: 'fixture-repaired', enabled: true }, f.revision)
+  assert.equal(f.value.connections[id].enabled, true)
+  assert.equal(f.records.size, 1)
+  assert.equal(f.records.get(`llm-pi-ai/${f.value.connections[id].credentialRecordId}`).key, 'fixture-repaired')
+  await f.manager.delete(id, f.revision)
+  assert.equal(f.records.size, 0)
+})
+
+test('failed create activation retains an owned key in a disabled recoverable row', async () => {
+  const f = fixture()
+  const original = f.credentials.modifyRecord
+  f.credentials.modifyRecord = async (...args) => { const result = await original(...args); f.failWrite = true; return result }
+  await assert.rejects(f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-key' }, f.revision), error => error.code === 'credential-save-failed' && error.metadataCommitted === true && error.cause.code === 'settings-changed')
+  const [[id, saved]] = Object.entries(f.value.connections)
+  assert.equal(saved.enabled, false)
+  assert.equal(f.records.get(`llm-pi-ai/${saved.credentialRecordId}`).key, 'fixture-key')
+  f.failWrite = false
+  await f.manager.delete(id, f.revision)
+  assert.deepEqual(f.value.connections, {})
+  assert.equal(f.records.size, 0)
+})
+
+test('failed key swap preserves the current key and durably owns the reserved key for restart cleanup', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-old' }, f.revision)
+  const before = structuredClone(f.value.connections[connectionId])
+  const original = f.credentials.modifyRecord
+  f.credentials.modifyRecord = async (...args) => { const result = await original(...args); f.failWrite = true; return result }
+  await assert.rejects(f.manager.update(connectionId, { apiKey: 'fixture-new' }, f.revision), error => error.code === 'settings-changed')
+  const saved = f.value.connections[connectionId]
+  assert.equal(saved.credentialRecordId, before.credentialRecordId)
+  assert.equal(saved.credentialGeneration, before.credentialGeneration + 1)
+  assert.equal(saved.credentialCleanupIds.length, 1)
+  assert.equal(f.records.get(`llm-pi-ai/${saved.credentialRecordId}`).key, 'fixture-old')
+  assert.equal(f.records.get(`llm-pi-ai/${saved.credentialCleanupIds[0]}`).key, 'fixture-new')
+  assert.equal((await f.manager.list()).connections[0].credentialCleanupPending, true)
+  f.manager.dispose()
+  f.registry.switchProfile('profile-a')
+  const restarted = new ConnectionManager({ settings: f.settings, credentials: f.credentials, registry: f.registry })
+  f.failWrite = false
+  await restarted.cleanupCredentials(connectionId, f.revision)
+  assert.equal(f.records.size, 1)
+  assert.equal(f.value.connections[connectionId].credentialCleanupIds, undefined)
+  assert.equal(f.records.get(`llm-pi-ai/${saved.credentialRecordId}`).key, 'fixture-old')
+})
+
+test('failed retired key cleanup reports partial completion and retries without undoing the active new key', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-old' }, f.revision)
+  const oldId = f.value.connections[connectionId].credentialRecordId
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async () => { throw new Error('fixture retired key cleanup failed') }
+  await assert.rejects(f.manager.update(connectionId, { apiKey: 'fixture-new' }, f.revision), error => error.code === 'credential-cleanup-failed' && error.metadataCommitted === true)
+  const saved = f.value.connections[connectionId]
+  assert.notEqual(saved.credentialRecordId, oldId)
+  assert.deepEqual(saved.credentialCleanupIds, [oldId])
+  assert.equal(f.records.get(`llm-pi-ai/${saved.credentialRecordId}`).key, 'fixture-new')
+  assert.equal(f.records.size, 2)
+  const { connectionId: cloneId } = await f.manager.clone(connectionId, 'No retired keys copied', f.revision)
+  assert.equal(f.value.connections[cloneId].credentialCleanupIds, undefined)
+  f.credentials.deleteRecord = original
+  await f.manager.cleanupCredentials(connectionId, f.revision)
+  assert.equal(f.records.size, 1)
+  assert.equal(f.value.connections[connectionId].credentialRecordId, saved.credentialRecordId)
+  assert.equal(f.value.connections[connectionId].credentialCleanupIds, undefined)
+})
+
+test('an interrupted credential rotation prevents concurrent deletion and stale profile writes', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-old' }, f.revision)
+  let entered, release
+  const reached = new Promise(resolve => { entered = resolve })
+  const gate = new Promise(resolve => { release = resolve })
+  const original = f.credentials.modifyRecord
+  f.credentials.modifyRecord = async (...args) => { entered(); await gate; return original(...args) }
+  const update = f.manager.update(connectionId, { apiKey: 'fixture-new' }, f.revision)
+  await reached
+  for (const operation of [() => f.manager.delete(connectionId, f.revision), () => f.manager.beginLogin(connectionId), () => f.manager.update(connectionId, { displayName: 'Race' }, f.revision), () => f.manager.cleanupCredentials(connectionId, f.revision)]) await assert.rejects(operation(), error => error.code === 'busy')
+  f.registry.switchProfile('profile-b')
+  release()
+  await assert.rejects(update, error => error.code === 'profile-changed')
+  assert.equal(f.records.size, 1)
+  const saved = f.value.connections[connectionId]
+  assert.equal(f.records.get(`llm-pi-ai/${saved.credentialRecordId}`).key, 'fixture-old')
+  assert.equal(saved.credentialCleanupIds.length, 1)
+  assert.equal(f.records.has(`llm-pi-ai/${saved.credentialCleanupIds[0]}`), false)
+})
+
+test('switching authentication method retains the retired key journal when cleanup fails', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-old' }, f.revision)
+  const oldId = f.value.connections[connectionId].credentialRecordId
+  const original = f.credentials.deleteRecord
+  f.credentials.deleteRecord = async () => { throw new Error('fixture cleanup failure') }
+  await assert.rejects(f.manager.update(connectionId, { authMethod: 'oauth' }, f.revision), error => error.code === 'credential-cleanup-failed')
+  assert.equal(f.value.connections[connectionId].authMethod, 'oauth')
+  assert.equal(f.value.connections[connectionId].enabled, false)
+  assert.deepEqual(f.value.connections[connectionId].credentialCleanupIds, [oldId])
+  f.credentials.deleteRecord = original
+  await f.manager.delete(connectionId, f.revision)
+  assert.equal(f.records.size, 0)
+  assert.deepEqual(f.value.connections, {})
+})
+
+test('retired-key cleanup refuses an active record shared by manually corrupted metadata', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'api-key', apiKey: 'fixture-current' }, f.revision)
+  const { connectionId: otherId } = await f.manager.create({ integrationId: 'pi', serviceId: 'deepseek', authMethod: 'api-key', apiKey: 'fixture-other' }, f.revision)
+  f.value.connections[connectionId].credentialCleanupIds = [f.value.connections[otherId].credentialRecordId]
+  await assert.rejects(f.manager.cleanupCredentials(connectionId, f.revision), error => error.code === 'credential-conflict')
+  assert.equal(f.records.size, 2)
+  assert.deepEqual(f.deletes, [])
 })

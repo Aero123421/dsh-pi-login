@@ -80,18 +80,42 @@ export class MuseCodeCatalogSession {
     Object.assign(this, { credentials, snapshot, persist, refreshAuth, onChange, onUsage, fetch: request, now })
     this.cache = new ProviderCache({ ttl, maxStale: Infinity, timeout, now })
     this.usageCache = new ProviderCache({ ttl: 300000, maxStale: 3600000, timeout, now })
-    this.version = 0; this.closed = false
+    this.version = 0; this.closed = false; this.useSnapshot = true; this.lifecycle = new AbortController()
   }
-  rows() { return this.cache.peek().value ?? this.snapshot() ?? [] }
+  rows() { return this.cache.peek().value ?? (this.useSnapshot ? this.snapshot() : undefined) ?? [] }
   catalog() { return museModels(this.rows()) }
   state() {
     const cached = this.cache.peek()
-    return { canRefresh: true, count: this.rows().length, checkedAt: cached.checkedAt, error: cached.error, account: this.account }
+    return { canRefresh: true, count: this.rows().length, checkedAt: cached.checkedAt, error: cached.error, account: this.usageCache.peek().value?.account }
   }
   changed() { this.version++; if (!this.closed) this.onChange() }
-  invalidate() { this.principal = undefined; this.account = undefined; this.cache.invalidate(); this.usageCache.invalidate() }
+  invalidate() {
+    // A saved catalog belongs to the previous sign-in. Hiding only the process
+    // cache would fall back to that saved account's models after a failed read.
+    // The connection owner clears the durable snapshot before reauthentication.
+    this.principal = undefined; this.useSnapshot = false; this.cache.invalidate(); this.usageCache.invalidate(); this.changed()
+  }
+  async currentCredential(signal) {
+    if (this.closed || signal?.aborted) throw new ProviderReadError('aborted')
+    const deadline = AbortSignal.timeout(this.cache.timeout)
+    const epoch = this.cache.epoch
+    const bounded = AbortSignal.any([this.lifecycle.signal, deadline, ...signal ? [signal] : []])
+    let abort
+    const cancelled = new Promise((_, reject) => {
+      abort = () => reject(new ProviderReadError(signal?.aborted || this.closed ? 'aborted' : 'error'))
+      bounded.addEventListener('abort', abort, { once: true })
+    })
+    try {
+      const current = await Promise.race([this.credentials.read('meta'), cancelled])
+      if (this.closed) throw new ProviderReadError('aborted')
+      if (this.cache.epoch !== epoch) throw new ProviderReadError('account-changed')
+      return current
+    } catch (error) {
+      throw error instanceof ProviderReadError ? error : new ProviderReadError('error')
+    } finally { bounded.removeEventListener('abort', abort) }
+  }
   async validate() {
-    const current = await this.credentials.read('meta')
+    const current = await this.currentCredential()
     if (this.principal && (!oauth(current) || principalOf(current) !== this.principal)) this.invalidate()
     // First use after sign-in loads the catalog instead of showing an empty list.
     if (!this.rows().length && oauth(current) && !this.closed) await this.refresh().catch(() => {})
@@ -122,7 +146,9 @@ export class MuseCodeCatalogSession {
       const standard = parseMuseCatalog(await this.list(credential, '0', requestSignal))
       if (!standard.length) throw new ProviderReadError('error')
       // Contributor choices exist only for models the account lists in that mode.
-      const contributor = await this.list(credential, '1', requestSignal).then(parseMuseCatalog, () => [])
+      // A failed read is not evidence that Contributor models disappeared.
+      // Publish one complete two-mode catalog, or retain the previous value.
+      const contributor = parseMuseCatalog(await this.list(credential, '1', requestSignal))
       // Keep provider-returned IDs intact, including native Contributor IDs.
       // Choices pair those with their base instead of offering both a native
       // row and a synthetic duplicate. Contributor-only rows must not become
@@ -136,15 +162,33 @@ export class MuseCodeCatalogSession {
         contributor: offered.has(row.id) && !row.id.endsWith('-contributor') }))
       const current = await this.credentials.read('meta')
       if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError('account-changed')
+      if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) {
+        await this.persist(rows, { signal: requestSignal })
+      }
+      const stored = await this.credentials.read('meta')
+      if (this.closed || requestSignal.aborted || !oauth(stored) || principalOf(stored) !== principal) throw new ProviderReadError('account-changed')
       return rows
-    }, { force, signal }).then(async rows => {
-      if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) await this.persist(rows).catch(() => {})
+    }, { force, signal }).then(() => {
+      if (this.closed) throw new ProviderReadError('aborted')
       this.changed()
       return this.state()
+    }).catch(error => {
+      if (error?.code === 'account-changed') this.invalidate()
+      throw error
     })
   }
   /** The CLI's key mint also reports the subscription and its quota. */
-  usage({ signal, force = false } = {}) {
+  async usage({ signal, force = false } = {}) {
+    // Check identity even when the quota cache is fresh. A Credentials writer
+    // outside the login flow may replace the grant without disposing us.
+    const credential = await this.currentCredential(signal)
+    if (!oauth(credential)) {
+      this.invalidate()
+      throw new ProviderReadError('auth-required')
+    }
+    const identity = principalOf(credential)
+    if (this.principal && this.principal !== identity) this.invalidate()
+    this.principal = identity
     return this.usageCache.get(async requestSignal => {
       const current = await this.credentials.read('meta')
       if (!oauth(current)) throw new ProviderReadError('auth-required')
@@ -153,17 +197,31 @@ export class MuseCodeCatalogSession {
         method: 'POST', redirect: 'error', signal: requestSignal, body: '{}',
         headers: { accept: 'application/json', 'content-type': 'application/json', 'x-api-version': '1.0.0', authorization: `Bearer ${current.refresh}` },
       }), { now: this.now() })
-      this.account = { active: typeof body.is_subs_active === 'boolean' ? body.is_subs_active : null, tierName: label(body.subs_tier_name) }
-      if (typeof body.api_key === 'string' && body.api_key) {
+      const account = { active: typeof body.is_subs_active === 'boolean' ? body.is_subs_active : null, tierName: label(body.subs_tier_name) }
+      const stored = await this.credentials.read('meta')
+      if (this.closed || requestSignal.aborted || !oauth(stored) || principalOf(stored) !== principal) throw new ProviderReadError('account-changed')
+      if (account.active === true && typeof body.api_key === 'string' && body.api_key) {
         // Keep the freshly minted key for this same account only.
-        await this.credentials.modify('meta', async stored => oauth(stored) && principalOf(stored) === principal
-          ? { ...stored, access: body.api_key, expires: this.now() + 86400000 } : stored).catch(() => {})
+        await this.credentials.modify('meta', async stored => {
+          if (this.closed || requestSignal.aborted || !oauth(stored) || principalOf(stored) !== principal) throw new ProviderReadError('account-changed')
+          return { ...stored, access: body.api_key, expires: this.now() + 86400000 }
+        })
       }
-      this.onUsage()
-      return { source: 'internal-http', sourceObservedAt: new Date(this.now()).toISOString(), status: 'available', windows: parseMuseUsage(body) }
-    }, { force, signal })
+      const currentAfterWrite = await this.credentials.read('meta')
+      if (this.closed || requestSignal.aborted || !oauth(currentAfterWrite) || principalOf(currentAfterWrite) !== principal) throw new ProviderReadError('account-changed')
+      let status = 'available', windows = []
+      try { windows = parseMuseUsage(body) }
+      catch (error) { status = error?.code === 'auth-required' ? 'auth-required' : 'error' }
+      return { account, usage: { source: 'internal-http', sourceObservedAt: new Date(this.now()).toISOString(), status, windows } }
+    }, { force, signal }).then(result => {
+      if (!this.closed && this.usageCache.peek().value === result) this.onUsage()
+      return result.usage
+    }).catch(error => {
+      if (error?.code === 'account-changed') this.invalidate()
+      throw error
+    })
   }
-  dispose() { this.closed = true; this.cache.dispose(); this.usageCache.dispose() }
+  dispose() { this.closed = true; this.lifecycle.abort(); this.cache.dispose(); this.usageCache.dispose() }
 }
 
 /** ProviderCatalogs entry: presentation, public error codes and request auth. */

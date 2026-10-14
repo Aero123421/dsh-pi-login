@@ -553,6 +553,7 @@ var PiLoginBroker = class {
 async function dispatch(broker, method, payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new LoginError("invalid-request");
   if (broker.connections && ["start", "answer", "cancel", "enable", "set-model", "set-provider", "use-login"].includes(method)) broker.connections.guard(payload);
+  if (broker.connections && ["models", "refresh-models"].includes(method)) broker.connections.guard(payload, { optional: true });
   const target = payload.connectionId ?? payload.key;
   if (["state", "answer", "cancel"].includes(method)) broker.checkTicketConnection(payload.ticket, payload.connectionId);
   switch (method) {
@@ -604,7 +605,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.7.2",
+  version: "0.7.3",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -621,6 +622,7 @@ var package_default = {
     "cordis.patch.yml",
     "README.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "docs",
     "src/runtime/UPSTREAM.md",
     "upstream.json"
@@ -846,25 +848,50 @@ function checkCompatibility(packageJson, candidate, runtime) {
   return runtime;
 }
 function packageManifest(bytes) {
-  const tar = gunzipSync(bytes, { maxOutputLength: 128 * 1024 * 1024 });
-  let manifest;
+  let tar;
+  try {
+    tar = gunzipSync(bytes, { maxOutputLength: 128 * 1024 * 1024 });
+  } catch {
+    throw new Error("metadata");
+  }
+  if (tar.length % 512 !== 0) throw new Error("metadata");
+  let manifest, ended = false;
+  const paths = /* @__PURE__ */ new Set();
   for (let offset = 0; offset + 512 <= tar.length; ) {
     const header = tar.subarray(offset, offset + 512);
-    if (header.every((byte) => byte === 0)) break;
+    if (header.every((byte) => byte === 0)) {
+      if (offset + 1024 > tar.length || !tar.subarray(offset).every((byte) => byte === 0)) throw new Error("metadata");
+      ended = true;
+      break;
+    }
+    const checksumText = header.subarray(148, 156).toString().replace(/\0.*$/, "").trim();
+    const checksum = header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0);
+    if (!/^[0-7]+$/.test(checksumText) || checksum !== Number.parseInt(checksumText, 8)) throw new Error("metadata");
     const name2 = header.subarray(0, 100).toString().replace(/\0.*$/, "");
     const prefix = header.subarray(345, 500).toString().replace(/\0.*$/, "");
     const sizeText = header.subarray(124, 136).toString().replace(/\0.*$/, "").trim();
     if (!/^[0-7]+$/.test(sizeText)) throw new Error("metadata");
     const size = Number.parseInt(sizeText, 8);
-    if (!Number.isSafeInteger(size) || offset + 512 + size > tar.length) throw new Error("metadata");
+    const next = offset + 512 + Math.ceil(size / 512) * 512;
+    if (!Number.isSafeInteger(size) || next > tar.length) throw new Error("metadata");
     const path = prefix ? `${prefix}/${name2}` : name2;
+    const directory = header[156] === 53;
+    if (![0, 48, 53].includes(header[156]) || directory && size !== 0) throw new Error("metadata");
+    const entry = directory && path.endsWith("/") ? path.slice(0, -1) : path;
+    const parts = entry.split("/");
+    if (parts[0] !== "package" || !directory && parts.length < 2 || parts.some((part) => !part || part === "." || part === ".." || part.includes("\\")) || paths.has(entry)) throw new Error("metadata");
+    paths.add(entry);
     if (path === "package/package.json") {
-      if (manifest || ![0, 48].includes(header[156]) || size > 65536) throw new Error("metadata");
-      manifest = JSON.parse(tar.subarray(offset + 512, offset + 512 + size).toString());
+      if (manifest || directory || size > 65536) throw new Error("metadata");
+      try {
+        manifest = JSON.parse(tar.subarray(offset + 512, offset + 512 + size).toString());
+      } catch {
+        throw new Error("metadata");
+      }
     }
-    offset += 512 + Math.ceil(size / 512) * 512;
+    offset = next;
   }
-  if (!manifest) throw new Error("metadata");
+  if (!manifest || !ended) throw new Error("metadata");
   return manifest;
 }
 function safeResult(result) {
@@ -908,6 +935,7 @@ var PluginUpdates = class {
     if (!manager || typeof manager.listBundles !== "function" || typeof manager.installBundle !== "function" || typeof manager.waitForInstall !== "function" || !this.profileDir) throw new Error("manager-unavailable");
     const bundle = (await manager.listBundles()).find((item) => item.name === PACKAGE);
     if (!bundle?.installed || bundle.readOnlyReason || bundle.error) throw new Error("read-only");
+    semanticVersion(bundle.version);
     const source = sourceKind(bundle.source, this.cacheDir, bundle.version);
     if (bundle.source.startsWith("file:")) {
       try {
@@ -937,9 +965,15 @@ var PluginUpdates = class {
   }
   async status() {
     try {
-      const { dshVersion } = await this.capability();
+      const { dshVersion, bundle } = await this.capability();
       const requestId = this.running?.requestId ?? await this.lastOperation();
-      return requestId ? { ...await this.reconcile(requestId), dshVersion } : { ...this.base(), dshVersion, status: "idle" };
+      if (requestId) return { ...await this.reconcile(requestId), dshVersion };
+      return {
+        ...this.base(),
+        dshVersion,
+        installedVersion: bundle.version,
+        status: bundle.version !== this.version ? "restart-required" : "idle"
+      };
     } catch (error) {
       return { ...this.base(), status: "blocked", reason: reasonOf(error) };
     }
@@ -966,6 +1000,10 @@ var PluginUpdates = class {
         const { bundle } = await this.capability();
         const last = await this.lastOperation();
         if (last && ["installing", "unknown", "restart-required"].includes((await this.reconcile(last)).status)) throw new Error("busy");
+        if (bundle.version !== this.version) {
+          this.candidate = null;
+          return { ...this.base(), installedVersion: bundle.version, status: "restart-required" };
+        }
         this.candidate = await this.getCandidate(bundle.version ?? this.version);
         return { ...this.base(), status: this.candidate ? "available" : "current", candidate: this.candidate && this.publicCandidate(this.candidate), checkedAt: (/* @__PURE__ */ new Date()).toISOString() };
       } catch (error) {
@@ -1096,6 +1134,14 @@ var PluginUpdates = class {
     const bundle = (await this.manager()?.listBundles())?.find((item) => item.name === PACKAGE);
     const installed = bundle?.version;
     if (operation.result) operation.status = resultState(operation.result, operation.version, this.version, bundle);
+    if (operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason && compareVersions(installed, operation.version) > 0) {
+      return {
+        ...this.base(),
+        ...operation,
+        installedVersion: installed,
+        status: this.version === installed ? "overridden" : "restart-required"
+      };
+    }
     if (["installing", "restart-required", "unknown", "applied"].includes(operation.status) && this.version === operation.version) {
       operation.status = bundle?.installed && !bundle.error && !bundle.readOnlyReason && installed === operation.version ? "applied" : "unknown";
     }
@@ -1109,6 +1155,7 @@ var PluginUpdates = class {
 
 // src/connections.mjs
 import { createHash as createHash2 } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 // src/registry.mjs
 import { randomUUID as randomUUID4, randomInt } from "node:crypto";
@@ -1143,17 +1190,27 @@ var IntegrationRegistry = class {
     const event = { type, profileKey: this.profileKey, generation: this.generation, integrationId, connectionId: connectionId2 };
     for (const listener of this.listeners) listener(event);
   }
-  register(owner) {
+  register(owner, ownRegistration) {
     if (this.closed || !ID.test(owner.integrationId) || this.integrations.has(owner.integrationId)) throw new RegistryError("integration-conflict");
     if (typeof owner.listServices !== "function" || typeof owner.listConnections !== "function") throw new RegistryError("invalid-integration");
     this.integrations.set(owner.integrationId, owner);
     this.emit("registered", owner.integrationId);
-    return () => {
+    const unregister = () => {
       if (this.integrations.get(owner.integrationId) !== owner) return;
       this.integrations.delete(owner.integrationId);
       for (const [routeId, entry] of this.routes) if (entry.integrationId === owner.integrationId) this.routes.delete(routeId);
       this.emit("unregistered", owner.integrationId);
     };
+    try {
+      if (ownRegistration !== void 0) {
+        if (typeof ownRegistration !== "function") throw new RegistryError("invalid-integration");
+        ownRegistration(unregister);
+      }
+    } catch (error) {
+      unregister();
+      throw error;
+    }
+    return unregister;
   }
   owner(integrationId) {
     const owner = this.integrations.get(integrationId);
@@ -1166,6 +1223,7 @@ var IntegrationRegistry = class {
       serviceId: service.serviceId,
       label: String(service.label ?? service.serviceId),
       methods: (service.methods ?? []).map(({ id, label: label4 }) => ({ id, label: label4 })),
+      ...Array.isArray(service.apis) ? { apis: service.apis.filter((api) => typeof api === "string") } : {},
       capabilities: Object.fromEntries(["auth", "models", "usage", "settings"].map((key) => [key, service.capabilities?.[key] === true])),
       ...service.unavailableReason ? { unavailableReason: service.unavailableReason } : {},
       ...service.executionKind ? { executionKind: service.executionKind } : {},
@@ -1273,6 +1331,8 @@ var ConnectionManager = class {
     Object.assign(this, { settings, credentials, registry, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections });
     this.closed = false;
     this.pendingLogins = /* @__PURE__ */ new Set();
+    this.pendingDeletes = /* @__PURE__ */ new Set();
+    this.pendingCredentialWrites = /* @__PURE__ */ new Set();
     this.verified = /* @__PURE__ */ new Map();
   }
   section() {
@@ -1283,14 +1343,15 @@ var ConnectionManager = class {
   raw() {
     return this.connectionSnapshot?.() ?? this.section()?.value?.connections ?? {};
   }
-  lookup(connectionId2) {
+  lookup(connectionId2, { allowDeleting = false } = {}) {
     if (this.closed || typeof connectionId2 !== "string" || !Object.hasOwn(this.raw(), connectionId2)) throw new ConnectionError("connection-unavailable");
+    if (this.raw()[connectionId2].deletionPending && !allowDeleting) throw new ConnectionError("connection-deleting");
     return { ...structuredClone(this.raw()[connectionId2]), connectionId: connectionId2 };
   }
   isCurrent(binding) {
     if (this.closed) return false;
     const connection = this.raw()[binding.connectionId];
-    return this.registry.isCurrent(binding) && !!connection && connection.serviceId === binding.serviceId && connection.credentialRecordId === binding.credentialRecordId && connection.credentialGeneration === binding.credentialGeneration;
+    return this.registry.isCurrent(binding) && !!connection && !connection.deletionPending && connection.integrationId === binding.integrationId && connection.serviceId === binding.serviceId && connection.credentialRecordId === binding.credentialRecordId && connection.credentialGeneration === binding.credentialGeneration;
   }
   binding(connection) {
     return { ...connection, profileKey: this.registry.profileKey, generation: this.registry.generation };
@@ -1303,8 +1364,12 @@ var ConnectionManager = class {
     this.verified.set(connectionId2, { record: connection.credentialRecordId, credentialGeneration: connection.credentialGeneration, verifiedAt: (/* @__PURE__ */ new Date()).toISOString() });
   }
   guard(payload, { optional = false } = {}) {
-    if (optional && payload.profileKey === void 0 && payload.generation === void 0) return;
-    if (payload.profileKey !== this.registry.profileKey || payload.generation !== this.registry.generation) throw new ConnectionError("profile-changed");
+    if (!(optional && payload.profileKey === void 0 && payload.generation === void 0) && (payload.profileKey !== this.registry.profileKey || payload.generation !== this.registry.generation)) throw new ConnectionError("profile-changed");
+    if (payload.credentialGeneration !== void 0) {
+      const current = this.raw()[payload.connectionId];
+      if (!current) throw new ConnectionError("connection-unavailable");
+      if (!Number.isSafeInteger(payload.credentialGeneration) || payload.credentialGeneration !== current.credentialGeneration) throw new ConnectionError("connection-changed");
+    }
   }
   writable(revision) {
     if (this.closed) throw new ConnectionError("connection-unavailable");
@@ -1313,15 +1378,17 @@ var ConnectionManager = class {
     if (!Number.isSafeInteger(revision) || section.revision !== revision) throw new ConnectionError("settings-changed");
     return section;
   }
-  validate(connections) {
+  validate(connections, previous) {
     const routes = /* @__PURE__ */ new Set();
     const records = /* @__PURE__ */ new Set();
     for (const [id, connection] of Object.entries(connections)) {
       if (!NAME.test(id) || !NAME.test(connection.routeId) || !NAME.test(connection.credentialRecordId) || routes.has(connection.routeId)) throw new ConnectionError("route-conflict");
-      const record = `${connection.integrationId}/${connection.credentialRecordId}`;
+      const record = connection.integrationId === "pi" || this.registry.integrations.has(connection.integrationId) ? this.authKey(connection) : `${connection.integrationId}/${connection.credentialRecordId}`;
       if (records.has(record)) throw new ConnectionError("credential-conflict");
       records.add(record);
       routes.add(connection.routeId);
+      if (connection.credentialCleanupIds !== void 0 && (!Array.isArray(connection.credentialCleanupIds) || connection.integrationId !== "pi" && connection.credentialCleanupIds.length > 0 || connection.credentialCleanupIds.some((id2) => typeof id2 !== "string" || !NAME.test(id2) || id2 === connection.credentialRecordId))) throw new ConnectionError("invalid-request");
+      if (previous && isDeepStrictEqual(connection, previous[id])) continue;
       const service = this.registry.service(connection.integrationId, connection.serviceId);
       if (!service.capabilities.settings) throw new ConnectionError("unsupported");
       if (!["oauth", "api-key"].includes(connection.authMethod)) throw new ConnectionError("unsupported-method");
@@ -1341,7 +1408,7 @@ var ConnectionManager = class {
   async write(connections, revision, extra = [], token2 = this.registry.token()) {
     if (this.closed || !this.registry.isCurrent(token2)) throw new ConnectionError("profile-changed");
     this.writable(revision);
-    this.validate(connections);
+    this.validate(connections, this.raw());
     try {
       await this.settings.mutate(NS2, [{ op: "set", path: ["connections"], value: connections }, ...extra], revision);
     } catch (error) {
@@ -1357,8 +1424,7 @@ var ConnectionManager = class {
     this.changed();
   }
   changed(connectionId2) {
-    for (const integrationId of new Set(Object.values(this.raw()).map((value) => value.integrationId))) this.registry.replaceConnections(integrationId, this.raw());
-    if (!Object.values(this.raw()).some((value) => value.integrationId === "pi") && this.registry.integrations.has("pi")) this.registry.replaceConnections("pi", {});
+    for (const integrationId of this.registry.integrations.keys()) this.registry.replaceConnections(integrationId, this.raw());
     this.registry.emit("changed", void 0, connectionId2);
     this.onChange(connectionId2);
   }
@@ -1366,7 +1432,7 @@ var ConnectionManager = class {
     const token2 = this.registry.token();
     const section = this.section();
     const connections = await Promise.all(Object.keys(this.raw()).map(async (id) => {
-      const connection = this.lookup(id);
+      const connection = this.lookup(id, { allowDeleting: true });
       try {
         const service = this.registry.service(connection.integrationId, connection.serviceId);
         const owner = this.registry.owner(connection.integrationId);
@@ -1390,11 +1456,13 @@ var ConnectionManager = class {
           credentialGeneration: connection.credentialGeneration,
           configured,
           writable: section?.writable !== false && record.writable !== false,
-          enabled: connection.enabled !== false,
-          inFlight: this.pendingLogins.has(id),
+          enabled: !connection.deletionPending && connection.enabled !== false,
+          deletionPending: connection.deletionPending === true,
+          credentialCleanupPending: !!connection.credentialCleanupIds?.length,
+          inFlight: this.pendingLogins.has(id) || this.pendingDeletes.has(id) || this.pendingCredentialWrites.has(id),
           methods: service.methods.filter((method) => method.id === connection.authMethod),
-          authStatus: this.pendingLogins.has(id) ? "updating" : expired ? "expired" : configured && isVerified ? "verified" : record.authStatus ?? (configured ? "saved" : "auth-required"),
-          capabilities: service.capabilities,
+          authStatus: connection.deletionPending ? "deletion-pending" : this.pendingLogins.has(id) ? "updating" : expired ? "expired" : configured && isVerified ? "verified" : record.authStatus ?? (configured ? "saved" : "auth-required"),
+          capabilities: connection.deletionPending ? { auth: false, models: false, usage: false, settings: true } : service.capabilities,
           ...isVerified ? { verifiedAt: verified.verifiedAt } : {},
           profile: { ...connection.profile?.baseURL ? { baseURL: connection.profile.baseURL } : {}, ...connection.profile?.api ? { api: connection.profile.api } : {} },
           revision: section?.revision
@@ -1409,7 +1477,9 @@ var ConnectionManager = class {
           routeId: connection.routeId,
           displayName: connection.displayName,
           authMethod: connection.authMethod,
-          enabled: connection.enabled !== false,
+          enabled: !connection.deletionPending && connection.enabled !== false,
+          deletionPending: connection.deletionPending === true,
+          credentialCleanupPending: !!connection.credentialCleanupIds?.length,
           configured: false,
           writable: false,
           inFlight: false,
@@ -1455,21 +1525,47 @@ var ConnectionManager = class {
     if (input.api) connection.profile.api = text(input.api, 100);
     if (input.headerRefs) connection.headerRefs = validateHeaderRefs(input.headerRefs);
     const next = { ...this.raw(), [id]: connection };
-    this.validate(next);
-    let stored = false;
+    this.validate(next, this.raw());
+    const secret = input.apiKey === void 0 ? void 0 : text(input.apiKey, 16384);
+    if (secret !== void 0 && input.authMethod !== "api-key") throw new ConnectionError("unsupported-method");
+    this.pendingCredentialWrites.add(id);
+    let metadataCommitted = false;
     try {
-      if (input.apiKey !== void 0) {
-        if (input.authMethod !== "api-key") throw new ConnectionError("unsupported-method");
-        const secret = text(input.apiKey, 16384);
-        await this.credentials.modifyRecord(credentialKey(id), () => ({ kind: "api-key", key: secret }));
-        stored = true;
-        connection.enabled = true;
-      }
       await this.write(next, revision, [], token2);
-    } catch (error) {
-      if (stored && !error.metadataCommitted) await this.credentials.deleteRecord(credentialKey(id)).catch(() => {
-      });
+      metadataCommitted = true;
+      if (secret !== void 0) {
+        const current = () => {
+          if (this.closed || !this.registry.isCurrent(token2)) throw new ConnectionError("profile-changed");
+          const saved = this.raw()[id];
+          if (!saved || saved.deletionPending || saved.credentialRecordId !== id || saved.credentialGeneration !== 0) throw new ConnectionError("connection-changed");
+        };
+        current();
+        try {
+          await this.credentials.modifyRecord(credentialKey(id), () => {
+            current();
+            return { kind: "api-key", key: secret };
+          });
+        } catch (cause) {
+          if (cause instanceof ConnectionError) {
+            cause.metadataCommitted = true;
+            throw cause;
+          }
+          const error = new ConnectionError("credential-save-failed");
+          error.cause = cause;
+          error.metadataCommitted = true;
+          throw error;
+        }
+        current();
+        await this.write({ ...this.raw(), [id]: { ...this.raw()[id], enabled: true } }, this.section()?.revision, [], token2);
+      }
+    } catch (cause) {
+      if (!metadataCommitted || ["profile-changed", "connection-changed", "credential-save-failed"].includes(cause?.code)) throw cause;
+      const error = new ConnectionError("credential-save-failed");
+      error.cause = cause;
+      error.metadataCommitted = true;
       throw error;
+    } finally {
+      this.pendingCredentialWrites.delete(id);
     }
     return { connectionId: id, saved: true };
   }
@@ -1477,6 +1573,7 @@ var ConnectionManager = class {
     const token2 = this.registry.token();
     const section = this.writable(revision);
     const connection = this.lookup(connectionId2);
+    if (this.pendingCredentialWrites.has(connectionId2) || this.pendingDeletes.has(connectionId2)) throw new ConnectionError("busy");
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new ConnectionError("invalid-request");
     const allowed = /* @__PURE__ */ new Set(["displayName", "enabled", "apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod"]);
     if (Object.keys(patch).some((key) => !allowed.has(key))) throw new ConnectionError("invalid-request");
@@ -1503,7 +1600,9 @@ var ConnectionManager = class {
       Object.assign(connection.profile, patch.profile);
     }
     const oldRecordId = connection.credentialRecordId;
-    let newRecordId;
+    const cleanupIds = new Set(connection.credentialCleanupIds ?? []);
+    let staged = false;
+    this.pendingCredentialWrites.add(connectionId2);
     try {
       if (patch.authMethod !== void 0 && patch.authMethod !== connection.authMethod) {
         if (!["oauth", "api-key"].includes(patch.authMethod)) throw new ConnectionError("unsupported-method");
@@ -1516,27 +1615,56 @@ var ConnectionManager = class {
       }
       if (patch.apiKey !== void 0) {
         if (connection.authMethod !== "api-key") throw new ConnectionError("unsupported-method");
-        newRecordId = newConnectionId();
-        await this.credentials.modifyRecord(credentialKey(newRecordId), () => ({ kind: "api-key", key: text(patch.apiKey, 16384) }));
+        const secret = text(patch.apiKey, 16384);
+        this.validate({ ...this.raw(), [connectionId2]: connection }, this.raw());
+        const newRecordId = newConnectionId();
+        const original = this.raw()[connectionId2];
+        const generation = original.credentialGeneration + 1;
+        await this.write({ ...this.raw(), [connectionId2]: { ...original, credentialGeneration: generation, credentialCleanupIds: [...cleanupIds, newRecordId] } }, revision, [], token2);
+        staged = true;
+        const stagedConnection = structuredClone(this.raw()[connectionId2]);
+        const current = () => {
+          if (this.closed || !this.registry.isCurrent(token2)) throw new ConnectionError("profile-changed");
+          const saved = this.raw()[connectionId2];
+          if (!saved || !isDeepStrictEqual(saved, stagedConnection)) throw new ConnectionError("connection-changed");
+        };
+        current();
+        try {
+          await this.credentials.modifyRecord(credentialKey(newRecordId), () => {
+            current();
+            return { kind: "api-key", key: secret };
+          });
+        } catch (cause) {
+          if (cause instanceof ConnectionError) {
+            cause.metadataCommitted = true;
+            throw cause;
+          }
+          const error = new ConnectionError("credential-save-failed");
+          error.cause = cause;
+          error.metadataCommitted = true;
+          throw error;
+        }
+        current();
         connection.credentialRecordId = newRecordId;
         connection.credentialGeneration++;
         delete connection.credentialRef;
         delete connection.profile.apiKeyEnv;
       }
+      if (connection.integrationId === "pi" && connection.credentialRecordId !== oldRecordId) cleanupIds.add(oldRecordId);
+      if (cleanupIds.size) connection.credentialCleanupIds = [...cleanupIds];
+      else delete connection.credentialCleanupIds;
       delete connection.connectionId;
-      await this.write({ ...this.raw(), [connectionId2]: connection }, revision, [], token2);
-    } catch (error) {
-      if (newRecordId && !error.metadataCommitted) await this.credentials.deleteRecord(credentialKey(newRecordId)).catch(() => {
-      });
-      throw error;
+      await this.write({ ...this.raw(), [connectionId2]: connection }, staged ? this.section()?.revision : revision, [], token2);
+    } finally {
+      this.pendingCredentialWrites.delete(connectionId2);
     }
-    if (connection.integrationId === "pi" && connection.credentialRecordId !== oldRecordId && !Object.values(this.raw()).some((value) => value.integrationId === "pi" && value.credentialRecordId === oldRecordId)) await this.credentials.deleteRecord(credentialKey(oldRecordId)).catch(() => {
-    });
+    if (connection.credentialCleanupIds?.length) await this.cleanupCredentials(connectionId2, this.section()?.revision);
     return { saved: true };
   }
   async clone(connectionId2, displayName, revision) {
     const token2 = this.registry.token();
     const original = this.lookup(connectionId2);
+    if (this.pendingCredentialWrites.has(connectionId2)) throw new ConnectionError("busy");
     const id = newConnectionId();
     const owner = this.registry.owner(original.integrationId);
     const copy = {
@@ -1552,25 +1680,95 @@ var ConnectionManager = class {
     delete copy.headerRefs;
     delete copy.legacyRoute;
     delete copy.museCatalog;
+    delete copy.credentialCleanupIds;
     delete copy.profile.apiKeyEnv;
     delete copy.profile.headers;
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token2);
     return { saved: true, connectionId: id };
   }
+  /** Retry only the Pi record IDs durably retired by this connection. */
+  async cleanupCredentials(connectionId2, revision) {
+    const token2 = this.registry.token();
+    this.writable(revision);
+    const connection = this.lookup(connectionId2);
+    if (connection.integrationId !== "pi") throw new ConnectionError("owner-managed");
+    if (this.pendingCredentialWrites.has(connectionId2) || this.pendingDeletes.has(connectionId2)) throw new ConnectionError("busy");
+    this.pendingCredentialWrites.add(connectionId2);
+    const current = () => {
+      if (this.closed || !this.registry.isCurrent(token2)) throw new ConnectionError("profile-changed");
+      const saved = this.lookup(connectionId2);
+      if (saved.credentialRecordId !== connection.credentialRecordId || saved.credentialGeneration !== connection.credentialGeneration) throw new ConnectionError("connection-changed");
+      return saved;
+    };
+    try {
+      for (const id of connection.credentialCleanupIds ?? []) {
+        current();
+        const key = credentialKey(id);
+        if (Object.values(this.raw()).some((value) => value.credentialRecordId === id || (value.integrationId === "pi" || this.registry.integrations.has(value.integrationId)) && this.authKey(value) === key)) throw new ConnectionError("credential-conflict");
+        try {
+          await this.credentials.deleteRecord(key);
+        } catch (cause) {
+          const error = new ConnectionError("credential-cleanup-failed");
+          error.cause = cause;
+          error.metadataCommitted = true;
+          throw error;
+        }
+        const saved = current();
+        saved.credentialCleanupIds = saved.credentialCleanupIds.filter((value) => value !== id);
+        if (!saved.credentialCleanupIds.length) delete saved.credentialCleanupIds;
+        delete saved.connectionId;
+        await this.write({ ...this.raw(), [connectionId2]: saved }, this.section()?.revision, [], token2);
+      }
+      return { saved: true };
+    } finally {
+      this.pendingCredentialWrites.delete(connectionId2);
+    }
+  }
   async delete(connectionId2, revision) {
     const token2 = this.registry.token();
-    const connection = this.lookup(connectionId2);
-    const next = { ...this.raw() };
-    delete next[connectionId2];
-    await this.write(next, revision, [], token2);
-    if (!Object.values(next).some((value) => value.integrationId === connection.integrationId && value.credentialRecordId === connection.credentialRecordId)) {
-      if (connection.integrationId === "pi") await this.credentials.deleteRecord(credentialKey(connection.credentialRecordId));
-      else await this.registry.owner(connection.integrationId).deleteCredentials(connection);
+    this.writable(revision);
+    const connection = this.lookup(connectionId2, { allowDeleting: true });
+    if (this.pendingDeletes.has(connectionId2) || this.pendingCredentialWrites.has(connectionId2)) throw new ConnectionError("busy");
+    this.pendingDeletes.add(connectionId2);
+    try {
+      if (!connection.deletionPending) {
+        connection.deletionPending = true;
+        connection.enabled = false;
+        connection.credentialGeneration++;
+        delete connection.connectionId;
+        await this.write({ ...this.raw(), [connectionId2]: connection }, revision, [], token2);
+      }
+      const current = () => {
+        if (this.closed || !this.registry.isCurrent(token2)) throw new ConnectionError("profile-changed");
+        const saved = this.raw()[connectionId2];
+        if (!saved?.deletionPending || saved.credentialRecordId !== connection.credentialRecordId || saved.credentialGeneration !== connection.credentialGeneration || saved.integrationId !== connection.integrationId) throw new ConnectionError("connection-changed");
+      };
+      current();
+      try {
+        for (const recordId of /* @__PURE__ */ new Set([connection.credentialRecordId, ...connection.credentialCleanupIds ?? []])) {
+          current();
+          const key = this.authKey({ ...connection, credentialRecordId: recordId });
+          if (Object.entries(this.raw()).some(([id, value]) => id !== connectionId2 && (value.credentialRecordId === recordId || (value.integrationId === "pi" || this.registry.integrations.has(value.integrationId)) && this.authKey(value) === key))) throw new ConnectionError("credential-conflict");
+          if (connection.integrationId === "pi") await this.credentials.deleteRecord(key);
+          else await this.registry.owner(connection.integrationId).deleteCredentials(connection);
+        }
+      } catch (cause) {
+        const error = new ConnectionError("credential-delete-failed");
+        error.cause = cause;
+        throw error;
+      }
+      current();
+      const next = { ...this.raw() };
+      delete next[connectionId2];
+      await this.write(next, this.section()?.revision, [], token2);
+      return { deleted: true };
+    } finally {
+      this.pendingDeletes.delete(connectionId2);
     }
-    return { deleted: true };
   }
   /** Store the account catalog a Muse Code refresh returned; no model is enabled by this. */
-  async saveMuseCatalog(binding, rows) {
+  async saveMuseCatalog(binding, rows, { signal } = {}) {
+    signal?.throwIfAborted();
     if (!this.isCurrent(binding)) throw new ConnectionError("connection-changed");
     const token2 = this.registry.token();
     const connection = this.lookup(binding.connectionId);
@@ -1582,10 +1780,14 @@ var ConnectionManager = class {
   async beginLogin(connectionId2) {
     const token2 = this.registry.token();
     const connection = this.lookup(connectionId2);
-    if (this.pendingLogins.has(connectionId2)) throw new ConnectionError("busy");
+    if (this.pendingLogins.has(connectionId2) || this.pendingCredentialWrites.has(connectionId2)) throw new ConnectionError("busy");
     this.pendingLogins.add(connectionId2);
     const section = this.section();
     connection.credentialGeneration++;
+    if (connection.integrationId === "meta-muse-code") {
+      delete connection.museCatalog;
+      delete connection.museCode;
+    }
     delete connection.connectionId;
     try {
       await this.write({ ...this.raw(), [connectionId2]: connection }, section?.revision, [], token2);
@@ -1662,6 +1864,8 @@ var ConnectionManager = class {
   dispose() {
     this.closed = true;
     this.pendingLogins.clear();
+    this.pendingDeletes.clear();
+    this.pendingCredentialWrites.clear();
     this.verified.clear();
   }
 };
@@ -1686,7 +1890,7 @@ function applyLoginUI(ctx, options = {}) {
     updates.dispose();
     broker.dispose();
   }, "dsh-pi-login: private attempts and update retrieval");
-  const connectionMutations = ["connection-create", "connection-update", "connection-clone", "connection-delete"];
+  const connectionMutations = ["connection-create", "connection-update", "connection-clone", "connection-delete", "connection-cleanup"];
   for (const method of ["connection-list", ...connectionMutations, "usage", "list", "start", "state", "answer", "cancel", "enable", "models", "refresh-models", "set-model", "set-provider", "use-login", "update-status", "update-check", "update-begin", "update-reconcile"]) {
     const endpoint = `dsh-pi-login/${method}`;
     ctx.connection.fetch.register({
@@ -1726,6 +1930,7 @@ function applyLoginUI(ctx, options = {}) {
                 if (method === "connection-create") value = await options.connections.create(payload, payload.revision);
                 else if (method === "connection-update") value = await options.connections.update(payload.connectionId, payload.patch, payload.revision);
                 else if (method === "connection-clone") value = await options.connections.clone(payload.connectionId, payload.displayName, payload.revision);
+                else if (method === "connection-cleanup") value = await options.connections.cleanupCredentials(payload.connectionId, payload.revision);
                 else value = await options.connections.delete(payload.connectionId, payload.revision);
               } else if (method === "connection-list") {
                 if (!options.connections) throw new LoginError("unavailable");
@@ -2701,9 +2906,11 @@ var Config = z.object({
     authMethod: z.union(["oauth", "api-key"]).required(),
     credentialRecordId: z.string().required(),
     credentialGeneration: z.natural().default(0),
+    credentialCleanupIds: z.array(z.string()),
     credentialRef: z.string().role("credential-ref"),
     headerRefs: z.dict(z.string().role("credential-ref")),
     enabled: z.boolean().default(true),
+    deletionPending: z.boolean(),
     legacyRoute: z.boolean(),
     integrationLabel: z.string(),
     serviceLabel: z.string(),
@@ -3171,7 +3378,10 @@ async function* toStreamChunks(events, contextWindow, callerSignal, requestedMod
         break;
       }
       case "toolcall_delta": {
-        const known = toolIds.get(event.contentIndex);
+        const previous = toolIds.get(event.contentIndex);
+        const partial = event.partial.content[event.contentIndex];
+        const known = partial?.type === "toolCall" ? { id: partial.id || previous?.id || "", name: partial.name || previous?.name || "" } : previous;
+        if (known !== void 0) toolIds.set(event.contentIndex, known);
         yield {
           type: "tool-call-delta",
           index: event.contentIndex,
@@ -3740,6 +3950,7 @@ function authContextFrom(ctx) {
 function resolveConnectionProfiles(connections, catalogs, validation = "strict") {
   const routes = /* @__PURE__ */ new Map();
   for (const [connectionId2, connection] of Object.entries(connections ?? {})) {
+    if (connection.deletionPending) continue;
     const sdkService = sdkServiceOf(connection);
     if (sdkService === void 0) continue;
     const museCode = connection.integrationId === MUSE_CODE_INTEGRATION_ID;
@@ -3922,6 +4133,21 @@ function usableProbeKey(raw) {
     INVALID_CREDENTIAL_CODE
   );
 }
+function discoveryEndpoint(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new LlmError6("model discovery needs a valid HTTP endpoint", "INVALID_DISCOVERY");
+  }
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new LlmError6("model discovery needs an HTTP endpoint without credentials, query, or fragment", "INVALID_DISCOVERY");
+  }
+  return url.href.replace(/\/+$/, "");
+}
+function assertDiscoveryCurrent(stored) {
+  if (stored?.isCurrent?.() === false) throw new LlmError6("the saved connection changed during model discovery; retry with its current settings", "DISCOVERY_CONNECTION_CHANGED");
+}
 async function discoverModels(request, storedProfile) {
   if (request.provider !== void 0) {
     const installed = catalogModels(request.provider);
@@ -3948,9 +4174,18 @@ async function discoverModels(request, storedProfile) {
       "DISCOVERY_UNSUPPORTED"
     );
   }
-  const url = listingUrl(request.baseURL, api);
-  const stored = storedProfile?.();
+  const endpoint = discoveryEndpoint(request.baseURL);
+  const url = listingUrl(endpoint, api);
+  const candidate = storedProfile?.();
+  assertDiscoveryCurrent(candidate);
+  const matches = candidate !== void 0 && candidate.baseURL !== void 0 && discoveryEndpoint(candidate.baseURL) === endpoint && candidate.api === api;
+  if (candidate !== void 0 && !matches && request.apiKey === void 0) {
+    throw new LlmError6("the draft endpoint or protocol differs from the saved connection; supply a key for this draft or restore its saved endpoint", "DISCOVERY_CREDENTIAL_SCOPE");
+  }
+  const stored = matches ? candidate : void 0;
   const supplied = request.apiKey ?? await stored?.resolveApiKey();
+  assertDiscoveryCurrent(candidate);
+  if (request.signal?.aborted) throw new LlmError6("model discovery aborted by caller", "ABORTED");
   const apiKey = supplied === void 0 ? void 0 : usableProbeKey(supplied);
   let response;
   try {
@@ -3965,6 +4200,9 @@ async function discoverModels(request, storedProfile) {
     for (const [name2, value] of Object.entries(attributionHeaders2())) headers.set(name2, value);
     response = await fetch(url, {
       method: "GET",
+      // Even an approved endpoint cannot delegate custom secret headers to a
+      // different redirect destination.
+      redirect: "error",
       headers,
       ...request.signal === void 0 ? {} : { signal: request.signal }
     });
@@ -3973,6 +4211,12 @@ async function discoverModels(request, storedProfile) {
       throw new LlmError6("model discovery aborted by caller", "ABORTED", { cause: error });
     }
     throw new LlmError6(`could not reach ${url}`, "DISCOVERY_FAILED", { cause: error });
+  }
+  try {
+    assertDiscoveryCurrent(candidate);
+  } catch (error) {
+    await response.body?.cancel();
+    throw error;
   }
   if (!response.ok) {
     throw new LlmError6(
@@ -3995,6 +4239,7 @@ async function discoverModels(request, storedProfile) {
   } catch (error) {
     throw new LlmError6(`${url} did not answer with JSON`, "DISCOVERY_FAILED", { cause: error });
   }
+  assertDiscoveryCurrent(candidate);
   return readListing(body);
 }
 
@@ -4113,7 +4358,8 @@ function loginIdentity(connection) {
     connection.authMethod,
     connection.credentialRef,
     connection.profile?.baseURL,
-    connection.profile?.api
+    connection.profile?.api,
+    connection.deletionPending
   ]);
 }
 function registerConnectionFlows(ctx, connections, onLogin) {
@@ -4132,7 +4378,7 @@ function registerConnectionFlows(ctx, connections, onLogin) {
     }
     for (const [id, connection] of Object.entries(current)) {
       const sdkService = sdkServiceOf(connection);
-      if (registered.has(id) || sdkService === void 0) continue;
+      if (registered.has(id) || sdkService === void 0 || connection.deletionPending) continue;
       const provider = catalogProvider(sdkService);
       const method = loginMethods(provider).find((method2) => method2.id === connection.authMethod);
       if (provider === void 0 || method === void 0 || !isCredentialKeySegment2(connection.credentialRecordId)) continue;
@@ -4384,7 +4630,26 @@ function apply(ctx, config, live) {
     if (provider === void 0) return void 0;
     const profile2 = profiles().get(provider);
     if (profile2 === void 0) return void 0;
+    const model = profile2.piProvider?.getModels()[0];
+    const transport = (value) => ({
+      connectionId: value.connectionId,
+      serviceId: value.serviceId,
+      credentialRecordId: value.credentialRecordId,
+      credentialGeneration: value.credentialGeneration,
+      apiKeyEnv: value.apiKeyEnv,
+      headerRefs: value.headerRefs,
+      headers: value.headers,
+      baseURL: value.baseURL ?? value.piProvider?.baseUrl ?? value.piProvider?.getModels()[0]?.baseUrl,
+      api: value.api ?? value.piProvider?.getModels()[0]?.api
+    });
+    const identity = transport(profile2);
     return {
+      baseURL: profile2.baseURL ?? profile2.piProvider?.baseUrl ?? model?.baseUrl,
+      api: profile2.api ?? model?.api,
+      isCurrent: () => {
+        const current = profiles().get(provider);
+        return current !== void 0 && deepEqualJson2(transport(current), identity);
+      },
       headers: profile2.headers,
       resolveApiKey: () => resolveApiKey(provider, profile2)
     };
@@ -4979,8 +5244,7 @@ function createMuseCodeOwner({ ctx, connections } = {}) {
     },
     async deleteCredentials(connection) {
       await ctx.credentials.deleteRecord(recordKey(connection));
-      await ctx.credentials.deleteRecord(`dsh-muse-code/${connection.credentialRecordId}`).catch(() => {
-      });
+      await ctx.credentials.deleteRecord(`dsh-muse-code/${connection.credentialRecordId}`);
     }
   };
 }
@@ -5228,16 +5492,18 @@ var MuseCodeCatalogSession = class {
     this.usageCache = new ProviderCache({ ttl: 3e5, maxStale: 36e5, timeout, now });
     this.version = 0;
     this.closed = false;
+    this.useSnapshot = true;
+    this.lifecycle = new AbortController();
   }
   rows() {
-    return this.cache.peek().value ?? this.snapshot() ?? [];
+    return this.cache.peek().value ?? (this.useSnapshot ? this.snapshot() : void 0) ?? [];
   }
   catalog() {
     return museModels(this.rows());
   }
   state() {
     const cached = this.cache.peek();
-    return { canRefresh: true, count: this.rows().length, checkedAt: cached.checkedAt, error: cached.error, account: this.account };
+    return { canRefresh: true, count: this.rows().length, checkedAt: cached.checkedAt, error: cached.error, account: this.usageCache.peek().value?.account };
   }
   changed() {
     this.version++;
@@ -5245,12 +5511,34 @@ var MuseCodeCatalogSession = class {
   }
   invalidate() {
     this.principal = void 0;
-    this.account = void 0;
+    this.useSnapshot = false;
     this.cache.invalidate();
     this.usageCache.invalidate();
+    this.changed();
+  }
+  async currentCredential(signal) {
+    if (this.closed || signal?.aborted) throw new ProviderReadError("aborted");
+    const deadline = AbortSignal.timeout(this.cache.timeout);
+    const epoch2 = this.cache.epoch;
+    const bounded = AbortSignal.any([this.lifecycle.signal, deadline, ...signal ? [signal] : []]);
+    let abort;
+    const cancelled = new Promise((_, reject) => {
+      abort = () => reject(new ProviderReadError(signal?.aborted || this.closed ? "aborted" : "error"));
+      bounded.addEventListener("abort", abort, { once: true });
+    });
+    try {
+      const current = await Promise.race([this.credentials.read("meta"), cancelled]);
+      if (this.closed) throw new ProviderReadError("aborted");
+      if (this.cache.epoch !== epoch2) throw new ProviderReadError("account-changed");
+      return current;
+    } catch (error) {
+      throw error instanceof ProviderReadError ? error : new ProviderReadError("error");
+    } finally {
+      bounded.removeEventListener("abort", abort);
+    }
   }
   async validate() {
-    const current = await this.credentials.read("meta");
+    const current = await this.currentCredential();
     if (this.principal && (!oauth(current) || principalOf(current) !== this.principal)) this.invalidate();
     if (!this.rows().length && oauth(current) && !this.closed) await this.refresh().catch(() => {
     });
@@ -5282,7 +5570,7 @@ var MuseCodeCatalogSession = class {
       const principal = principalOf(credential);
       const standard = parseMuseCatalog(await this.list(credential, "0", requestSignal));
       if (!standard.length) throw new ProviderReadError("error");
-      const contributor = await this.list(credential, "1", requestSignal).then(parseMuseCatalog, () => []);
+      const contributor = parseMuseCatalog(await this.list(credential, "1", requestSignal));
       const offered = new Set(contributor.map((row) => row.id));
       const merged = new Map(standard.map((row) => [row.id, row]));
       for (const row of contributor) {
@@ -5294,16 +5582,31 @@ var MuseCodeCatalogSession = class {
       }));
       const current = await this.credentials.read("meta");
       if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError("account-changed");
+      if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) {
+        await this.persist(rows, { signal: requestSignal });
+      }
+      const stored = await this.credentials.read("meta");
+      if (this.closed || requestSignal.aborted || !oauth(stored) || principalOf(stored) !== principal) throw new ProviderReadError("account-changed");
       return rows;
-    }, { force, signal }).then(async (rows) => {
-      if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) await this.persist(rows).catch(() => {
-      });
+    }, { force, signal }).then(() => {
+      if (this.closed) throw new ProviderReadError("aborted");
       this.changed();
       return this.state();
+    }).catch((error) => {
+      if (error?.code === "account-changed") this.invalidate();
+      throw error;
     });
   }
   /** The CLI's key mint also reports the subscription and its quota. */
-  usage({ signal, force = false } = {}) {
+  async usage({ signal, force = false } = {}) {
+    const credential = await this.currentCredential(signal);
+    if (!oauth(credential)) {
+      this.invalidate();
+      throw new ProviderReadError("auth-required");
+    }
+    const identity = principalOf(credential);
+    if (this.principal && this.principal !== identity) this.invalidate();
+    this.principal = identity;
     return this.usageCache.get(async (requestSignal) => {
       const current = await this.credentials.read("meta");
       if (!oauth(current)) throw new ProviderReadError("auth-required");
@@ -5315,17 +5618,35 @@ var MuseCodeCatalogSession = class {
         body: "{}",
         headers: { accept: "application/json", "content-type": "application/json", "x-api-version": "1.0.0", authorization: `Bearer ${current.refresh}` }
       }), { now: this.now() });
-      this.account = { active: typeof body.is_subs_active === "boolean" ? body.is_subs_active : null, tierName: label3(body.subs_tier_name) };
-      if (typeof body.api_key === "string" && body.api_key) {
-        await this.credentials.modify("meta", async (stored) => oauth(stored) && principalOf(stored) === principal ? { ...stored, access: body.api_key, expires: this.now() + 864e5 } : stored).catch(() => {
+      const account = { active: typeof body.is_subs_active === "boolean" ? body.is_subs_active : null, tierName: label3(body.subs_tier_name) };
+      const stored = await this.credentials.read("meta");
+      if (this.closed || requestSignal.aborted || !oauth(stored) || principalOf(stored) !== principal) throw new ProviderReadError("account-changed");
+      if (account.active === true && typeof body.api_key === "string" && body.api_key) {
+        await this.credentials.modify("meta", async (stored2) => {
+          if (this.closed || requestSignal.aborted || !oauth(stored2) || principalOf(stored2) !== principal) throw new ProviderReadError("account-changed");
+          return { ...stored2, access: body.api_key, expires: this.now() + 864e5 };
         });
       }
-      this.onUsage();
-      return { source: "internal-http", sourceObservedAt: new Date(this.now()).toISOString(), status: "available", windows: parseMuseUsage(body) };
-    }, { force, signal });
+      const currentAfterWrite = await this.credentials.read("meta");
+      if (this.closed || requestSignal.aborted || !oauth(currentAfterWrite) || principalOf(currentAfterWrite) !== principal) throw new ProviderReadError("account-changed");
+      let status = "available", windows = [];
+      try {
+        windows = parseMuseUsage(body);
+      } catch (error) {
+        status = error?.code === "auth-required" ? "auth-required" : "error";
+      }
+      return { account, usage: { source: "internal-http", sourceObservedAt: new Date(this.now()).toISOString(), status, windows } };
+    }, { force, signal }).then((result) => {
+      if (!this.closed && this.usageCache.peek().value === result) this.onUsage();
+      return result.usage;
+    }).catch((error) => {
+      if (error?.code === "account-changed") this.invalidate();
+      throw error;
+    });
   }
   dispose() {
     this.closed = true;
+    this.lifecycle.abort();
     this.cache.dispose();
     this.usageCache.dispose();
   }
@@ -5731,6 +6052,7 @@ function apply2(ctx, config, options = {}) {
         serviceId,
         label: serviceId === "meta" ? "Meta Model API\uFF08Pi\u7D4C\u7531\uFF09" : provider?.name ?? serviceId,
         methods,
+        apis: [...supportedProtocols()],
         capabilities: { auth: methods.length > 0, models: true, settings: true, usage: ["openai-codex", "anthropic", "github-copilot", "opencode-go", "meta"].includes(serviceId) }
       };
     });
@@ -5739,7 +6061,7 @@ function apply2(ctx, config, options = {}) {
   const muse = createMuseCodeOwner({ ctx, connections: manager });
   registry.register(muse);
   registry.register(external.descriptor);
-  ctx.on("dsh-pi-login/register-integration", (owner) => registry.register(owner));
+  ctx.on("dsh-pi-login/register-integration", (owner, ownRegistration) => registry.register(owner, ownRegistration));
   const sessionIdentity = (connection) => JSON.stringify([connection.serviceId, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api]);
   const authFor = (connection) => {
     const binding = manager.binding(connection);
@@ -5770,7 +6092,7 @@ function apply2(ctx, config, options = {}) {
             return void 0;
           }
         },
-        persist: (rows) => manager.saveMuseCatalog(binding, rows),
+        persist: (rows, options2) => manager.saveMuseCatalog(binding, rows, options2),
         refreshAuth: (signal) => refreshAuth(manager.lookup(id), signal),
         onChange: () => {
           revision++;

@@ -121,25 +121,48 @@ export function checkCompatibility(packageJson, candidate, runtime) {
   return runtime
 }
 export function packageManifest(bytes) {
-  const tar = gunzipSync(bytes, { maxOutputLength: 128 * 1024 * 1024 })
-  let manifest
+  let tar
+  try { tar = gunzipSync(bytes, { maxOutputLength: 128 * 1024 * 1024 }) }
+  catch { throw new Error('metadata') }
+  if (tar.length % 512 !== 0) throw new Error('metadata')
+  let manifest, ended = false
+  const paths = new Set()
   for (let offset = 0; offset + 512 <= tar.length;) {
     const header = tar.subarray(offset, offset + 512)
-    if (header.every(byte => byte === 0)) break
+    if (header.every(byte => byte === 0)) {
+      // A package ends with two zero records, followed only by padding.
+      if (offset + 1024 > tar.length || !tar.subarray(offset).every(byte => byte === 0)) throw new Error('metadata')
+      ended = true
+      break
+    }
+    const checksumText = header.subarray(148, 156).toString().replace(/\0.*$/, '').trim()
+    const checksum = header.reduce((sum, byte, index) => sum + (index >= 148 && index < 156 ? 32 : byte), 0)
+    if (!/^[0-7]+$/.test(checksumText) || checksum !== Number.parseInt(checksumText, 8)) throw new Error('metadata')
     const name = header.subarray(0, 100).toString().replace(/\0.*$/, '')
     const prefix = header.subarray(345, 500).toString().replace(/\0.*$/, '')
     const sizeText = header.subarray(124, 136).toString().replace(/\0.*$/, '').trim()
     if (!/^[0-7]+$/.test(sizeText)) throw new Error('metadata')
     const size = Number.parseInt(sizeText, 8)
-    if (!Number.isSafeInteger(size) || offset + 512 + size > tar.length) throw new Error('metadata')
+    const next = offset + 512 + Math.ceil(size / 512) * 512
+    if (!Number.isSafeInteger(size) || next > tar.length) throw new Error('metadata')
     const path = prefix ? `${prefix}/${name}` : name
+    // Our npm release assets contain regular files and directories only.
+    // Reject links and path-rewriting extensions rather than inspecting one
+    // manifest while the package manager interprets a different archive.
+    const directory = header[156] === 53
+    if (![0, 48, 53].includes(header[156]) || (directory && size !== 0)) throw new Error('metadata')
+    const entry = directory && path.endsWith('/') ? path.slice(0, -1) : path
+    const parts = entry.split('/')
+    if (parts[0] !== 'package' || (!directory && parts.length < 2) || parts.some(part => !part || part === '.' || part === '..' || part.includes('\\')) || paths.has(entry)) throw new Error('metadata')
+    paths.add(entry)
     if (path === 'package/package.json') {
-      if (manifest || ![0, 48].includes(header[156]) || size > 65536) throw new Error('metadata')
-      manifest = JSON.parse(tar.subarray(offset + 512, offset + 512 + size).toString())
+      if (manifest || directory || size > 65536) throw new Error('metadata')
+      try { manifest = JSON.parse(tar.subarray(offset + 512, offset + 512 + size).toString()) }
+      catch { throw new Error('metadata') }
     }
-    offset += 512 + Math.ceil(size / 512) * 512
+    offset = next
   }
-  if (!manifest) throw new Error('metadata')
+  if (!manifest || !ended) throw new Error('metadata')
   return manifest
 }
 function safeResult(result) {
@@ -185,6 +208,7 @@ export class PluginUpdates {
     if (!manager || typeof manager.listBundles !== 'function' || typeof manager.installBundle !== 'function' || typeof manager.waitForInstall !== 'function' || !this.profileDir) throw new Error('manager-unavailable')
     const bundle = (await manager.listBundles()).find(item => item.name === PACKAGE)
     if (!bundle?.installed || bundle.readOnlyReason || bundle.error) throw new Error('read-only')
+    semanticVersion(bundle.version)
     const source = sourceKind(bundle.source, this.cacheDir, bundle.version)
     if (bundle.source.startsWith('file:')) {
       try { if (!(await lstat(bundle.source.slice(5))).isFile()) throw new Error('source') } catch { throw new Error('source') }
@@ -210,9 +234,11 @@ export class PluginUpdates {
     } catch { return undefined }
   }
   async status() { try {
-    const { dshVersion } = await this.capability()
+    const { dshVersion, bundle } = await this.capability()
     const requestId = this.running?.requestId ?? await this.lastOperation()
-    return requestId ? { ...(await this.reconcile(requestId)), dshVersion } : { ...this.base(), dshVersion, status: 'idle' }
+    if (requestId) return { ...(await this.reconcile(requestId)), dshVersion }
+    return { ...this.base(), dshVersion, installedVersion: bundle.version,
+      status: bundle.version !== this.version ? 'restart-required' : 'idle' }
   } catch (error) { return { ...this.base(), status: 'blocked', reason: reasonOf(error) } } }
   async privateDir() {
     await mkdir(this.cacheDir, { recursive: true, mode: 0o700 })
@@ -236,6 +262,12 @@ export class PluginUpdates {
         const { bundle } = await this.capability()
         const last = await this.lastOperation()
         if (last && ['installing', 'unknown', 'restart-required'].includes((await this.reconcile(last)).status)) throw new Error('busy')
+        // A manual/other-client installation has no journal of ours. The
+        // current Host still needs restarting before we offer another update.
+        if (bundle.version !== this.version) {
+          this.candidate = null
+          return { ...this.base(), installedVersion: bundle.version, status: 'restart-required' }
+        }
         this.candidate = await this.getCandidate(bundle.version ?? this.version)
         return { ...this.base(), status: this.candidate ? 'available' : 'current', candidate: this.candidate && this.publicCandidate(this.candidate), checkedAt: new Date().toISOString() }
       } catch (error) { this.candidate = null; return { ...this.base(), status: 'blocked', reason: reasonOf(error) } }
@@ -372,6 +404,14 @@ export class PluginUpdates {
     const bundle = (await this.manager()?.listBundles())?.find(item => item.name === PACKAGE)
     const installed = bundle?.version
     if (operation.result) operation.status = resultState(operation.result, operation.version, this.version, bundle)
+    // A completed receipt cannot describe a later installation made by the
+    // normal manager UI/CLI. Keep the old request, but report the actual need
+    // for restart instead of leaving that completed request unknown forever.
+    if (operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
+      compareVersions(installed, operation.version) > 0) {
+      return { ...this.base(), ...operation, installedVersion: installed,
+        status: this.version === installed ? 'overridden' : 'restart-required' }
+    }
     if (
       ['installing', 'restart-required', 'unknown', 'applied'].includes(operation.status) &&
       this.version === operation.version

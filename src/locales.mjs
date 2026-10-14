@@ -142,7 +142,17 @@ export const ja = {
 }
 
 Object.assign(en, {
-  settingsShort: 'Settings',
+  settingsShort: 'Settings', providerDefault: 'Provider default',
+  credentialCleanupPending: 'Some retired credentials still need removal. Retry cleanup to keep the current account and remove those records.',
+  credentialCleanupShort: 'Key cleanup incomplete', retryCredentialCleanup: 'Retry key cleanup',
+  credentialCleanupFailed: 'The connection change was saved, but retired credentials could not be removed. Retry key cleanup.',
+  credentialSaveFailed: 'Credentials could not be saved. Reopen settings to review the current connection before retrying.',
+  createdCredentialFailed: 'The connection was created, but its credentials could not be saved. Close this dialog and open the created connection’s Settings to enter the key again or delete it.',
+  connectionChanged: 'This account changed. Reopen this dialog to review the current account and model choices.',
+  deletionPending: 'Deletion is incomplete. This connection is off. Retry deletion to remove its remaining saved credentials.',
+  deletionPendingShort: 'Deletion incomplete', retryDelete: 'Retry deletion',
+  profileChanged: 'The connected profile changed. Reopen this dialog in the current profile.',
+  settingsChanged: 'Settings changed elsewhere. Reopen this dialog to review the current settings.',
   manageConnection: 'Manage connection',
   title: 'AI connections & usage', description: 'Manage each account and its models. Open usage details when needed.',
   connectionsTab: 'Connections & models', usageTab: 'Usage', addConnection: 'Add connection', connectionSettings: 'Connection settings',
@@ -170,7 +180,17 @@ Object.assign(en, {
 
 })
 Object.assign(ja, {
-  settingsShort: '設定',
+  settingsShort: '設定', providerDefault: 'プロバイダーの既定値',
+  credentialCleanupPending: '以前の認証情報の削除が未完了です。現在のアカウントを維持したまま、認証情報の削除を再試行できます。',
+  credentialCleanupShort: '認証情報の削除未完了', retryCredentialCleanup: '認証情報の削除を再試行',
+  credentialCleanupFailed: '接続の変更は保存しましたが、以前の認証情報を削除できませんでした。認証情報の削除を再試行してください。',
+  credentialSaveFailed: '認証情報を保存できませんでした。接続設定を開き直して現在の状態を確認してから再試行してください。',
+  createdCredentialFailed: '接続は作成しましたが、認証情報を保存できませんでした。この画面を閉じ、作成した接続の「設定」からキーを再入力するか接続を削除してください。',
+  connectionChanged: 'この接続のアカウントが変わりました。画面を開き直して現在のアカウントとモデル選択を確認してください。',
+  deletionPending: '削除が未完了です。この接続はオフになっています。残っている認証情報を削除するには、削除を再試行してください。',
+  deletionPendingShort: '削除未完了', retryDelete: '削除を再試行',
+  profileChanged: '接続中のプロファイルが変わりました。現在のプロファイルで画面を開き直してください。',
+  settingsChanged: '別の操作で設定が変わりました。画面を開き直して現在の設定を確認してください。',
   manageConnection: '接続を管理',
   title: 'AI接続・利用状況', description: 'アカウントごとに接続とモデルを管理します。利用状況は必要なときに開けます。',
   connectionsTab: '接続とモデル', usageTab: '利用状況', addConnection: '接続を追加', connectionSettings: '接続設定',

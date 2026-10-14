@@ -270,6 +270,10 @@ export interface Connection {
   credentialRef?: string
   headerRefs?: Record<string, string>
   enabled: boolean
+  /** Durable revocation retained until owned credential cleanup completes. */
+  deletionPending?: boolean
+  /** Owned Pi records retired by an interrupted key write or rotation. */
+  credentialCleanupIds?: string[]
   legacyRoute?: boolean
   integrationLabel?: string
   serviceLabel?: string
@@ -426,9 +430,10 @@ export const Config = z.object({
     routeId: z.string().required(), displayName: z.string().required(),
     authMethod: z.union(['oauth', 'api-key']).required(),
     credentialRecordId: z.string().required(), credentialGeneration: z.natural().default(0),
+    credentialCleanupIds: z.array(z.string()),
     credentialRef: z.string().role('credential-ref'),
     headerRefs: z.dict(z.string().role('credential-ref')),
-    enabled: z.boolean().default(true), legacyRoute: z.boolean(),
+    enabled: z.boolean().default(true), deletionPending: z.boolean(), legacyRoute: z.boolean(),
     integrationLabel: z.string(), serviceLabel: z.string(), profile,
     museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
     museCatalog: z.array(z.object({

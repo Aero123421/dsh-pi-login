@@ -106,3 +106,64 @@ test('mutations use the current Host profile identity, replacing caller-supplied
   assert.deepEqual(payloads[1], { connectionId: 'c-one', profileKey: 'test-profile', generation: 1 })
   controller.dispose()
 })
+
+test('dialog scope cannot borrow a newly selected profile for queued writes', async () => {
+  const calls = []
+  const controller = new LoginController({ rpc: { async call(path, method, payload) {
+    calls.push({ method, payload }); return { ok: true, value: {} }
+  } } })
+  controller.publish(expected(true))
+  const dialog = controller.scoped()
+  controller.publish({ ...expected(true), profileKey: 'different-profile', generation: 2 })
+  await assert.rejects(dialog.mutation('set-model', { connectionId: 'same-id', model: 'm', enabled: true }), /profile-changed/)
+  assert.equal(calls.length, 0)
+  controller.dispose()
+})
+
+test('a delayed scoped read is discarded after profile change', async () => {
+  let complete
+  const controller = new LoginController({ rpc: { call() { return new Promise(resolve => { complete = resolve }) } } })
+  controller.publish(expected(true))
+  const read = controller.scoped().call('models', { connectionId: 'same-id' })
+  controller.publish({ ...expected(true), profileKey: 'different-profile', generation: 2 })
+  complete({ ok: true, value: { models: ['other-account'] } })
+  await assert.rejects(read, /profile-changed/)
+  controller.dispose()
+})
+
+test('model dialog binds account generation even when profile and connection id are unchanged', async () => {
+  const calls = []
+  const controller = new LoginController({ rpc: { async call(path, method, payload) { calls.push(payload); return { ok: true, value: {} } } } })
+  controller.publish({ ...expected(true), entries: [{ connectionId: 'c-account', credentialGeneration: 3 }] })
+  const dialog = controller.scoped(controller.state.entries[0])
+  await dialog.call('models')
+  assert.equal(calls[0].credentialGeneration, 3)
+  controller.publish({ ...controller.state, entries: [{ connectionId: 'c-account', credentialGeneration: 4 }] })
+  await assert.rejects(dialog.mutation('set-model', { enabled: true }), /connection-changed/)
+  assert.equal(calls.length, 1)
+  controller.dispose()
+})
+
+test('an accepted sign-in that returns after a profile switch is cancelled with its original scope', async () => {
+  let complete
+  const calls = []
+  const controller = new LoginController({ rpc: { call(path, method, payload) {
+    calls.push({ method, payload })
+    if (method.endsWith('/start')) return new Promise(resolve => { complete = resolve })
+    return Promise.resolve({ ok: true, value: {} })
+  } } })
+  controller.publish(expected(true))
+  const started = controller.scoped().start('c-account', 'oauth')
+  controller.publish({ ...expected(true), profileKey: 'other-profile', generation: 2 })
+  complete({ ok: true, value: { ticket: 'accepted-old-ticket' } })
+  await assert.rejects(started, /profile-changed/)
+  assert.deepEqual(calls[1].payload, { ticket: 'accepted-old-ticket', profileKey: 'test-profile', generation: 1 })
+  assert.equal(controller.tickets.size, 0)
+  controller.dispose()
+})
+
+test('RPC errors preserve a stable code separately from display text', async () => {
+  const controller = new LoginController({ rpc: { async call() { return { ok: false, error: { code: 'dsh-pi-login/credential-delete-failed' } } } } })
+  await assert.rejects(controller.call('connection-delete'), error => error.code === 'dsh-pi-login/credential-delete-failed')
+  controller.dispose()
+})

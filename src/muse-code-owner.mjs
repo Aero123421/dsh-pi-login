@@ -40,7 +40,7 @@ export function createMuseCodeOwner({ ctx, connections } = {}) {
     async deleteCredentials(connection) {
       await ctx.credentials.deleteRecord(recordKey(connection))
       // CLI-era (0.6.x) sign-ins were stored separately; remove them with the connection.
-      await ctx.credentials.deleteRecord(`dsh-muse-code/${connection.credentialRecordId}`).catch(() => {})
+      await ctx.credentials.deleteRecord(`dsh-muse-code/${connection.credentialRecordId}`)
     },
   }
 }

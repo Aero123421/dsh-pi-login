@@ -428,6 +428,7 @@ export class PiLoginBroker {
 export async function dispatch(broker, method, payload) {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new LoginError('invalid-request')
   if (broker.connections && ['start', 'answer', 'cancel', 'enable', 'set-model', 'set-provider', 'use-login'].includes(method)) broker.connections.guard(payload)
+  if (broker.connections && ['models', 'refresh-models'].includes(method)) broker.connections.guard(payload, { optional: true })
   const target = payload.connectionId ?? payload.key
   if (['state', 'answer', 'cancel'].includes(method)) broker.checkTicketConnection(payload.ticket, payload.connectionId)
   switch (method) {
