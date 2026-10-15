@@ -9,11 +9,20 @@ export const upstreamRoot = resolve(process.env.DSH_UPSTREAM_ROOT ?? '.cache/ups
 const pinned = JSON.parse(await readFile('upstream.json', 'utf8'))
 const upstreamLock = resolve(upstreamRoot, '..', 'upstream.lock')
 const checkoutComplete = join(upstreamRoot, '.checkout-complete')
-const upstreamWaitMs = 15 * 60 * 1000
+// Tests set DSH_UPSTREAM_LOCK_WAIT_MS so a held lock fails without the
+// production wait. The wait does not change which locks can be reclaimed.
+const upstreamWaitMs = millisecondsFromEnv('DSH_UPSTREAM_LOCK_WAIT_MS', 15 * 60 * 1000)
+// A lock with no readable pid is an older empty directory or a record that
+// was never finished. It is reclaimed only after this age.
 const staleLockMs = 15 * 60 * 1000
-// A published lock directory already contains its owner record. This grace
-// only covers a legacy empty directory or a record that has not been written.
-const ownerWriteGraceMs = 5 * 1000
+
+function millisecondsFromEnv(name, fallback) {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+  const parsed = Number(raw)
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return fallback
+  return parsed
+}
 // `packages/llm/llm` is the @deepseek-ai/dsh-llm package in the pinned tree.
 const pinnedPaths = [
   'packages/llm/llm/src/index.ts',
@@ -88,9 +97,9 @@ async function lockReclaimable(directory) {
   try { info = await stat(directory) }
   catch { return false }
   const owner = info.isDirectory() ? await readOwner(directory) : undefined
-  if (!owner) return Date.now() - info.mtimeMs >= ownerWriteGraceMs
-  if (!processAlive(owner.pid)) return true
-  return Date.now() - owner.startedAt >= staleLockMs
+  // spawnSync cannot stop the owner's git. A live pid is never reclaimed.
+  if (owner) return !processAlive(owner.pid)
+  return Date.now() - info.mtimeMs >= staleLockMs
 }
 
 async function writeOwner(directory, token) {
@@ -100,39 +109,49 @@ async function writeOwner(directory, token) {
   await rename(temporary, join(directory, 'owner'))
 }
 
-// Rename publishes the directory only when the destination is absent. The
-// owner record is already inside, so other processes never observe a lock
-// with no pid.
+// mkdir fails if the path exists, including an empty legacy lock. rename()
+// would replace an empty directory and take that lock immediately.
 async function publishDirectory(directory, token) {
-  const staging = `${directory}.staging.${process.pid}.${token.slice(0, 8)}`
-  await rm(staging, { recursive: true, force: true })
-  await mkdir(staging)
   try {
-    await writeOwner(staging, token)
-    await rename(staging, directory)
+    await mkdir(directory)
   } catch (error) {
-    await rm(staging, { recursive: true, force: true })
-    if (error?.code === 'EEXIST' || error?.code === 'ENOTEMPTY') return false
+    if (error?.code === 'EEXIST') return false
+    throw error
+  }
+  try {
+    await writeOwner(directory, token)
+  } catch (error) {
+    const owner = await readOwner(directory)
+    if (!owner || (owner.token === token && owner.pid === process.pid)) {
+      await rm(directory, { recursive: true, force: true })
+    }
     throw error
   }
   return true
 }
 
 async function restoreDirectory(grave, directory) {
-  try { await rename(grave, directory) }
-  catch { /* A new lock occupies the path. Its owner rechecks the record. */ }
+  try {
+    await rename(grave, directory)
+  } catch {
+    await rm(grave, { recursive: true, force: true })
+  }
 }
 
+// The directory stays on the lock path until it is removed. Moving it aside
+// first leaves a gap where another process can publish a new lock.
 async function releaseDirectory(directory, token) {
-  const grave = `${directory}.released.${process.pid}.${token.slice(0, 8)}`
-  try { await rename(directory, grave) }
-  catch { return }
-  const owner = await readOwner(grave)
-  if (owner?.token === token) {
-    await rm(grave, { recursive: true, force: true })
-    return
+  const owner = await readOwner(directory)
+  if (owner?.token !== token || owner.pid !== process.pid) return
+  await rm(directory, { recursive: true, force: true })
+}
+
+async function timeoutWaitingForLock() {
+  const owner = await readOwner(upstreamLock)
+  if (owner && processAlive(owner.pid)) {
+    throw new Error(`Timed out waiting for process ${owner.pid} to finish fetching the pinned official Harness source`)
   }
-  await restoreDirectory(grave, directory)
+  throw new Error('Timed out waiting for the pinned official Harness source')
 }
 
 async function ownsLock(token) {
@@ -140,10 +159,10 @@ async function ownsLock(token) {
   return owner?.token === token && owner.pid === process.pid
 }
 
-// One waiter renames the stale directory aside. It deletes that directory
-// only when the moved record is still the abandoned owner; a live lock is
-// put back. The reclaim ticket stops a second waiter from renaming the
-// replacement.
+// A dead pid, or an unreadable lock that is already old, is renamed aside by
+// one waiter. The moved record is deleted only when it is still that
+// abandoned lock. Anything else is put back, and a parked directory that
+// cannot be restored is removed.
 async function discardIfReclaimable(directory) {
   if (!(await lockReclaimable(directory))) return false
   const grave = `${directory}.abandoned.${process.pid}.${randomBytes(4).toString('hex')}`
@@ -187,8 +206,7 @@ async function claimStale(directory) {
 
 // Test files are separate processes and all call this on a cold cache.
 // The lock directory stores the owner's pid and start time. A dead pid is
-// reclaimed immediately. A live owner is reclaimed after staleLockMs, and
-// only by the waiter that wins the rename.
+// reclaimed immediately. A live pid is left alone until this wait times out.
 async function withUpstreamLock(deadline, task) {
   await mkdir(dirname(upstreamLock), { recursive: true })
   const token = randomBytes(16).toString('hex')
@@ -202,7 +220,7 @@ async function withUpstreamLock(deadline, task) {
       }
       if (await upstreamReady()) return
       if (await claimStale(upstreamLock)) continue
-      if (Date.now() > deadline) throw new Error('Timed out waiting for the pinned official Harness source')
+      if (Date.now() > deadline) await timeoutWaitingForLock()
       await new Promise(resolveWait => setTimeout(resolveWait, 250))
     }
     await task(token)
@@ -231,7 +249,7 @@ async function fetchPinnedSource(token) {
 export async function ensureUpstream() {
   const deadline = Date.now() + upstreamWaitMs
   while (!(await upstreamReady())) {
-    if (Date.now() > deadline) throw new Error('Timed out waiting for the pinned official Harness source')
+    if (Date.now() > deadline) await timeoutWaitingForLock()
     await withUpstreamLock(deadline, async token => {
       if (await upstreamReady()) return
       await fetchPinnedSource(token)

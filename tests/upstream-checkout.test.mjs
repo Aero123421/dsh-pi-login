@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { access, chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, chmod, mkdtemp, mkdir, readdir, readFile, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import test from 'node:test'
@@ -90,6 +90,11 @@ function gitEnv(root, tree, extra = {}) {
     GIT_LOG: join(root, 'checkouts'),
     ...extra,
   }
+}
+
+async function parkedLocks(root) {
+  const names = await readdir(root)
+  return names.filter(name => /\.(released|stale|abandoned|staging|reclaim)(\.|$)/.test(name))
 }
 
 async function operations(root) {
@@ -235,23 +240,71 @@ test('a lock whose owner has exited is reclaimed without waiting out the timeout
     assert.equal(ops.filter(item => item === 'checkout').length, 1, ops.join(','))
     assert.equal((await readFile(join(tree, '.checkout-complete'), 'utf8')).trim(), pinned)
     await absent(join(root, 'upstream.lock'))
+    assert.deepEqual(await parkedLocks(root), [])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
 })
 
-test('a stale lock is reclaimed while its owner pid is still alive', { timeout: 20_000 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), 'upstream-stale-'))
+test('a live owner keeps the checkout lock after it is older than the wait', { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'upstream-live-'))
   const tree = join(root, 'upstream')
   try {
     await installGit(join(root, 'bin'))
-    await writeLock(root, { pid: process.pid, startedAt: Date.now() - staleLockMs - 1000, token: 'old-owner' })
+    await writeLock(root, { pid: process.pid, startedAt: Date.now() - staleLockMs - 1000, token: 'live-owner' })
+    const result = await runNode(ensureCode, gitEnv(root, tree, { DSH_UPSTREAM_LOCK_WAIT_MS: '750' }))
+    assert.notEqual(result.status, 0, result.stdout)
+    assert.match(result.stderr, new RegExp(`Timed out waiting for process ${process.pid} to finish fetching the pinned official Harness source`))
+    const ops = await operations(root)
+    assert.equal(ops.filter(item => item === 'checkout').length, 0, ops.join(','))
+    const owner = JSON.parse(await readFile(join(root, 'upstream.lock/owner'), 'utf8'))
+    assert.equal(owner.pid, process.pid)
+    assert.equal(owner.token, 'live-owner')
+    await absent(join(tree, '.checkout-complete'))
+    assert.deepEqual(await parkedLocks(root), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('a lock without a pid is left in place until it is old', { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'upstream-unreadable-'))
+  const tree = join(root, 'upstream')
+  const lock = join(root, 'upstream.lock')
+  try {
+    await installGit(join(root, 'bin'))
+    await mkdir(lock)
+    const aged = new Date(Date.now() - 6000)
+    await utimes(lock, aged, aged)
+    const result = await runNode(ensureCode, gitEnv(root, tree, { DSH_UPSTREAM_LOCK_WAIT_MS: '750' }))
+    assert.notEqual(result.status, 0, result.stdout)
+    assert.match(result.stderr, /Timed out waiting for the pinned official Harness source/)
+    assert.doesNotMatch(result.stderr, /process \d+/)
+    const ops = await operations(root)
+    assert.equal(ops.filter(item => item === 'checkout').length, 0, ops.join(','))
+    await access(lock)
+    assert.deepEqual(await parkedLocks(root), [])
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('an old lock without a pid is fetched again', { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'upstream-old-lock-'))
+  const tree = join(root, 'upstream')
+  const lock = join(root, 'upstream.lock')
+  try {
+    await installGit(join(root, 'bin'))
+    await mkdir(lock)
+    const aged = new Date(Date.now() - staleLockMs - 1000)
+    await utimes(lock, aged, aged)
     const result = await runNode(ensureCode, gitEnv(root, tree))
     assert.ok(readyElapsed(result) < 5000, result.stdout)
     const ops = await operations(root)
     assert.equal(ops.filter(item => item === 'checkout').length, 1, ops.join(','))
     assert.equal((await readFile(join(tree, '.checkout-complete'), 'utf8')).trim(), pinned)
-    await absent(join(root, 'upstream.lock'))
+    await absent(lock)
+    assert.deepEqual(await parkedLocks(root), [])
   } finally {
     await rm(root, { recursive: true, force: true })
   }
