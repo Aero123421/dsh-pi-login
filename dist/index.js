@@ -3042,8 +3042,9 @@ async function installPinned(manager, name2, previous, pin, fallbackResult, unco
   } catch {
   }
   const cleared = await listedBundle(manager, name2);
-  if (!cleared.ok || cleared.item?.installed) {
-    if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
+  if (!cleared.ok) return reinstallOriginal(manager, name2, previous, fallbackResult);
+  if (cleared.item?.installed) {
+    if (listedVersionMatches(previous, cleared.item)) {
       return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version };
     }
     if (unconfirmedResult) return unconfirmedResult;

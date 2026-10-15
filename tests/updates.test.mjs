@@ -1078,24 +1078,64 @@ test('a restore install whose bundle list fails keeps the receipt', async () => 
   assert.equal(unnamed.result?.version, undefined)
 })
 
-test('a different restore receipt stays a version mismatch when removal cannot be confirmed', async () => {
+test('a different restore receipt stays a version mismatch when removal leaves the package installed', async () => {
   const spec = `github:${REPOSITORY}`
   const calls = []
+  let installed = false
+  let version
   let lists = 0
   const manager = {
     listBundles: async () => {
       lists += 1
-      if (lists >= 2) throw new Error('list failed')
-      return [{ name: PACKAGE, installed: false }]
+      if (lists === 2) throw new Error('list failed')
+      return [{ name: PACKAGE, installed, version }]
     },
     removeBundle: async () => ({ application: 'applied', changed: true }),
     installBundle: async (next) => {
       calls.push(next)
+      installed = true
+      version = '9.9.9'
       return { application: 'applied', version: '9.9.9' }
     },
   }
   const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: true, version: '0.5.0' })
   assert.deepEqual(calls, [spec])
+  assert.equal(installed, true)
+  assert.equal(restored.restored, false)
+  assert.equal(restored.restoreFailed, undefined)
+  assert.equal(restored.versionDiffers, true)
+  assert.equal(restored.installedVersion, '9.9.9')
+  assert.equal(restored.expectedVersion, '0.5.0')
+})
+
+test('a removal that clears the package reinstalls it when the following list fails', async () => {
+  const spec = `github:${REPOSITORY}`
+  const calls = []
+  let installed = false
+  let version
+  let lists = 0
+  const manager = {
+    listBundles: async () => {
+      lists += 1
+      if (lists === 2 || lists === 3) throw new Error('list failed')
+      return [{ name: PACKAGE, installed, version }]
+    },
+    removeBundle: async () => {
+      installed = false
+      version = undefined
+      return { application: 'applied', changed: true }
+    },
+    installBundle: async (next) => {
+      calls.push(next)
+      installed = true
+      version = '9.9.9'
+      return { application: 'applied', version: '9.9.9' }
+    },
+  }
+  const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: true, version: '0.5.0' })
+  assert.deepEqual(calls, [spec, spec])
+  assert.equal(installed, true)
+  assert.equal(version, '9.9.9')
   assert.equal(restored.restored, false)
   assert.equal(restored.restoreFailed, undefined)
   assert.equal(restored.versionDiffers, true)

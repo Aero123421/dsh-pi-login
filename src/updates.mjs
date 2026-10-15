@@ -337,9 +337,11 @@ async function reinstallOriginal(manager, name, previous, fallbackResult) {
  * receipt. A record captured before that removal is not evidence the package
  * is still installed when the list after removal fails. If that removal or the
  * pin install fails, `previous.spec` is installed again so the package is not
- * left missing. `unconfirmedResult`, when passed, is returned instead of that
- * reinstall when removal cannot be attempted, or the list does not show the
- * package is gone. A pin the manager
+ * left missing. `unconfirmedResult`, when passed, is returned only when removal
+ * cannot be attempted, or the list after removal confirms the package is still
+ * installed. A list that cannot be read is not that confirmation: removal may
+ * have succeeded, so the captured source is installed again instead of
+ * reporting the pre-removal receipt as a version mismatch. A pin the manager
  * accepted is not replaced by that source when the following list fails. The
  * receipt is then the only evidence, and a receipt that names no version, or
  * that has no captured version, is a failed restore.
@@ -353,8 +355,9 @@ async function installPinned(manager, name, previous, pin, fallbackResult, uncon
     await manager.removeBundle(name)
   } catch { /* The list below decides whether the package is actually gone. */ }
   const cleared = await listedBundle(manager, name)
-  if (!cleared.ok || cleared.item?.installed) {
-    if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
+  if (!cleared.ok) return reinstallOriginal(manager, name, previous, fallbackResult)
+  if (cleared.item?.installed) {
+    if (listedVersionMatches(previous, cleared.item)) {
       return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version }
     }
     if (unconfirmedResult) return unconfirmedResult
@@ -391,8 +394,10 @@ async function installPinned(manager, name, previous, pin, fallbackResult, uncon
  * captured version to compare, is a failed restore. When the list immediately
  * after the first restore install fails and that receipt names another
  * version, the other version is removed and pinned only after the list shows
- * it is gone. If that removal cannot be confirmed, the receipt stays a
- * version mismatch and the pin is not installed. A completed pin is not
+ * it is gone. If that list confirms the package is still installed, the
+ * receipt stays a version mismatch and the pin is not installed. If that list
+ * cannot be read, the captured source is installed again, because the removal
+ * may have left the package missing. A completed pin is not
  * replaced by the original source when its own list fails. An installed
  * package whose captured version and receipt version are both missing, while
  * the list shows it is present, is a version mismatch, not a missing package.
