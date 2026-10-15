@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, writeFile, readFile, rename, lstat } from 'node:fs/promises'
 import { join, resolve, sep, basename, win32 } from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import semver from 'semver'
 import { updateRequestId } from './update-request-id.ts'
 import manifest from '../package.json' with { type: 'json' }
 
@@ -108,17 +109,80 @@ export function releaseCandidate(release, current) {
   const candidate = { id: String(release.id), version, tag: release.tag_name, url: expectedLink, notes: release.body.slice(0, 6000), filename, tarball: asset(filename), checksum: asset('SHA256SUMS') }
   return compareVersions(version, current) > 0 ? candidate : null
 }
+const WORKSPACE_PEER = new Set(['workspace:^', 'workspace:~', 'workspace:*'])
+
+/** Whether one DSH peer range accepts the running host.
+ * Matches app-boot's boot check: `semver.satisfies` with prereleases included.
+ * `workspace:*`, `workspace:^`, and `workspace:~` mean the running version.
+ */
+export function dshPeerSatisfied(range, runtime) {
+  semanticVersion(runtime)
+  if (typeof range !== 'string' || range.trim() === '') return false
+  if (WORKSPACE_PEER.has(range)) return true
+  try { return semver.satisfies(runtime, range, { includePrerelease: true }) }
+  catch { return false }
+}
+
 export function checkCompatibility(packageJson, candidate, runtime) {
   semanticVersion(runtime)
   if (!packageJson || packageJson.name !== PACKAGE || packageJson.version !== candidate.version || typeof packageJson.dsh?.bundle?.patch !== 'string') throw new Error('metadata')
   const peers = Object.entries(packageJson.peerDependencies ?? {}).filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
   if (!peers.length || peers.some(([, range]) => typeof range !== 'string')) throw new Error('compatibility-unknown')
-  // Published Pi releases declare exact DSH peers. Other ranges require review.
-  for (const [, range] of peers) {
-    try { semanticVersion(range) } catch { throw new Error('compatibility-unknown') }
-    if (range !== runtime) throw new Error('incompatible')
-  }
+  if (peers.some(([, range]) => !dshPeerSatisfied(range, runtime))) throw new Error('incompatible')
   return runtime
+}
+
+function bundleRecord(list, name) {
+  return list?.find(item => item?.name === name)
+}
+
+/** Reinstall the package captured before removal when the replacement is absent. */
+export function restoreIfMissing(manager, name, installed, previous) {
+  const failed = !installed || installed.application === 'failed' || installed.error
+  if (!failed) return Promise.resolve({ result: installed, replaced: true, restored: false })
+  if (typeof previous?.spec !== 'string' || typeof manager.listBundles !== 'function' || typeof manager.installBundle !== 'function') {
+    return Promise.resolve({ result: installed, replaced: true, restored: false, restoreFailed: true })
+  }
+  return Promise.resolve(manager.listBundles()).then(list => {
+    if (bundleRecord(list, name)?.installed) return { result: installed, replaced: true, restored: false }
+    const requestId = typeof previous.requestId === 'function' ? previous.requestId() : previous.requestId
+    return Promise.resolve(manager.installBundle(previous.spec, {
+      enabled: previous.enabled,
+      requestId,
+      saveExact: true,
+    })).then(restored => Promise.resolve(manager.listBundles()).then(after => {
+      const item = bundleRecord(after, name)
+      const ok = item?.installed && restored && restored.application !== 'failed' && !restored.error
+      if (!ok) return { result: installed, replaced: true, restored: false, restoreFailed: true }
+      return { result: restored, replaced: true, restored: true, restoredVersion: item.version }
+    })).catch(() => ({ result: installed, replaced: true, restored: false, restoreFailed: true }))
+  }).catch(() => ({ result: installed, replaced: true, restored: false, restoreFailed: true }))
+}
+
+/** Install a package, and when HMR refuses an installed package, remove it first.
+ * The follow-up install is the continuation of `removeBundle`'s promise. Removal
+ * disposes the bundle that called it, so this function must not read that
+ * bundle's closed flag or abort signal. `stop-profile` means HMR is off and the
+ * package stayed installed; installing over it is still the supported path.
+ * A failed removal is returned as-is and is not followed by another install.
+ * If the replacement install fails and the package is gone, `previous` is
+ * installed again under a new request id.
+ */
+export function installPreservingPackage(manager, name, spec, options, previous) {
+  return Promise.resolve(manager.installBundle(spec, options)).then(result => {
+    if (result?.error?.code !== 'already-installed' || typeof manager.removeBundle !== 'function') {
+      return { result, replaced: false, restored: false }
+    }
+    return Promise.resolve(manager.removeBundle(name)).then(removed => {
+      if (removed?.error?.code === 'stop-profile') {
+        return Promise.resolve(manager.installBundle(spec, options)).then(installed => ({ result: installed, replaced: true, restored: false }))
+      }
+      if (!removed || removed.application === 'failed' || removed.error) {
+        return { result: removed ?? { application: 'failed' }, replaced: true, restored: false }
+      }
+      return Promise.resolve(manager.installBundle(spec, options)).then(installed => restoreIfMissing(manager, name, installed, previous))
+    })
+  })
 }
 export function packageManifest(bytes) {
   let tar
@@ -358,14 +422,37 @@ export class PluginUpdates {
       if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error('busy')
       if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error('stale-candidate')
       managerInvoked = true
-      const result = await final.manager.installBundle(spec, {
+      // Capture the manager, the ON/OFF bit, and the installed spec before removal.
+      // removeBundle disposes this plugin; installPreservingPackage continues on the manager.
+      const previous = {
+        spec: final.bundle.source,
+        enabled: final.bundle.enabled,
+        requestId: () => updateRequestId(),
+      }
+      const admission = await installPreservingPackage(final.manager, PACKAGE, spec, {
         enabled: final.bundle.enabled,
         requestId: operation.requestId,
         saveExact: true,
-      })
+      }, previous)
+      const result = admission.result
+      if (admission.restored) {
+        operation.reason = 'restored'
+        operation.restoredVersion = admission.restoredVersion
+        operation.status = 'failed'
+      } else if (admission.restoreFailed) {
+        operation.reason = 'restore-failed'
+        operation.status = 'failed'
+      } else if (result?.error?.code === 'already-installed' || (admission.replaced && (result?.application === 'failed' || result?.error))) {
+        operation.reason = 'replace'
+      }
       operation.result = safeResult(result)
-      const installed = (await final.manager.listBundles()).find(item => item.name === PACKAGE)
-      operation.status = resultState(result, operation.version, this.version, installed)
+      // A later listBundles failure must not replace a completed restore with
+      // `unknown`. Unknown blocks the next check. The restored receipt is already
+      // failed, and reconcile keeps that failure.
+      if (operation.reason !== 'restored' && operation.reason !== 'restore-failed') {
+        const installed = (await final.manager.listBundles()).find(item => item.name === PACKAGE)
+        operation.status = resultState(result, operation.version, this.version, installed)
+      }
     } catch (error) {
       operation.status = managerInvoked ? 'unknown' : 'failed'
       operation.reason = reasonOf(error)
@@ -403,14 +490,18 @@ export class PluginUpdates {
     }
     const bundle = (await this.manager()?.listBundles())?.find(item => item.name === PACKAGE)
     const installed = bundle?.version
-    if (operation.result) operation.status = resultState(operation.result, operation.version, this.version, bundle)
+    const recovery = operation.reason === 'restored' || operation.reason === 'restore-failed'
+    if (operation.result && !recovery) operation.status = resultState(operation.result, operation.version, this.version, bundle)
+    if (recovery) operation.status = 'failed'
     // A completed receipt cannot describe a later installation made by the
     // normal manager UI/CLI. Keep the old request, but report the actual need
     // for restart instead of leaving that completed request unknown forever.
-    if (operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
+    if (!recovery && operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
       compareVersions(installed, operation.version) > 0) {
       return { ...this.base(), ...operation, installedVersion: installed,
-        status: this.version === installed ? 'overridden' : 'restart-required' }
+        // The recorded operation is older than the bundle now running. That is
+        // not a settings override of this operation's own install.
+        status: this.version === installed ? 'superseded' : 'restart-required' }
     }
     if (
       ['installing', 'restart-required', 'unknown', 'applied'].includes(operation.status) &&

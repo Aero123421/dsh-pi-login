@@ -1,7 +1,7 @@
 const INITIAL = Object.freeze({ status: 'idle', entries: [], integrations: [], services: [], error: false })
 
 export class LoginController {
-  constructor(connection) { this.connection = connection; this.state = INITIAL; this.listeners = new Set(); this.pending = undefined; this.closed = false; this.tickets = new Map() }
+  constructor(connection) { this.connection = connection; this.state = INITIAL; this.listeners = new Set(); this.pending = undefined; this.closed = false; this.tickets = new Map(); this.mounts = 0 }
   getSnapshot = () => this.state
   subscribe = listener => { this.listeners.add(listener); return () => this.listeners.delete(listener) }
   publish(state) { if (this.closed) return; this.state = state; for (const listener of this.listeners) listener() }
@@ -28,6 +28,15 @@ export class LoginController {
     this.pending = undefined
     previous?.abort.abort()
     return this.load()
+  }
+  /** The connection page is showing. Background events must not fetch while it is hidden. */
+  retain() {
+    this.mounts += 1
+    return () => { this.mounts = Math.max(0, this.mounts - 1) }
+  }
+  refreshIfMounted() {
+    if (this.closed || this.mounts === 0) return Promise.resolve()
+    return this.refresh()
   }
   scope() { const { profileKey, generation } = this.state; return { profileKey, generation } }
   isCurrent(scope) {

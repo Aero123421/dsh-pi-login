@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
-import { PluginUpdates, REPOSITORY, PACKAGE, compareVersions, semanticVersion, releaseCandidate, checkCompatibility, resultState, sourceKind, boundedFetch, packageManifest } from '../src/updates.mjs'
+import { PluginUpdates, REPOSITORY, PACKAGE, compareVersions, semanticVersion, releaseCandidate, checkCompatibility, dshPeerSatisfied, installPreservingPackage, resultState, sourceKind, boundedFetch, packageManifest } from '../src/updates.mjs'
 const version = '0.6.0', tag = `v${version}`
 const filename = `local-dsh-pi-login-${version}.tgz`
 const download = `https://github.com/${REPOSITORY}/releases/download/${tag}/`
@@ -55,7 +56,13 @@ test('release schema, stable channel, exact assets and compatibility are fail cl
   assert.equal(releaseCandidate(release, version), null)
   assert.equal(checkCompatibility(pkg, candidate, '0.2.1-alpha.2'), '0.2.1-alpha.2')
   assert.throws(() => checkCompatibility(pkg, candidate, '0.2.1'), /incompatible/)
-  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '^0.2.1' } }, candidate, '0.2.1'), /compatibility-unknown/)
+  assert.equal(checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '^0.2.1' } }, candidate, '0.2.1'), '0.2.1')
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '^0.2.1' } }, candidate, '0.2.1-alpha.3'), /incompatible/)
+  assert.equal(checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.2.1-alpha.3'), '0.2.1-alpha.3')
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.3.0-alpha.1'), /incompatible/)
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'not a range' } }, candidate, '0.2.1-alpha.2'), /incompatible/)
+  assert.equal(dshPeerSatisfied('workspace:*', '0.2.1-alpha.3'), true)
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: {} }, candidate, '0.2.1-alpha.2'), /compatibility-unknown/)
   for (const value of [{ ...release, prerelease: true }, { ...release, draft: true }, { ...release, assets: [...release.assets, release.assets[0]] }, { ...release, assets: [] }, { ...release, tag_name: 'garbage' }]) assert.throws(() => releaseCandidate(value, '0.5.0'))
   assert.deepEqual(packageManifest(bytes), pkg)
 })
@@ -152,7 +159,7 @@ test('later external installation supersedes a completed receipt and remains res
   assert.equal((await updater.status()).status, 'restart-required')
   assert.equal((await updater.reconcile(id)).installedVersion, '0.7.0')
   updater.version = '0.7.0'
-  assert.equal((await updater.status()).status, 'overridden')
+  assert.equal((await updater.status()).status, 'superseded')
   assert.equal((await updater.reconcile(id)).requestId, id)
 })
 test('matching checksum cannot admit an unsafe archive to the manager', async t => {
@@ -286,4 +293,162 @@ test('profile mismatch refuses delayed request before any admission', async t =>
  await assert.rejects(second.updater.begin('7', randomUUID(), first.updater.base().profileKey), /profile/)
  assert.equal(second.calls.length,0)
  assert.equal(await second.updater.lastOperation(),undefined)
+})
+
+test('HMR already-installed removes the package and then installs the same request', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  const removed = []
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' }, bundle: PACKAGE }
+    bundle.version = version
+    return { changed: true, application: 'applied', stage: 'install', target: PACKAGE, bundle: PACKAGE, version }
+  }
+  manager.removeBundle = async name => { removed.push(name); return { application: 'applied', changed: true, bundle: name } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.deepEqual(removed, [PACKAGE])
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0][0], calls[1][0])
+  assert.deepEqual(calls[1][1], { enabled: false, requestId: id, saveExact: true })
+  assert.equal((await updater.reconcile(id)).status, 'unknown')
+  updater.version = version
+  assert.equal((await updater.reconcile(id)).status, 'applied')
+})
+
+test('stop-profile keeps the package and installs over it; a failed removal does not install again', async t => {
+  const stopped = await fixture(t)
+  stopped.manager.installBundle = async (spec, options) => {
+    stopped.calls.push([spec, options])
+    if (stopped.calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    stopped.bundle.version = version
+    return { changed: true, application: 'restart-required', stage: 'install', target: PACKAGE, bundle: PACKAGE, version }
+  }
+  stopped.manager.removeBundle = async () => ({ application: 'failed', error: { code: 'stop-profile' }, changed: false })
+  await stopped.updater.check()
+  const stoppedId = randomUUID()
+  await stopped.updater.begin('7', stoppedId, stopped.updater.base().profileKey)
+  await settle(stopped.updater)
+  assert.equal(stopped.calls.length, 2)
+  assert.equal((await stopped.updater.reconcile(stoppedId)).status, 'restart-required')
+  assert.equal((await stopped.updater.reconcile(stoppedId)).reason, undefined)
+
+  const refused = await fixture(t)
+  refused.manager.installBundle = async (...args) => { refused.calls.push(args); return { application: 'failed', error: { code: 'already-installed' } } }
+  refused.manager.removeBundle = async () => ({ application: 'failed', error: { code: 'not-removable' }, changed: false })
+  await refused.updater.check()
+  const refusedId = randomUUID()
+  await refused.updater.begin('7', refusedId, refused.updater.base().profileKey)
+  await settle(refused.updater)
+  assert.equal(refused.calls.length, 1)
+  const outcome = await refused.updater.reconcile(refusedId)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'replace')
+})
+
+test('replacement install stays on the manager promise after removal returns', async () => {
+  const calls = []
+  const manager = {
+    async installBundle(spec) {
+      calls.push(spec)
+      return calls.length === 1
+        ? { application: 'failed', error: { code: 'already-installed' } }
+        : { application: 'applied', bundle: PACKAGE, version }
+    },
+    removeBundle() {
+      calls.push('remove')
+      return Promise.resolve({ application: 'applied', changed: true })
+    },
+  }
+  const admission = await installPreservingPackage(manager, PACKAGE, 'spec', { enabled: true, saveExact: true })
+  assert.equal(admission.replaced, true)
+  assert.equal(admission.result.application, 'applied')
+  assert.deepEqual(calls, ['spec', 'remove', 'spec'])
+})
+
+test('a failed replacement reinstalls the previous package when it is gone', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  let restoreLists = 0
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    if (calls.length === 2) {
+      bundle.installed = false
+      return { application: 'failed', error: { code: 'install-failed' } }
+    }
+    bundle.installed = true
+    bundle.version = '0.5.0'
+    return { application: 'applied', changed: true, bundle: PACKAGE, version: '0.5.0' }
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+  manager.listBundles = async () => {
+    if (calls.length >= 3) restoreLists++
+    return [bundle]
+  }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 3)
+  assert.equal(restoreLists, 1)
+  assert.equal(calls[2][0], `github:${REPOSITORY}`)
+  assert.equal(calls[2][1].enabled, false)
+  assert.equal(calls[2][1].saveExact, true)
+  assert.notEqual(calls[2][1].requestId, id)
+  assert.match(calls[2][1].requestId, /^[0-9a-f-]{36}$/)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restored')
+  assert.equal(outcome.restoredVersion, '0.5.0')
+  assert.equal(bundle.version, '0.5.0')
+  assert.equal(bundle.installed, true)
+})
+
+test('a failed restore tells the user and does not claim the new release installed', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    bundle.installed = false
+    return { application: 'failed', error: { code: 'install-failed' } }
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 3)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restore-failed')
+  assert.equal(bundle.installed, false)
+})
+
+test('a failed replacement that leaves the package installed does not install the previous spec again', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    bundle.installed = true
+    return { application: 'failed', error: { code: 'install-failed' } }
+  }
+  manager.removeBundle = async () => ({ application: 'applied', changed: true })
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 2)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'replace')
+})
+
+test('published DSH peers accept 0.2.x through the boot checker and reject 0.3 prereleases', () => {
+  const result = spawnSync(process.execPath, ['--experimental-strip-types', 'scripts/dsh-peer-check.mjs'], {
+    env: { ...process.env, DSH_PEER_CHECK_OFFLINE: '1' },
+    encoding: 'utf8',
+  })
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}\n${result.error ?? ''}`)
 })

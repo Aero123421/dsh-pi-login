@@ -1,6 +1,6 @@
 # 開発・テスト・更新
 
-[upstream.json](../upstream.json)に検証する公式コミットを固定しています。初回のビルドでソースを`.cache/upstream`に取得します。メニュー、スイッチ、入力欄、モーダルはこのソースから取り込み、ReactはHostと共有します。
+[upstream.json](../upstream.json)に検証する公式コミットを固定しています。テストと画面確認の初回にソースを`.cache/upstream`へ取得します。メニュー、スイッチ、入力欄、モーダルはHostの`@deepseek-ai/dsh-client-ui-primitives`をClientのexternalとして共有します。プラグインの配布物に同じ部品の別コピーは含めません。Reactとモーダルのキーボード層はHostと同一です。
 
 ## テスト
 
@@ -24,6 +24,8 @@ npm run pack:plugin
 | `test:runtime` | ビルド済みプラグインと公式RPCによる旧設定の移行、独立した接続の登録・鍵変更・削除、実SDKでのAPI A+B／Gateway／OAuth A+Bのローカル生成、token refreshの世代確認、Fast・Thinking・履歴の接続境界、429・認証欠落時の切替禁止 |
 | `test:browser` | 接続追加・設定・モデル・利用状況、ログイン画面、再接続・プロフィール切替、認証・Originチェック、キーボード、明暗テーマ、390／768／1440px、多数接続、解除 |
 | `pack:plugin` | ビルド済みファイル・locale・ドキュメントを含むtgzとSHA-256 |
+| `test:peers` | 宣言したDSH peer範囲が `0.2.1-alpha.2` から `0.2.x` を受け、`0.3.0` とそのプレリリースを拒否すること。`DSH_PEER_CHECK_OFFLINE=1` ではnpm問い合わせを省く |
+| `test:boot` | 配布tgzを現在のDSH alphaへ導入し、起動時にプラグインが無効化されず `update-status` が実行版を返すこと |
 | `test:install` | 実DSH `0.2.1-alpha.2`の空profileへ導入し、APIキー接続とMuse Codeの保存済み一覧・Contributor選択を残して再起動し、接続・認証・実行版・update manager・公開Release照合を確認。実Settings画面で8選択肢・オフの再起動保持・確認付き接続削除・Credentials削除・再起動後の非復活を検証 |
 
 モデル一覧更新の共通処理は単体テストで、Meta以外への委譲、未対応・不正なプロバイダーの拒否、同時更新の共有、破棄時の終了、公開する情報を確認します。Muse契約の再取得は単体テストで、OAuthとAPIキーの分離、契約状態、応答上限、取得失敗、アカウント変更を確認します。runtimeテストでは認証済みRPCからFullを選択し、実SDKによるリクエストとテスト用SSE応答を確認します。ブラウザテストでは共通の更新ボタンによるMetaと別のテスト用プロバイダーの再取得・モデル選択、未対応の案内、契約名・Full選択・APIキー優先時のエラーを確認します。いずれも実Metaアカウントや有料生成を使いません。[実アカウントで確認する項目](models.md#検証範囲と残る確認)
@@ -115,7 +117,9 @@ npm run update:pi -- 1.1.0
 
 ## プラグイン更新UI（0.5.0）
 
-更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。現行配布版のexact DSH peerと実行版が一致する場合だけ候補にします。範囲指定など判定できない互換性は導入せず表示します。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
+更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。配布版の`@deepseek-ai/dsh`および`@deepseek-ai/dsh-*` peer範囲が実行版を満たす場合だけ候補にします。`workspace:*`、`workspace:^`、`workspace:~`は実行版そのものを表します。peerが空、または範囲として解釈できない場合は導入せず、互換性不明として表示します。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
+
+導入済みパッケージを直接上書きできないDSHでは、managerの削除の完了を待ってから同じ操作IDで導入します。削除が`stop-profile`のときはパッケージが残っているので、その上へ導入します。削除が失敗した場合は、続けて導入しません。削除後の導入が失敗し、パッケージが一覧から消えている場合は、削除前の導入元とON/OFFを新しい操作IDで入れ直します。入れ直し後も失敗なら、その旨を表示します。この復帰は結果不明にはせず、次の更新確認を止めません。
 
 GitHub shorthand／git+httpsの導入元は明示タグへ、Release URL／保存済み検証tgz／`local-dsh-pi-login-<導入版>.tgz`という名前の`file:`導入元は検証済みtgzへ更新します。ファイル名は配布経路の分類にだけ使い、旧ファイルの真正性を保証するものとは扱いません。その他の導入元は手動更新です。
 

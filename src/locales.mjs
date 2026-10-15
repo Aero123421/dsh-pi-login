@@ -14,6 +14,7 @@ export const en = {
   "updateFailed": "Update failed. Review the stage below and check again.",
   "updateCancelled": "The installer confirmed cancellation.",
   "updateOverridden": "Saved settings prevent the update from applying.",
+  "updateSuperseded": "A newer plugin version is already running. This earlier update does not need a restart.",
   "updateUnknown": "The installation result is unknown. Reconcile the operation before starting another update.",
   "updateCheck": "Check plugin update",
   "updateInstall": "Update plugin",
@@ -37,6 +38,10 @@ export const en = {
   "updateReason_size": "The release exceeded its download size limit.",
   "updateReason_stale-candidate": "The release or installation changed. Check again.",
   "updateReason_release-unavailable": "The release service returned no accessible release.",
+  "updateReason_replace": "DSH will not install over the current package. Removing it and installing the release did not finish. Saved credentials stay in the profile.",
+  "updateReason_restored": "The new release did not install. The previous package was installed again. Saved credentials stay in the profile. Check the release and retry.",
+  "updateReason_restore-failed": "The new release did not install, and the previous package could not be restored. Install the previous release manually. Saved credentials stay in the profile.",
+  "updateRestoredVersion": "Restored package version: {version}.",
 
   metaRateLimited: 'Meta limited the account check. Wait before trying again.',
   reloadModels: 'Update model list',
@@ -85,6 +90,7 @@ export const ja = {
   "updateFailed": "更新に失敗しました。失敗段階を確認して再度更新を確認してください。",
   "updateCancelled": "インストーラーが取消を確認しました。",
   "updateOverridden": "保存設定により更新を適用できません。",
+  "updateSuperseded": "より新しい版が動作しています。この更新記録のための再起動は不要です。",
   "updateUnknown": "導入結果は不明です。再送せず、結果を確認してください。",
   "updateCheck": "プラグインの更新を確認",
   "updateInstall": "プラグインを更新する",
@@ -108,6 +114,10 @@ export const ja = {
   "updateReason_size": "配布ファイルが取得サイズ上限を超えました。",
   "updateReason_stale-candidate": "配布情報または導入状態が変わりました。再度確認してください。",
   "updateReason_release-unavailable": "取得できる配布版がありません。",
+  "updateReason_replace": "このDSHは導入済みパッケージへ上書き導入しません。パッケージを削除してから導入し直す処理が完了しませんでした。保存済みの認証情報はprofileに残ります。",
+  "updateReason_restored": "新しい配布版は導入できませんでした。直前のパッケージを入れ直しました。保存済みの認証情報はprofileに残ります。配布版を確認して再試行してください。",
+  "updateReason_restore-failed": "新しい配布版は導入できず、直前のパッケージも入れ直せませんでした。直前の配布版を手動で導入してください。保存済みの認証情報はprofileに残ります。",
+  "updateRestoredVersion": "入れ直したパッケージの版: {version}",
 
   metaRateLimited: 'Metaの契約確認が回数制限に達しました。時間を置いて再試行してください。',
   reloadModels: 'モデル一覧を更新',
@@ -166,7 +176,9 @@ Object.assign(en, {
   keySaved: 'A key is saved. Leave this field empty to keep it. The saved key is never displayed.',
   showSecret: 'Show input', hideSecret: 'Hide input', paste: 'Paste', pasteFailed: 'Clipboard access was unavailable. Paste directly into the field.',
   availableModels: 'Models enabled', authExpired: 'Sign-in expired', externalSettings: 'Open integration settings',
-  refreshUsage: 'Refresh usage', usageFailed: 'Could not refresh usage. The last available reading is kept.',
+  refreshUsage: 'Refresh usage', usageFailed: 'Could not load usage. Try again.',
+  usageRefreshFailed: 'Could not refresh usage. Try again.',
+  usageRetained: 'The figures below are the previous reading, not the result of this refresh.',
   usage_available: 'Account usage', usage_unobserved: 'Not observed yet', usage_unsupported: 'Usage is not supported',
   usage_unknown: 'Usage is unknown', usage_unavailable: 'Usage is unavailable', usage_auth_required: 'Sign in to check usage',
   'usage_auth-required': 'Sign in to check usage', usage_stale: 'Last reading is out of date', 'usage_rate-limited': 'Rate limited. Retry after the time below.',
@@ -204,7 +216,9 @@ Object.assign(ja, {
   keySaved: 'キーは保存済みです。変更しない場合は空欄にしてください。保存済みのキーは表示しません。',
   showSecret: '入力を表示', hideSecret: '入力を隠す', paste: '貼り付け', pasteFailed: 'クリップボードを読み込めませんでした。入力欄に直接貼り付けてください。',
   availableModels: 'モデル有効', authExpired: '認証切れ', externalSettings: '連携元の設定を開く',
-  refreshUsage: '利用状況を更新', usageFailed: '利用状況を更新できませんでした。前回の取得結果を保持しています。',
+  refreshUsage: '利用状況を更新', usageFailed: '利用状況を取得できませんでした。再試行してください。',
+  usageRefreshFailed: '利用状況を更新できませんでした。再試行してください。',
+  usageRetained: '下の数値は前回の取得結果です。今回の更新では確認できていません。',
   usage_available: 'アカウントの利用状況', usage_unobserved: 'まだ観測していません', usage_unsupported: '利用状況の取得に未対応',
   usage_unknown: '利用状況は不明です', usage_unavailable: '利用状況を取得できません', usage_auth_required: '利用状況の確認にはログインが必要です',
   'usage_auth-required': '利用状況の確認にはログインが必要です', usage_stale: '前回の情報です。更新してください', 'usage_rate-limited': '取得回数の制限中です。再試行可能時刻を確認してください。',
@@ -265,8 +279,8 @@ Object.assign(ja, {
 })
 Object.assign(en, { authUnavailable: 'Account status unavailable' })
 Object.assign(ja, { authUnavailable: '接続状態を確認できません' })
-Object.assign(en, { authVerified: 'Sign-in verified' })
-Object.assign(ja, { authVerified: '接続確認済み' })
+Object.assign(en, { authVerified: 'Sign-in verified', savedUnverified: 'Saved, not verified' })
+Object.assign(ja, { authVerified: '接続確認済み', savedUnverified: '保存済み・未確認' })
 Object.assign(en, { 'usageScope_muse-code-subscription-weekly': 'Weekly quota', 'error_muse-code-observation-invalid': 'The Muse Code response could not be verified. Update the official CLI and reopen this panel.' })
 Object.assign(ja, { 'usageScope_muse-code-subscription-weekly': '週間の利用枠', 'error_muse-code-observation-invalid': 'Muse Codeの応答を確認できませんでした。公式CLIを更新し、画面を開き直してください。' })
 Object.assign(en, { useProvider: 'Use this connection', enable: 'Enable connection', enabled: 'Connection enabled.', activateFirst: 'Enable this connection before choosing models.', modelsHint: 'When this connection is enabled, its selected models are available to chats and agents.' })

@@ -267,7 +267,11 @@ export function connectionAuthFrom(ctx: Context, binding: ConnectionAuthBinding)
  * `env()` answers from the credential seam first, so a value a deployment
  * stored through the harness is found by a provider's own ambient discovery —
  * without this, that discovery reads only the process environment and a stored
- * `AWS_ACCESS_KEY_ID` is invisible to it. `fileExists()` answers about the host
+ * `AWS_ACCESS_KEY_ID` is invisible to it. The seam owns precedence. From DSH
+ * 0.2.1-alpha.3 a stored ref wins over the launch environment, then project
+ * `.env`, then the harness-home `.env`. When `resolve` returns a value, this
+ * function must return it and must not replace it with the launch environment.
+ * `fileExists()` answers about the host
  * process's own filesystem rather than the workspace `ctx.fs` seam, because the
  * paths it is asked about (`~/.aws/credentials`, application-default
  * credentials) are facts about where this process runs, not about the project
