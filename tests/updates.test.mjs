@@ -61,7 +61,14 @@ test('release schema, stable channel, exact assets and compatibility are fail cl
   assert.equal(checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.2.1-alpha.3'), '0.2.1-alpha.3')
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.3.0-alpha.1'), /incompatible/)
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'not a range' } }, candidate, '0.2.1-alpha.2'), /incompatible/)
-  assert.equal(dshPeerSatisfied('workspace:*', '0.2.1-alpha.3'), true)
+  assert.equal(dshPeerSatisfied('workspace:*', '0.2.1-alpha.3'), false)
+  assert.equal(dshPeerSatisfied('workspace:^', '0.2.1-alpha.2'), false)
+  assert.equal(dshPeerSatisfied('workspace:~', '0.2.1-alpha.2'), false)
+  for (const range of ['*', '>=0', '>=0.2.1-alpha.2']) {
+    assert.equal(dshPeerSatisfied(range, '0.2.1-alpha.3'), false)
+    assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': range } }, candidate, '0.2.1-alpha.3'), /incompatible/)
+  }
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'workspace:*' } }, candidate, '0.2.1-alpha.2'), /incompatible/)
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: {} }, candidate, '0.2.1-alpha.2'), /compatibility-unknown/)
   for (const value of [{ ...release, prerelease: true }, { ...release, draft: true }, { ...release, assets: [...release.assets, release.assets[0]] }, { ...release, assets: [] }, { ...release, tag_name: 'garbage' }]) assert.throws(() => releaseCandidate(value, '0.5.0'))
   assert.deepEqual(packageManifest(bytes), pkg)
@@ -443,6 +450,169 @@ test('a failed replacement that leaves the package installed does not install th
   const outcome = await updater.reconcile(id)
   assert.equal(outcome.status, 'failed')
   assert.equal(outcome.reason, 'replace')
+})
+
+test('a thrown replacement restores the missing package and the next check is not busy', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    if (calls.length === 2) {
+      bundle.installed = false
+      throw new Error('replacement install rejected')
+    }
+    bundle.installed = true
+    bundle.version = '0.5.0'
+    return { application: 'applied', bundle: PACKAGE, version: '0.5.0' }
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(updater.running, null)
+  assert.equal(calls.length, 3)
+  assert.equal(calls[2][0], `github:${REPOSITORY}`)
+  assert.notEqual(calls[2][1].requestId, id)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restored')
+  assert.equal(outcome.restoredVersion, '0.5.0')
+  const again = await updater.check()
+  assert.notEqual(again.reason, 'busy')
+  assert.equal(again.status === 'blocked' && again.reason === 'busy', false)
+})
+
+test('a thrown replacement still restores when the first bundle list fails', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  let phase = 'ready'
+  manager.listBundles = async () => {
+    if (phase === 'after-throw') { phase = 'visible'; throw new Error('list failed') }
+    return [bundle]
+  }
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    if (calls.length === 2) {
+      bundle.installed = false
+      phase = 'after-throw'
+      throw new Error('replacement install rejected')
+    }
+    bundle.installed = true
+    bundle.version = '0.5.0'
+    return { application: 'applied', bundle: PACKAGE, version: '0.5.0' }
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 3)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restored')
+  assert.equal(updater.running, null)
+  assert.notEqual((await updater.check()).reason, 'busy')
+})
+
+test('a thrown restore settles as restore-failed and does not stay unknown', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    bundle.installed = false
+    throw new Error('install rejected')
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 3)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restore-failed')
+  assert.equal(bundle.installed, false)
+  assert.notEqual((await updater.check()).reason, 'busy')
+})
+
+test('cancellation and a bad package exit restore a missing package', async t => {
+  for (const failure of [{ application: 'cancelled' }, { application: 'applied', packageResult: { exitCode: 2, timedOut: false } }, { application: 'restart-required', packageResult: { exitCode: 0, timedOut: true } }]) {
+    const { updater, manager, bundle, calls } = await fixture(t)
+    manager.installBundle = async (spec, options) => {
+      calls.push([spec, options])
+      if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+      if (calls.length === 2) { bundle.installed = false; return failure }
+      bundle.installed = true
+      bundle.version = '0.5.0'
+      return { application: 'applied', bundle: PACKAGE, version: '0.5.0' }
+    }
+    manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+    await updater.check()
+    const id = randomUUID()
+    await updater.begin('7', id, updater.base().profileKey)
+    await settle(updater)
+    assert.equal(calls.length, 3, JSON.stringify(failure))
+    const outcome = await updater.reconcile(id)
+    assert.equal(outcome.status, 'failed')
+    assert.equal(outcome.reason, 'restored')
+  }
+})
+
+test('a failed reinstall after stop-profile restores the package when it is gone', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    if (calls.length === 2) { bundle.installed = false; return { application: 'failed', error: { code: 'install-failed' } } }
+    bundle.installed = true
+    bundle.version = '0.5.0'
+    return { application: 'applied', bundle: PACKAGE, version: '0.5.0' }
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'failed', error: { code: 'stop-profile' }, changed: false } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(calls.length, 3)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restored')
+  assert.equal(outcome.restoredVersion, '0.5.0')
+
+  const stayed = await fixture(t)
+  stayed.manager.installBundle = async (spec, options) => {
+    stayed.calls.push([spec, options])
+    if (stayed.calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    stayed.bundle.installed = true
+    return { application: 'failed', error: { code: 'install-failed' } }
+  }
+  stayed.manager.removeBundle = async () => ({ application: 'failed', error: { code: 'stop-profile' }, changed: false })
+  await stayed.updater.check()
+  await stayed.updater.begin('7', randomUUID(), stayed.updater.base().profileKey)
+  await settle(stayed.updater)
+  assert.equal(stayed.calls.length, 2)
+})
+
+test('a restored package with a different version is not reported as restored', async t => {
+  const { updater, manager, bundle, calls } = await fixture(t)
+  manager.installBundle = async (spec, options) => {
+    calls.push([spec, options])
+    if (calls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    if (calls.length === 2) { bundle.installed = false; return { application: 'failed', error: { code: 'install-failed' } } }
+    bundle.installed = true
+    bundle.version = '9.9.9'
+    return { application: 'applied', bundle: PACKAGE, version: '9.9.9' }
+  }
+  manager.removeBundle = async () => { bundle.installed = false; return { application: 'applied', changed: true } }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restore-failed')
+  assert.equal(outcome.restoredVersion, undefined)
 })
 
 test('published DSH peers accept 0.2.x through the boot checker and reject 0.3 prereleases', () => {

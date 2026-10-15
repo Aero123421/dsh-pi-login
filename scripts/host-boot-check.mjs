@@ -1,9 +1,21 @@
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { spawn, spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 
+/** Ensure the profile lists the package. A missing `bundles` array is created; it is not read as a method. */
+export function includeProfileBundle(manifest, packageName) {
+  if (!manifest || typeof manifest !== 'object') throw new Error('profile')
+  if (!manifest.dsh || typeof manifest.dsh !== 'object' || Array.isArray(manifest.dsh)) manifest.dsh = {}
+  if (!manifest.dsh.profile || typeof manifest.dsh.profile !== 'object' || Array.isArray(manifest.dsh.profile)) manifest.dsh.profile = {}
+  if (!Array.isArray(manifest.dsh.profile.bundles)) manifest.dsh.profile.bundles = []
+  if (!manifest.dsh.profile.bundles.includes(packageName)) manifest.dsh.profile.bundles.push(packageName)
+  return manifest
+}
+
+async function boot() {
 const home = await mkdtemp(join(tmpdir(), 'pi-boot-'))
 const env = { ...process.env, DSH_HOME: home }
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
@@ -26,7 +38,7 @@ await run(['--profile', 'boot', '--from-default-profile', 'web', '--dump-config'
 await run(['plugin', '--profile', 'boot', 'add', '-w', '--ignore-scripts', source])
 const profile = join(home, 'profiles', 'boot', 'package.json')
 const manifest = JSON.parse(await readFile(profile, 'utf8'))
-if (!manifest.dsh.profile.bundles.includes('@local/dsh-pi-login')) manifest.dsh.profile.bundles.push('@local/dsh-pi-login')
+includeProfileBundle(manifest, '@local/dsh-pi-login')
 await writeFile(profile, JSON.stringify(manifest, null, 2))
 
 let output = ''
@@ -71,3 +83,6 @@ try {
   const timer = setTimeout(() => { if (child.exitCode === null) child.kill('SIGKILL') }, 10000)
   try { await done } finally { clearTimeout(timer) }
 }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await boot()

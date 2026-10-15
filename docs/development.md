@@ -117,7 +117,7 @@ npm run update:pi -- 1.1.0
 
 ## プラグイン更新UI（0.5.0）
 
-更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。配布版の`@deepseek-ai/dsh`および`@deepseek-ai/dsh-*` peer範囲が実行版を満たす場合だけ候補にします。`workspace:*`、`workspace:^`、`workspace:~`は実行版そのものを表します。peerが空、または範囲として解釈できない場合は導入せず、互換性不明として表示します。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
+更新コードは内部の`src/updates.mjs`、Client状態は`src/update-controller.mjs`で管理します。Hostは任意URLを受け取らず、固定repositoryの正式Releaseと同タグのmanifestを検査します。配布版の`@deepseek-ai/dsh`および`@deepseek-ai/dsh-*` peer範囲が実行版を満たす場合だけ候補にします。上限のない範囲（`*`、`>=0`、`>=0.2.1-alpha.2`）と `workspace:` 指定は拒否します。peerが空の場合は導入せず、互換性不明として表示します。範囲として解釈できない場合は非互換として表示します。tgzのSHA-256照合後にarchive内manifestも照合します。checksumは破損・取り違えの検出であり、発行者の署名ではありません。
 
 導入済みパッケージを直接上書きできないDSHでは、managerの削除の完了を待ってから同じ操作IDで導入します。削除が`stop-profile`のときはパッケージが残っているので、その上へ導入します。削除が失敗した場合は、続けて導入しません。削除後の導入が失敗し、パッケージが一覧から消えている場合は、削除前の導入元とON/OFFを新しい操作IDで入れ直します。入れ直し後も失敗なら、その旨を表示します。この復帰は結果不明にはせず、次の更新確認を止めません。
 

@@ -26,7 +26,7 @@ DSH `0.2.1-alpha.2` と `0.2.1-alpha.3` の両方で起動できるようにし�
 
 ## 確認
 
-Node.js 22.23.3 で `npm test`（214件）、`test:peers`、`test:compat`、`test:runtime`、`test:browser` を通しました。`npm @deepseek-ai/dsh@alpha` は `0.2.1-alpha.3` で、peer範囲を満たします。同じ 0.7.4 のtarballを DSH 0.2.1-alpha.2 と 0.2.1-alpha.3 の新規プロファイルへ導入し、起動、接続の作成・複製・削除、再起動後の保存、Museのモデル選択、設定画面、公開Releaseの照会を確認しました。0.2.1-alpha.3 では `test:boot` も通り、`update-status` が 0.7.4 を返しました。リポジトリに lint と typecheck のscriptはありません。
+Node.js 22.23.3 で `npm test`（222件）、`test:peers`、`test:compat`、`test:runtime`、`test:browser` を通しました。`npm @deepseek-ai/dsh@alpha` は `0.2.1-alpha.3` で、peer範囲を満たします。同じ 0.7.4 のtarballを DSH 0.2.1-alpha.2 と 0.2.1-alpha.3 の新規プロファイルへ導入し、起動、接続の作成・複製・削除、再起動後の保存、Museのモデル選択、設定画面、公開Releaseの照会を確認しました。0.2.1-alpha.3 では `test:boot` も通り、`update-status` が 0.7.4 を返しました。リポジトリに lint と typecheck のscriptはありません。
 
 ## 残る確認
 

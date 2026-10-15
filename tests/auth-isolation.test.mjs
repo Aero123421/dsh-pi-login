@@ -10,13 +10,13 @@ await writeFile('work/auth-isolation-entry.ts', `
 export { Context } from '../.cache/upstream/vendor/cordis/src/index.ts';
 export { default as AuthorizationService } from '../.cache/upstream/packages/credentials/authorization/src/index.ts';
 export { MemoryCredentials } from '../.cache/upstream/packages/credentials/authorization/tests/memory.ts';
-export { connectionAuthFrom, credentialStoreFrom } from '../src/runtime/auth.ts';
+export { authContextFrom, connectionAuthFrom, credentialStoreFrom } from '../src/runtime/auth.ts';
 export { registerConnectionFlows, registerPiAiFlows } from '../src/runtime/login.ts';
 export { catalogProvider } from '../src/runtime/catalog.ts';
 export { createModels } from '../src/runtime/models.ts';
 `)
 await compileOfficial('work/auth-isolation-entry.ts', 'work/auth-isolation-runtime.mjs')
-const { Context, AuthorizationService, MemoryCredentials, connectionAuthFrom, registerConnectionFlows, registerPiAiFlows, catalogProvider, createModels } = await import('../work/auth-isolation-runtime.mjs')
+const { Context, AuthorizationService, MemoryCredentials, authContextFrom, connectionAuthFrom, registerConnectionFlows, registerPiAiFlows, catalogProvider, createModels } = await import('../work/auth-isolation-runtime.mjs')
 const pause = () => new Promise(resolve => setImmediate(resolve))
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 const oauth = (account, expires = Date.now() + 3600000) => ({ type: 'oauth', access: `${account}-access`, refresh: `${account}-refresh`, expires })
@@ -226,4 +226,20 @@ test('connection flow registration preserves the Host config waterfall for other
   const f = await flowFixture(t)
   const raw = { path: 'fixture.patch.yml', enableLogs: false }
   assert.equal(f.ctx.waterfall(f.ctx.fiber, 'internal/config', raw, () => raw), raw)
+})
+
+test('a resolved credential is returned and is not replaced by the launch environment', async () => {
+  const stored = new Context()
+  stored.provide('launchEnvironment', { get: name => name === 'OPENAI_API_KEY' ? { value: 'launch-secret', source: 'process' } : undefined })
+  stored.provide('credentials', { resolve: async ref => ref === 'OPENAI_API_KEY' ? { value: 'stored-secret', source: 'file' } : undefined })
+  assert.equal(await authContextFrom(stored).env('OPENAI_API_KEY'), 'stored-secret')
+
+  const missing = new Context()
+  missing.provide('launchEnvironment', { get: name => name === 'OPENAI_API_KEY' ? { value: 'launch-secret', source: 'process' } : undefined })
+  missing.provide('credentials', { resolve: async () => undefined })
+  assert.equal(await authContextFrom(missing).env('OPENAI_API_KEY'), 'launch-secret')
+
+  const absent = new Context()
+  absent.provide('launchEnvironment', { get: name => name === 'OPENAI_API_KEY' ? { value: 'launch-secret', source: 'process' } : undefined })
+  assert.equal(await authContextFrom(absent).env('OPENAI_API_KEY'), 'launch-secret')
 })

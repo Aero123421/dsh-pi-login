@@ -2861,13 +2861,26 @@ function releaseCandidate(release, current) {
   const candidate = { id: String(release.id), version, tag: release.tag_name, url: expectedLink, notes: release.body.slice(0, 6e3), filename, tarball: asset(filename), checksum: asset("SHA256SUMS") };
   return compareVersions(version, current) > 0 ? candidate : null;
 }
-var WORKSPACE_PEER = /* @__PURE__ */ new Set(["workspace:^", "workspace:~", "workspace:*"]);
+function rangeHasUpperBound(range) {
+  let parsed;
+  try {
+    parsed = new import_semver.default.Range(range, { includePrerelease: true });
+  } catch {
+    return false;
+  }
+  if (!parsed.set?.length) return false;
+  return parsed.set.every((comparators) => comparators.some((item) => {
+    if (item.operator === "<" || item.operator === "<=") return true;
+    return (item.operator === "" || item.operator === "=") && typeof item.semver?.version === "string";
+  }));
+}
 function dshPeerSatisfied(range, runtime) {
   semanticVersion(runtime);
-  if (typeof range !== "string" || range.trim() === "") return false;
-  if (WORKSPACE_PEER.has(range)) return true;
+  if (typeof range !== "string") return false;
+  const text2 = range.trim();
+  if (text2 === "" || text2.startsWith("workspace:") || !rangeHasUpperBound(text2)) return false;
   try {
-    return import_semver.default.satisfies(runtime, range, { includePrerelease: true });
+    return import_semver.default.satisfies(runtime, text2, { includePrerelease: true });
   } catch {
     return false;
   }
@@ -2883,42 +2896,99 @@ function checkCompatibility(packageJson, candidate, runtime) {
 function bundleRecord(list, name2) {
   return list?.find((item) => item?.name === name2);
 }
-function restoreIfMissing(manager, name2, installed, previous) {
-  const failed = !installed || installed.application === "failed" || installed.error;
-  if (!failed) return Promise.resolve({ result: installed, replaced: true, restored: false });
+function installNeedsRestore(result) {
+  if (!result) return true;
+  if (result.application === "cancelled" || result.application === "overridden") return true;
+  if (result.error || result.application === "failed") return true;
+  if (result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut)) return true;
+  return result.application !== "applied" && result.application !== "restart-required";
+}
+function sameRestoredVersion(previous, restored, item) {
+  if (!item?.installed || typeof item.version !== "string" || installNeedsRestore(restored)) return false;
+  const expected = typeof previous?.version === "string" ? previous.version : restored?.version;
+  if (typeof expected !== "string" || item.version !== expected) return false;
+  return typeof restored?.version !== "string" || restored.version === item.version;
+}
+async function restoreIfMissing(manager, name2, installed, previous) {
+  if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false };
   if (typeof previous?.spec !== "string" || typeof manager.listBundles !== "function" || typeof manager.installBundle !== "function") {
-    return Promise.resolve({ result: installed, replaced: true, restored: false, restoreFailed: true });
+    return { result: installed, replaced: true, restored: false, restoreFailed: true };
   }
-  return Promise.resolve(manager.listBundles()).then((list) => {
-    if (bundleRecord(list, name2)?.installed) return { result: installed, replaced: true, restored: false };
-    const requestId = typeof previous.requestId === "function" ? previous.requestId() : previous.requestId;
-    return Promise.resolve(manager.installBundle(previous.spec, {
+  let list;
+  try {
+    list = await manager.listBundles();
+  } catch {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true };
+  }
+  if (bundleRecord(list, name2)?.installed) return { result: installed, replaced: true, restored: false };
+  const requestId = typeof previous.requestId === "function" ? previous.requestId() : previous.requestId;
+  let restored;
+  try {
+    restored = await manager.installBundle(previous.spec, {
       enabled: previous.enabled,
       requestId,
       saveExact: true
-    })).then((restored) => Promise.resolve(manager.listBundles()).then((after) => {
-      const item = bundleRecord(after, name2);
-      const ok = item?.installed && restored && restored.application !== "failed" && !restored.error;
-      if (!ok) return { result: installed, replaced: true, restored: false, restoreFailed: true };
-      return { result: restored, replaced: true, restored: true, restoredVersion: item.version };
-    })).catch(() => ({ result: installed, replaced: true, restored: false, restoreFailed: true }));
-  }).catch(() => ({ result: installed, replaced: true, restored: false, restoreFailed: true }));
-}
-function installPreservingPackage(manager, name2, spec, options, previous) {
-  return Promise.resolve(manager.installBundle(spec, options)).then((result) => {
-    if (result?.error?.code !== "already-installed" || typeof manager.removeBundle !== "function") {
-      return { result, replaced: false, restored: false };
-    }
-    return Promise.resolve(manager.removeBundle(name2)).then((removed) => {
-      if (removed?.error?.code === "stop-profile") {
-        return Promise.resolve(manager.installBundle(spec, options)).then((installed) => ({ result: installed, replaced: true, restored: false }));
-      }
-      if (!removed || removed.application === "failed" || removed.error) {
-        return { result: removed ?? { application: "failed" }, replaced: true, restored: false };
-      }
-      return Promise.resolve(manager.installBundle(spec, options)).then((installed) => restoreIfMissing(manager, name2, installed, previous));
     });
-  });
+  } catch {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true };
+  }
+  let after;
+  try {
+    after = await manager.listBundles();
+  } catch {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true };
+  }
+  const item = bundleRecord(after, name2);
+  if (!sameRestoredVersion(previous, restored, item)) {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true };
+  }
+  return { result: restored, replaced: true, restored: true, restoredVersion: item.version };
+}
+async function recoverThrownInstall(manager, name2, previous) {
+  if (typeof manager?.listBundles !== "function") return void 0;
+  let list;
+  try {
+    list = await manager.listBundles();
+  } catch {
+    return void 0;
+  }
+  if (bundleRecord(list, name2)?.installed) return void 0;
+  return restoreIfMissing(manager, name2, { application: "failed", error: { code: "install-failed" } }, previous);
+}
+async function installPreservingPackage(manager, name2, spec, options, previous) {
+  let result;
+  try {
+    result = await manager.installBundle(spec, options);
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name2, previous);
+    if (recovered) return recovered;
+    throw error;
+  }
+  if (result?.error?.code !== "already-installed" || typeof manager.removeBundle !== "function") {
+    return { result, replaced: false, restored: false };
+  }
+  let removed;
+  try {
+    removed = await manager.removeBundle(name2);
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name2, previous);
+    if (recovered) return recovered;
+    throw error;
+  }
+  const stopped = removed?.error?.code === "stop-profile";
+  if (!stopped && (!removed || removed.application === "failed" || removed.error)) {
+    return { result: removed ?? { application: "failed" }, replaced: true, restored: false };
+  }
+  let installed;
+  try {
+    installed = await manager.installBundle(spec, options);
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name2, previous);
+    if (recovered) return recovered;
+    throw error;
+  }
+  if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false };
+  return restoreIfMissing(manager, name2, installed, previous);
 }
 function packageManifest(bytes) {
   let tar;
@@ -3135,6 +3205,8 @@ var PluginUpdates = class {
   }
   async execute(candidate, operation) {
     let managerInvoked = false;
+    let activeManager;
+    let previous;
     try {
       const before = await this.capability();
       const fresh = await this.getCandidate(before.bundle.version ?? this.version);
@@ -3163,9 +3235,11 @@ var PluginUpdates = class {
       if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error("busy");
       if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error("stale-candidate");
       managerInvoked = true;
-      const previous = {
+      activeManager = final.manager;
+      previous = {
         spec: final.bundle.source,
         enabled: final.bundle.enabled,
+        version: final.bundle.version,
         requestId: () => updateRequestId()
       };
       const admission = await installPreservingPackage(final.manager, PACKAGE, spec, {
@@ -3190,8 +3264,26 @@ var PluginUpdates = class {
         operation.status = resultState(result, operation.version, this.version, installed);
       }
     } catch (error) {
-      operation.status = managerInvoked ? "unknown" : "failed";
-      operation.reason = reasonOf(error);
+      let recovered;
+      if (managerInvoked && activeManager && previous) {
+        try {
+          const list = await activeManager.listBundles();
+          if (!bundleRecord(list, PACKAGE)?.installed) {
+            recovered = await restoreIfMissing(activeManager, PACKAGE, { application: "failed", error: { code: "install-failed" } }, previous);
+          }
+        } catch {
+          recovered = void 0;
+        }
+      }
+      if (recovered?.restored || recovered?.restoreFailed) {
+        operation.reason = recovered.restored ? "restored" : "restore-failed";
+        if (recovered.restored) operation.restoredVersion = recovered.restoredVersion;
+        operation.status = "failed";
+        operation.result = safeResult(recovered.result);
+      } else {
+        operation.status = managerInvoked ? "unknown" : "failed";
+        operation.reason = reasonOf(error);
+      }
     }
     try {
       await this.save(operation);

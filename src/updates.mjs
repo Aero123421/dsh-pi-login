@@ -109,17 +109,31 @@ export function releaseCandidate(release, current) {
   const candidate = { id: String(release.id), version, tag: release.tag_name, url: expectedLink, notes: release.body.slice(0, 6000), filename, tarball: asset(filename), checksum: asset('SHA256SUMS') }
   return compareVersions(version, current) > 0 ? candidate : null
 }
-const WORKSPACE_PEER = new Set(['workspace:^', 'workspace:~', 'workspace:*'])
+/** A comparator set has an upper bound when every alternative is capped.
+ * An exact version is a cap. `*`, `>=0`, and `>=1.2.3` are not.
+ */
+function rangeHasUpperBound(range) {
+  let parsed
+  try { parsed = new semver.Range(range, { includePrerelease: true }) }
+  catch { return false }
+  if (!parsed.set?.length) return false
+  return parsed.set.every(comparators => comparators.some(item => {
+    if (item.operator === '<' || item.operator === '<=') return true
+    return (item.operator === '' || item.operator === '=') && typeof item.semver?.version === 'string'
+  }))
+}
 
 /** Whether one DSH peer range accepts the running host.
- * Matches app-boot's boot check: `semver.satisfies` with prereleases included.
- * `workspace:*`, `workspace:^`, and `workspace:~` mean the running version.
+ * `semver.satisfies` includes prereleases. A range with no upper bound, and
+ * any `workspace:` spec, is rejected: the former keeps accepting the next
+ * major, and the latter means whatever happens to be running.
  */
 export function dshPeerSatisfied(range, runtime) {
   semanticVersion(runtime)
-  if (typeof range !== 'string' || range.trim() === '') return false
-  if (WORKSPACE_PEER.has(range)) return true
-  try { return semver.satisfies(runtime, range, { includePrerelease: true }) }
+  if (typeof range !== 'string') return false
+  const text = range.trim()
+  if (text === '' || text.startsWith('workspace:') || !rangeHasUpperBound(text)) return false
+  try { return semver.satisfies(runtime, text, { includePrerelease: true }) }
   catch { return false }
 }
 
@@ -136,27 +150,67 @@ function bundleRecord(list, name) {
   return list?.find(item => item?.name === name)
 }
 
+/** Same unsuccessful outcomes as `resultState`: cancellation, override, failure, and a bad package exit.
+ * A missing result is unsuccessful too. `applied` and `restart-required` with a clean exit are not.
+ */
+function installNeedsRestore(result) {
+  if (!result) return true
+  if (result.application === 'cancelled' || result.application === 'overridden') return true
+  if (result.error || result.application === 'failed') return true
+  if (result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut)) return true
+  return result.application !== 'applied' && result.application !== 'restart-required'
+}
+
+/** The package is back only when the listed version is the one we asked to reinstall. */
+function sameRestoredVersion(previous, restored, item) {
+  if (!item?.installed || typeof item.version !== 'string' || installNeedsRestore(restored)) return false
+  const expected = typeof previous?.version === 'string' ? previous.version : restored?.version
+  if (typeof expected !== 'string' || item.version !== expected) return false
+  return typeof restored?.version !== 'string' || restored.version === item.version
+}
+
 /** Reinstall the package captured before removal when the replacement is absent. */
-export function restoreIfMissing(manager, name, installed, previous) {
-  const failed = !installed || installed.application === 'failed' || installed.error
-  if (!failed) return Promise.resolve({ result: installed, replaced: true, restored: false })
+export async function restoreIfMissing(manager, name, installed, previous) {
+  if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
   if (typeof previous?.spec !== 'string' || typeof manager.listBundles !== 'function' || typeof manager.installBundle !== 'function') {
-    return Promise.resolve({ result: installed, replaced: true, restored: false, restoreFailed: true })
+    return { result: installed, replaced: true, restored: false, restoreFailed: true }
   }
-  return Promise.resolve(manager.listBundles()).then(list => {
-    if (bundleRecord(list, name)?.installed) return { result: installed, replaced: true, restored: false }
-    const requestId = typeof previous.requestId === 'function' ? previous.requestId() : previous.requestId
-    return Promise.resolve(manager.installBundle(previous.spec, {
+  let list
+  try { list = await manager.listBundles() }
+  catch { return { result: installed, replaced: true, restored: false, restoreFailed: true } }
+  if (bundleRecord(list, name)?.installed) return { result: installed, replaced: true, restored: false }
+  const requestId = typeof previous.requestId === 'function' ? previous.requestId() : previous.requestId
+  let restored
+  try {
+    restored = await manager.installBundle(previous.spec, {
       enabled: previous.enabled,
       requestId,
       saveExact: true,
-    })).then(restored => Promise.resolve(manager.listBundles()).then(after => {
-      const item = bundleRecord(after, name)
-      const ok = item?.installed && restored && restored.application !== 'failed' && !restored.error
-      if (!ok) return { result: installed, replaced: true, restored: false, restoreFailed: true }
-      return { result: restored, replaced: true, restored: true, restoredVersion: item.version }
-    })).catch(() => ({ result: installed, replaced: true, restored: false, restoreFailed: true }))
-  }).catch(() => ({ result: installed, replaced: true, restored: false, restoreFailed: true }))
+    })
+  } catch {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true }
+  }
+  let after
+  try { after = await manager.listBundles() }
+  catch { return { result: installed, replaced: true, restored: false, restoreFailed: true } }
+  const item = bundleRecord(after, name)
+  if (!sameRestoredVersion(previous, restored, item)) {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true }
+  }
+  return { result: restored, replaced: true, restored: true, restoredVersion: item.version }
+}
+
+/** When an install or removal rejects, restore only after the list shows the package is gone.
+ * A package that is still installed, or a list that itself fails, stays unresolved so the
+ * original manager request can be reconciled. Returning a receipt means the operation is finished.
+ */
+async function recoverThrownInstall(manager, name, previous) {
+  if (typeof manager?.listBundles !== 'function') return undefined
+  let list
+  try { list = await manager.listBundles() }
+  catch { return undefined }
+  if (bundleRecord(list, name)?.installed) return undefined
+  return restoreIfMissing(manager, name, { application: 'failed', error: { code: 'install-failed' } }, previous)
 }
 
 /** Install a package, and when HMR refuses an installed package, remove it first.
@@ -168,21 +222,40 @@ export function restoreIfMissing(manager, name, installed, previous) {
  * If the replacement install fails and the package is gone, `previous` is
  * installed again under a new request id.
  */
-export function installPreservingPackage(manager, name, spec, options, previous) {
-  return Promise.resolve(manager.installBundle(spec, options)).then(result => {
-    if (result?.error?.code !== 'already-installed' || typeof manager.removeBundle !== 'function') {
-      return { result, replaced: false, restored: false }
-    }
-    return Promise.resolve(manager.removeBundle(name)).then(removed => {
-      if (removed?.error?.code === 'stop-profile') {
-        return Promise.resolve(manager.installBundle(spec, options)).then(installed => ({ result: installed, replaced: true, restored: false }))
-      }
-      if (!removed || removed.application === 'failed' || removed.error) {
-        return { result: removed ?? { application: 'failed' }, replaced: true, restored: false }
-      }
-      return Promise.resolve(manager.installBundle(spec, options)).then(installed => restoreIfMissing(manager, name, installed, previous))
-    })
-  })
+export async function installPreservingPackage(manager, name, spec, options, previous) {
+  let result
+  try {
+    result = await manager.installBundle(spec, options)
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name, previous)
+    if (recovered) return recovered
+    throw error
+  }
+  if (result?.error?.code !== 'already-installed' || typeof manager.removeBundle !== 'function') {
+    return { result, replaced: false, restored: false }
+  }
+  let removed
+  try {
+    removed = await manager.removeBundle(name)
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name, previous)
+    if (recovered) return recovered
+    throw error
+  }
+  const stopped = removed?.error?.code === 'stop-profile'
+  if (!stopped && (!removed || removed.application === 'failed' || removed.error)) {
+    return { result: removed ?? { application: 'failed' }, replaced: true, restored: false }
+  }
+  let installed
+  try {
+    installed = await manager.installBundle(spec, options)
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name, previous)
+    if (recovered) return recovered
+    throw error
+  }
+  if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
+  return restoreIfMissing(manager, name, installed, previous)
 }
 export function packageManifest(bytes) {
   let tar
@@ -384,6 +457,8 @@ export class PluginUpdates {
   }
   async execute(candidate, operation) {
     let managerInvoked = false
+    let activeManager
+    let previous
     try {
       const before = await this.capability()
       const fresh = await this.getCandidate(before.bundle.version ?? this.version)
@@ -422,11 +497,13 @@ export class PluginUpdates {
       if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error('busy')
       if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error('stale-candidate')
       managerInvoked = true
-      // Capture the manager, the ON/OFF bit, and the installed spec before removal.
+      activeManager = final.manager
+      // Capture the manager, the ON/OFF bit, the version, and the installed spec before removal.
       // removeBundle disposes this plugin; installPreservingPackage continues on the manager.
-      const previous = {
+      previous = {
         spec: final.bundle.source,
         enabled: final.bundle.enabled,
+        version: final.bundle.version,
         requestId: () => updateRequestId(),
       }
       const admission = await installPreservingPackage(final.manager, PACKAGE, spec, {
@@ -454,8 +531,28 @@ export class PluginUpdates {
         operation.status = resultState(result, operation.version, this.version, installed)
       }
     } catch (error) {
-      operation.status = managerInvoked ? 'unknown' : 'failed'
-      operation.reason = reasonOf(error)
+      // A rejection after the manager was called must not stay `unknown` once the
+      // package is confirmed absent. Unknown blocks the next check. If the list
+      // still shows the package, or the list itself fails, keep unknown so
+      // reconcile can ask the manager about the original request.
+      let recovered
+      if (managerInvoked && activeManager && previous) {
+        try {
+          const list = await activeManager.listBundles()
+          if (!bundleRecord(list, PACKAGE)?.installed) {
+            recovered = await restoreIfMissing(activeManager, PACKAGE, { application: 'failed', error: { code: 'install-failed' } }, previous)
+          }
+        } catch { recovered = undefined }
+      }
+      if (recovered?.restored || recovered?.restoreFailed) {
+        operation.reason = recovered.restored ? 'restored' : 'restore-failed'
+        if (recovered.restored) operation.restoredVersion = recovered.restoredVersion
+        operation.status = 'failed'
+        operation.result = safeResult(recovered.result)
+      } else {
+        operation.status = managerInvoked ? 'unknown' : 'failed'
+        operation.reason = reasonOf(error)
+      }
     }
     try {
       await this.save(operation)
