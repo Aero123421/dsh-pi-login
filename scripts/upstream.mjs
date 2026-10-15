@@ -4,18 +4,45 @@ import { spawnSync } from 'node:child_process'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
-export const upstreamRoot = resolve('.cache/upstream')
+export const upstreamRoot = resolve(process.env.DSH_UPSTREAM_ROOT ?? '.cache/upstream')
 const pinned = JSON.parse(await readFile('upstream.json', 'utf8'))
-const upstreamMarker = join(upstreamRoot, 'packages/client/locale/src/client/index.ts')
-const upstreamLock = resolve('.cache/upstream.lock')
+const upstreamLock = resolve(upstreamRoot, '..', 'upstream.lock')
+const checkoutComplete = join(upstreamRoot, '.checkout-complete')
+// `packages/llm/llm` is the @deepseek-ai/dsh-llm package in the pinned tree.
+const pinnedPaths = [
+  'packages/llm/llm/src/index.ts',
+  'packages/client/locale/src/client/index.ts',
+]
 
+function gitAtUpstream(args) {
+  return spawnSync('git', ['-C', upstreamRoot, ...args], { encoding: 'utf8' })
+}
+
+function worktreeMatchesPin() {
+  const head = gitAtUpstream(['rev-parse', 'HEAD'])
+  if (head.status !== 0 || head.stdout.trim() !== pinned.commit) return false
+  return gitAtUpstream(['diff', '--quiet', 'HEAD']).status === 0
+}
+
+async function pinnedFilesPresent() {
+  try {
+    await Promise.all(pinnedPaths.map(path => access(join(upstreamRoot, path))))
+    return true
+  } catch { return false }
+}
+
+// `git checkout` creates packages/client/locale before it finishes writing
+// packages/llm and the other workspaces. A locale file is not a finished
+// checkout. Parallel test processes wait for this marker, which is written
+// only after checkout returns and the worktree matches the pinned commit.
 async function upstreamReady() {
-  try { await access(upstreamMarker); return true } catch { return false }
+  try { return (await readFile(checkoutComplete, 'utf8')).trim() === pinned.commit }
+  catch { return false }
 }
 
 // Test files are separate processes and all call this on a cold cache.
 async function withUpstreamLock(fetchSource) {
-  await mkdir('.cache', { recursive: true })
+  await mkdir(resolve(upstreamLock, '..'), { recursive: true })
   const deadline = Date.now() + 15 * 60 * 1000
   for (;;) {
     try {
@@ -35,15 +62,23 @@ async function withUpstreamLock(fetchSource) {
   }
 }
 
+async function fetchPinnedSource() {
+  if (worktreeMatchesPin() && await pinnedFilesPresent()) return
+  await rm(upstreamRoot, { recursive: true, force: true })
+  await mkdir(resolve(upstreamRoot, '..'), { recursive: true })
+  for (const args of [['init', upstreamRoot], ['-C', upstreamRoot, 'fetch', '--depth=1', pinned.repository, pinned.commit], ['-C', upstreamRoot, 'checkout', '--detach', 'FETCH_HEAD']]) {
+    const result = spawnSync('git', args, { stdio: 'inherit' })
+    if (result.status !== 0) throw new Error('Could not fetch the pinned official Harness source')
+  }
+  if (!worktreeMatchesPin() || !(await pinnedFilesPresent())) throw new Error('Could not fetch the pinned official Harness source')
+}
+
 export async function ensureUpstream() {
   if (await upstreamReady()) return
   await withUpstreamLock(async () => {
-    await rm(upstreamRoot, { recursive: true, force: true })
-    await mkdir('.cache', { recursive: true })
-    for (const args of [['init', upstreamRoot], ['-C', upstreamRoot, 'fetch', '--depth=1', pinned.repository, pinned.commit], ['-C', upstreamRoot, 'checkout', '--detach', 'FETCH_HEAD']]) {
-      const result = spawnSync('git', args, { stdio: 'inherit' })
-      if (result.status !== 0) throw new Error('Could not fetch the pinned official Harness source')
-    }
+    if (await upstreamReady()) return
+    await fetchPinnedSource()
+    await writeAtomic(checkoutComplete, `${pinned.commit}\n`)
   })
 }
 
