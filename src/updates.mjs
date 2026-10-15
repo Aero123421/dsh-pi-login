@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, writeFile, readFile, rename, lstat } from 'node:fs/promises'
 import { join, resolve, sep, basename, win32 } from 'node:path'
 import { gunzipSync } from 'node:zlib'
+import semver from 'semver'
 import { updateRequestId } from './update-request-id.ts'
 import manifest from '../package.json' with { type: 'json' }
 
@@ -108,17 +109,400 @@ export function releaseCandidate(release, current) {
   const candidate = { id: String(release.id), version, tag: release.tag_name, url: expectedLink, notes: release.body.slice(0, 6000), filename, tarball: asset(filename), checksum: asset('SHA256SUMS') }
   return compareVersions(version, current) > 0 ? candidate : null
 }
+/** Oldest and newest DSH this plugin will treat as the current series. */
+const DSH_SERIES_FLOOR = '0.2.1-alpha.2'
+const DSH_NEXT_SERIES = '0.3.0-0'
+
+function boundedComparator(item, direction) {
+  const exact = (item.operator === '' || item.operator === '=') && typeof item.semver?.version === 'string'
+  if (exact) return true
+  if (direction === 'upper') return item.operator === '<' || item.operator === '<='
+  return item.operator === '>' || item.operator === '>='
+}
+
+/** A peer range stays in the current 0.2 series when every alternative has a
+ * lower and an upper comparator, nothing older than 0.2.1-alpha.2 matches,
+ * and nothing from 0.3.0-0 upward matches. `<99.0.0` and `^0` have a written
+ * cap and still reach the next series or the versions before this floor.
+ */
+function peerRangeInCurrentSeries(range) {
+  let parsed
+  try { parsed = new semver.Range(range, { includePrerelease: true }) }
+  catch { return false }
+  if (!parsed.set?.length) return false
+  const shaped = parsed.set.every(comparators =>
+    comparators.some(item => boundedComparator(item, 'lower')) &&
+    comparators.some(item => boundedComparator(item, 'upper')),
+  )
+  if (!shaped) return false
+  const options = { includePrerelease: true }
+  try {
+    if (semver.intersects(range, `<${DSH_SERIES_FLOOR}`, options)) return false
+    if (semver.intersects(range, `>=${DSH_NEXT_SERIES}`, options)) return false
+  } catch { return false }
+  return true
+}
+
+/** Whether one DSH peer range accepts the running host.
+ * `semver.satisfies` includes prereleases. `workspace:` follows whatever is
+ * linked. A range is also rejected when its cap is only formal (`<99.0.0`,
+ * `^0`) or when it has no lower bound inside the current series.
+ */
+export function dshPeerSatisfied(range, runtime) {
+  semanticVersion(runtime)
+  if (typeof range !== 'string') return false
+  const text = range.trim()
+  if (text === '' || text.startsWith('workspace:') || !peerRangeInCurrentSeries(text)) return false
+  try { return semver.satisfies(runtime, text, { includePrerelease: true }) }
+  catch { return false }
+}
+
 export function checkCompatibility(packageJson, candidate, runtime) {
   semanticVersion(runtime)
   if (!packageJson || packageJson.name !== PACKAGE || packageJson.version !== candidate.version || typeof packageJson.dsh?.bundle?.patch !== 'string') throw new Error('metadata')
   const peers = Object.entries(packageJson.peerDependencies ?? {}).filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
   if (!peers.length || peers.some(([, range]) => typeof range !== 'string')) throw new Error('compatibility-unknown')
-  // Published Pi releases declare exact DSH peers. Other ranges require review.
-  for (const [, range] of peers) {
-    try { semanticVersion(range) } catch { throw new Error('compatibility-unknown') }
-    if (range !== runtime) throw new Error('incompatible')
-  }
+  if (peers.some(([, range]) => !dshPeerSatisfied(range, runtime))) throw new Error('incompatible')
   return runtime
+}
+
+function bundleRecord(list, name) {
+  return list?.find(item => item?.name === name)
+}
+
+/** Same unsuccessful outcomes as `resultState`: cancellation, override, failure, and a bad package exit.
+ * A missing result is unsuccessful too. `applied` and `restart-required` with a clean exit are not.
+ */
+function installNeedsRestore(result) {
+  if (!result) return true
+  if (result.application === 'cancelled' || result.application === 'overridden') return true
+  if (result.error || result.application === 'failed') return true
+  if (result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut)) return true
+  return result.application !== 'applied' && result.application !== 'restart-required'
+}
+
+function restoreOptions(previous) {
+  const requestId = typeof previous.requestId === 'function' ? previous.requestId() : previous.requestId
+  return { enabled: previous.enabled, requestId, saveExact: true }
+}
+
+/** Pin a floating GitHub source to the version captured before removal.
+ * An already pinned spec, a tarball, and a `file:` spec are left unchanged.
+ */
+function githubPin(spec, version) {
+  if (typeof spec !== 'string' || typeof version !== 'string') return undefined
+  try { semanticVersion(version) } catch { return undefined }
+  if (spec === `github:${REPOSITORY}`) return `github:${REPOSITORY}#v${version}`
+  if (/^(?:git\+)?https:\/\/github\.com\/Aero123421\/dsh-pi-login(?:\.git)?$/.test(spec)) return `${spec}#v${version}`
+  return undefined
+}
+
+/** `match` is the previous version, confirmed by the list and the receipt.
+ * `missing` means the package is not installed. `unconfirmed` means a package
+ * is installed but both the captured version and the receipt version are
+ * absent, so the install is not a successful restore. `differs` means the
+ * listed version is not the one we captured. `present` means the receipt
+ * failed and a package is still listed.
+ */
+function restoredIdentity(previous, restored, item) {
+  if (!item?.installed) return 'missing'
+  const listed = typeof item.version === 'string' ? item.version : undefined
+  const fromPrevious = typeof previous?.version === 'string' ? previous.version : undefined
+  const fromResult = typeof restored?.version === 'string' ? restored.version : undefined
+  if (installNeedsRestore(restored)) return 'present'
+  if (typeof fromPrevious !== 'string' && typeof fromResult !== 'string') return 'unconfirmed'
+  const expected = fromPrevious ?? fromResult
+  if (typeof listed !== 'string' || listed !== expected) return 'differs'
+  if (typeof fromResult === 'string' && fromResult !== listed) return 'differs'
+  return 'match'
+}
+
+function versionDrift(result, previous, item) {
+  const installedVersion = typeof item?.version === 'string' ? item.version : undefined
+  const expectedVersion = typeof previous?.version === 'string' ? previous.version : undefined
+  return {
+    result,
+    replaced: true,
+    restored: false,
+    versionDiffers: true,
+    ...(installedVersion ? { installedVersion } : {}),
+    ...(expectedVersion ? { expectedVersion } : {}),
+  }
+}
+
+function settleRecovery(operation, admission) {
+  if (admission?.restored) {
+    operation.reason = 'restored'
+    operation.restoredVersion = admission.restoredVersion
+    operation.status = 'failed'
+    return true
+  }
+  if (admission?.versionDiffers) {
+    operation.reason = 'version-differs'
+    if (typeof admission.installedVersion === 'string') operation.installedVersion = admission.installedVersion
+    if (typeof admission.expectedVersion === 'string') operation.expectedVersion = admission.expectedVersion
+    operation.status = 'failed'
+    return true
+  }
+  if (admission?.restoreFailed) {
+    operation.reason = 'restore-failed'
+    operation.status = 'failed'
+    return true
+  }
+  return false
+}
+
+async function bundlePresence(manager, name) {
+  if (typeof manager?.listBundles !== 'function') return 'unknown'
+  try {
+    const list = await manager.listBundles()
+    return bundleRecord(list, name)?.installed ? 'present' : 'absent'
+  } catch {
+    return 'unknown'
+  }
+}
+
+async function listedBundle(manager, name) {
+  try {
+    return { ok: true, item: bundleRecord(await manager.listBundles(), name) }
+  } catch {
+    return { ok: false }
+  }
+}
+
+function listedVersionMatches(previous, item) {
+  return item?.installed === true && typeof previous?.version === 'string' && item.version === previous.version
+}
+
+function failedRestore(result) {
+  return { result, replaced: true, restored: false, restoreFailed: true }
+}
+
+/** A completed install receipt can name the version when the bundle list cannot be read.
+ * In that case `restored: true` means only that `result.version` equals the
+ * captured version. The list was not read, so the package is not confirmed
+ * installed at that version. A receipt that itself needs restore, that names
+ * no version, or that has no captured version to compare, does not prove the
+ * package is present. Callers must pass the receipt of the install just
+ * attempted, not an earlier one. A different version is a mismatch only when
+ * the captured version is known.
+ */
+function admissionFromReceipt(result, previous) {
+  if (!result || installNeedsRestore(result)) return undefined
+  const version = typeof result.version === 'string' ? result.version : undefined
+  if (typeof version !== 'string' || typeof previous?.version !== 'string') return undefined
+  if (version === previous.version) {
+    return { result, replaced: true, restored: true, restoredVersion: version }
+  }
+  return versionDrift(result, previous, { installed: true, version })
+}
+
+/** Put the captured source back when a pin cannot replace the package that is already there.
+ * A running alpha.3 manager returns `already-installed` for any spec of a package
+ * that is still in the profile, so this install runs only after that package is
+ * gone, or when it is still listed and the call itself reports that refusal.
+ * An installed package at the end is a version mismatch. A package that is
+ * still absent is a failed restore. A list that cannot be read is not evidence
+ * that an older bundle record is still installed: the receipt's version is used
+ * when the install completed, and otherwise the restore failed so a later
+ * reconcile does not treat another version as present.
+ */
+async function reinstallOriginal(manager, name, previous, fallbackResult) {
+  if (typeof previous?.spec !== 'string' || typeof manager.installBundle !== 'function') {
+    const listed = await listedBundle(manager, name)
+    if (listed.ok && listed.item?.installed) return versionDrift(fallbackResult, previous, listed.item)
+    return failedRestore(fallbackResult)
+  }
+  let again
+  try {
+    again = await manager.installBundle(previous.spec, restoreOptions(previous))
+  } catch {
+    const listed = await listedBundle(manager, name)
+    if (listed.ok && listed.item?.installed) return versionDrift(fallbackResult, previous, listed.item)
+    return failedRestore(fallbackResult)
+  }
+  const listed = await listedBundle(manager, name)
+  if (listed.ok && listedVersionMatches(previous, listed.item)) {
+    return { result: again, replaced: true, restored: true, restoredVersion: listed.item.version }
+  }
+  if (listed.ok && listed.item?.installed) return versionDrift(again, previous, listed.item)
+  if (!listed.ok) return admissionFromReceipt(again, previous) ?? failedRestore(again)
+  return failedRestore(again ?? fallbackResult)
+}
+
+/** Install `pin` only after the other version is confirmed absent.
+ * alpha.3 with HMR refuses `installBundle` with `already-installed` while the
+ * package name is still a profile dependency, including when the spec names
+ * another ref. Removal is checked with the bundle list, not the removal
+ * receipt. A record captured before that removal is not evidence the package
+ * is still installed when the list after removal fails. If that removal or the
+ * pin install fails, `previous.spec` is installed again so the package is not
+ * left missing. `unconfirmedResult`, when passed, is returned only when removal
+ * cannot be attempted, or the list after removal confirms the package is still
+ * installed. A list that cannot be read is not that confirmation: removal may
+ * have succeeded, so the captured source is installed again instead of
+ * reporting the pre-removal receipt as a version mismatch. A pin the manager
+ * accepted is not replaced by that source when the following list fails. The
+ * receipt is then the only evidence, and a receipt that names no version, or
+ * that has no captured version, is a failed restore.
+ */
+async function installPinned(manager, name, previous, pin, fallbackResult, unconfirmedResult) {
+  if (typeof manager.removeBundle !== 'function') {
+    if (unconfirmedResult) return unconfirmedResult
+    return reinstallOriginal(manager, name, previous, fallbackResult)
+  }
+  try {
+    await manager.removeBundle(name)
+  } catch { /* The list below decides whether the package is actually gone. */ }
+  const cleared = await listedBundle(manager, name)
+  if (!cleared.ok) return reinstallOriginal(manager, name, previous, fallbackResult)
+  if (cleared.item?.installed) {
+    if (listedVersionMatches(previous, cleared.item)) {
+      return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version }
+    }
+    if (unconfirmedResult) return unconfirmedResult
+    return reinstallOriginal(manager, name, previous, fallbackResult)
+  }
+  let pinned
+  try {
+    pinned = await manager.installBundle(pin, restoreOptions(previous))
+  } catch {
+    return reinstallOriginal(manager, name, previous, fallbackResult)
+  }
+  const after = await listedBundle(manager, name)
+  if (after.ok && listedVersionMatches(previous, after.item)) {
+    return { result: pinned, replaced: true, restored: true, restoredVersion: after.item.version }
+  }
+  if (!after.ok && !installNeedsRestore(pinned)) {
+    return admissionFromReceipt(pinned, previous) ?? failedRestore(pinned)
+  }
+  if (after.ok && after.item?.installed && !installNeedsRestore(pinned)) {
+    return versionDrift(pinned, previous, after.item)
+  }
+  return reinstallOriginal(manager, name, previous, pinned ?? fallbackResult)
+}
+
+/** Reinstall the package captured before removal when the replacement is absent.
+ * A floating GitHub source that comes back as a different version is removed,
+ * then installed once more at `github:<repo>#v<previous>` after the list shows
+ * it is gone. A source that cannot be pinned, or a pin that still does not
+ * match, is reported as installed at another version. If the removal or the
+ * pin fails, the captured source is installed again. A list failure does not
+ * reuse the record from before that removal. When a completed install's list
+ * then fails, the receipt is the evidence: a matching version is restored
+ * without a list confirmation, and a receipt with no version, or with no
+ * captured version to compare, is a failed restore. When the list immediately
+ * after the first restore install fails and that receipt names another
+ * version, the other version is removed and pinned only after the list shows
+ * it is gone. If that list confirms the package is still installed, the
+ * receipt stays a version mismatch and the pin is not installed. If that list
+ * cannot be read, the captured source is installed again, because the removal
+ * may have left the package missing. A completed pin is not
+ * replaced by the original source when its own list fails. An installed
+ * package whose captured version and receipt version are both missing, while
+ * the list shows it is present, is a version mismatch, not a missing package.
+ */
+export async function restoreIfMissing(manager, name, installed, previous) {
+  if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
+  if (typeof previous?.spec !== 'string' || typeof manager.listBundles !== 'function' || typeof manager.installBundle !== 'function') {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true }
+  }
+  let list
+  try { list = await manager.listBundles() }
+  catch { return { result: installed, replaced: true, restored: false, restoreFailed: true } }
+  if (bundleRecord(list, name)?.installed) return { result: installed, replaced: true, restored: false }
+  let restored
+  try {
+    restored = await manager.installBundle(previous.spec, restoreOptions(previous))
+  } catch {
+    return { result: installed, replaced: true, restored: false, restoreFailed: true }
+  }
+  let item
+  try { item = bundleRecord(await manager.listBundles(), name) }
+  catch {
+    const expected = typeof previous?.version === 'string' ? previous.version : undefined
+    const version = typeof restored?.version === 'string' ? restored.version : undefined
+    const pin = !installNeedsRestore(restored) && expected && version && version !== expected
+      ? githubPin(previous.spec, expected)
+      : undefined
+    if (!pin) return admissionFromReceipt(restored, previous) ?? failedRestore(restored)
+    const drift = versionDrift(restored, previous, { installed: true, version })
+    return installPinned(manager, name, previous, pin, restored, drift)
+  }
+  const identity = restoredIdentity(previous, restored, item)
+  if (identity === 'match') return { result: restored, replaced: true, restored: true, restoredVersion: item.version }
+  if (identity === 'missing') return { result: installed, replaced: true, restored: false, restoreFailed: true }
+  const expected = typeof previous?.version === 'string' ? previous.version : undefined
+  const listed = typeof item?.version === 'string' ? item.version : undefined
+  const pin = expected && listed && listed !== expected ? githubPin(previous.spec, expected) : undefined
+  if (!pin) return versionDrift(restored, previous, item)
+  return installPinned(manager, name, previous, pin, restored)
+}
+
+/** When an install or removal rejects, restore only after the list shows the package is gone.
+ * A package that is still installed, or a list that itself fails, stays unresolved so the
+ * original manager request can be reconciled. Returning a receipt means the operation is finished.
+ */
+async function recoverThrownInstall(manager, name, previous) {
+  if (typeof manager?.listBundles !== 'function') return undefined
+  let list
+  try { list = await manager.listBundles() }
+  catch { return undefined }
+  if (bundleRecord(list, name)?.installed) return undefined
+  return restoreIfMissing(manager, name, { application: 'failed', error: { code: 'install-failed' } }, previous)
+}
+
+/** Install a package, and when HMR refuses an installed package, remove it first.
+ * The follow-up install is the continuation of `removeBundle`'s promise. Removal
+ * disposes the bundle that called it, so this function must not read that
+ * bundle's closed flag or abort signal. `stop-profile` is the manager's claim
+ * that HMR is off and the package stayed installed. The list is checked before
+ * that claim is trusted; a package that is still listed is installed over.
+ * A failed removal is not followed by the new install. The bundle list is
+ * read anyway: a failure receipt can still mean the package is gone, and then
+ * `previous` is installed again. A list that cannot be read does not count as
+ * absence. `stop-profile` with the package still listed installs over it.
+ * If the replacement install fails and the package is gone, `previous` is
+ * installed again under a new request id.
+ */
+export async function installPreservingPackage(manager, name, spec, options, previous) {
+  let result
+  try {
+    result = await manager.installBundle(spec, options)
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name, previous)
+    if (recovered) return recovered
+    throw error
+  }
+  if (result?.error?.code !== 'already-installed' || typeof manager.removeBundle !== 'function') {
+    return { result, replaced: false, restored: false }
+  }
+  let removed
+  try {
+    removed = await manager.removeBundle(name)
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name, previous)
+    if (recovered) return recovered
+    throw error
+  }
+  if (installNeedsRestore(removed)) {
+    if (await bundlePresence(manager, name) === 'absent') {
+      return restoreIfMissing(manager, name, removed ?? { application: 'failed' }, previous)
+    }
+    if (removed?.error?.code !== 'stop-profile') {
+      return { result: removed ?? { application: 'failed' }, replaced: true, restored: false }
+    }
+  }
+  let installed
+  try {
+    installed = await manager.installBundle(spec, options)
+  } catch (error) {
+    const recovered = await recoverThrownInstall(manager, name, previous)
+    if (recovered) return recovered
+    throw error
+  }
+  if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
+  return restoreIfMissing(manager, name, installed, previous)
 }
 export function packageManifest(bytes) {
   let tar
@@ -320,6 +704,8 @@ export class PluginUpdates {
   }
   async execute(candidate, operation) {
     let managerInvoked = false
+    let activeManager
+    let previous
     try {
       const before = await this.capability()
       const fresh = await this.getCandidate(before.bundle.version ?? this.version)
@@ -358,17 +744,52 @@ export class PluginUpdates {
       if (this.closed || this.isBusy() || final.bundle.source !== before.bundle.source) throw new Error('busy')
       if (compareVersions(candidate.version, final.bundle.version) <= 0) throw new Error('stale-candidate')
       managerInvoked = true
-      const result = await final.manager.installBundle(spec, {
+      activeManager = final.manager
+      // Capture the manager, the ON/OFF bit, the version, and the installed spec before removal.
+      // removeBundle disposes this plugin; installPreservingPackage continues on the manager.
+      previous = {
+        spec: final.bundle.source,
+        enabled: final.bundle.enabled,
+        version: final.bundle.version,
+        requestId: () => updateRequestId(),
+      }
+      const admission = await installPreservingPackage(final.manager, PACKAGE, spec, {
         enabled: final.bundle.enabled,
         requestId: operation.requestId,
         saveExact: true,
-      })
+      }, previous)
+      const result = admission.result
+      const recovered = settleRecovery(operation, admission)
+      if (!recovered && (result?.error?.code === 'already-installed' || (admission.replaced && (result?.application === 'failed' || result?.error)))) {
+        operation.reason = 'replace'
+      }
       operation.result = safeResult(result)
-      const installed = (await final.manager.listBundles()).find(item => item.name === PACKAGE)
-      operation.status = resultState(result, operation.version, this.version, installed)
+      // A later listBundles failure must not replace a completed restore, or a
+      // confirmed version mismatch, with `unknown`. Unknown blocks the next check.
+      if (!recovered) {
+        const installed = (await final.manager.listBundles()).find(item => item.name === PACKAGE)
+        operation.status = resultState(result, operation.version, this.version, installed)
+      }
     } catch (error) {
-      operation.status = managerInvoked ? 'unknown' : 'failed'
-      operation.reason = reasonOf(error)
+      // A rejection after the manager was called must not stay `unknown` once the
+      // package is confirmed absent. Unknown blocks the next check. If the list
+      // still shows the package, or the list itself fails, keep unknown so
+      // reconcile can ask the manager about the original request.
+      let recovered
+      if (managerInvoked && activeManager && previous) {
+        try {
+          const list = await activeManager.listBundles()
+          if (!bundleRecord(list, PACKAGE)?.installed) {
+            recovered = await restoreIfMissing(activeManager, PACKAGE, { application: 'failed', error: { code: 'install-failed' } }, previous)
+          }
+        } catch { recovered = undefined }
+      }
+      if (settleRecovery(operation, recovered)) {
+        operation.result = safeResult(recovered.result)
+      } else {
+        operation.status = managerInvoked ? 'unknown' : 'failed'
+        operation.reason = reasonOf(error)
+      }
     }
     try {
       await this.save(operation)
@@ -403,14 +824,18 @@ export class PluginUpdates {
     }
     const bundle = (await this.manager()?.listBundles())?.find(item => item.name === PACKAGE)
     const installed = bundle?.version
-    if (operation.result) operation.status = resultState(operation.result, operation.version, this.version, bundle)
+    const recovery = operation.reason === 'restored' || operation.reason === 'restore-failed' || operation.reason === 'version-differs'
+    if (operation.result && !recovery) operation.status = resultState(operation.result, operation.version, this.version, bundle)
+    if (recovery) operation.status = 'failed'
     // A completed receipt cannot describe a later installation made by the
     // normal manager UI/CLI. Keep the old request, but report the actual need
     // for restart instead of leaving that completed request unknown forever.
-    if (operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
+    if (!recovery && operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
       compareVersions(installed, operation.version) > 0) {
       return { ...this.base(), ...operation, installedVersion: installed,
-        status: this.version === installed ? 'overridden' : 'restart-required' }
+        // The recorded operation is older than the bundle now running. That is
+        // not a settings override of this operation's own install.
+        status: this.version === installed ? 'superseded' : 'restart-required' }
     }
     if (
       ['installing', 'restart-required', 'unknown', 'applied'].includes(operation.status) &&
@@ -421,7 +846,8 @@ export class PluginUpdates {
           ? 'applied'
           : 'unknown'
     }
-    return { ...this.base(), ...operation, installedVersion: installed }
+    const shown = typeof installed === 'string' ? installed : operation.installedVersion
+    return { ...this.base(), ...operation, installedVersion: shown }
   }
   dispose() {
     this.closed = true

@@ -1,5 +1,6 @@
 import React from 'react'
 import * as ReactDom from 'react-dom'
+import { createRoot } from 'react-dom/client'
 import * as ReactJsxRuntime from 'react/jsx-runtime'
 import { Context } from '@deepseek-ai/cordis'
 import { apply as renderer } from '@deepseek-ai/dsh-client-ui-renderer/client'
@@ -10,6 +11,17 @@ const factories=new Map()
 window.__ModuleLoader__={load:({id,factory})=>factories.set(id,factory)}
 window.mountPlugins=async()=>{
  const ctx=new Context()
+ const remoteListeners=new Map()
+ const remote={
+  $on(event,listener){
+   const list=remoteListeners.get(event)??new Set()
+   list.add(listener)
+   remoteListeners.set(event,list)
+   return()=>list.delete(listener)
+  },
+  emit(event,...args){for(const listener of remoteListeners.get(event)??[])listener(...args)},
+ }
+ ctx.provide('remote',remote)
  const locale=new LocaleRuntime(ctx)
  // Simulate a host with Japanese available; this fixture loads no language pack.
  ctx.effect(()=>locale.addLanguage({id:'ja',label:'日本語',fallback:'en'}))
@@ -27,13 +39,24 @@ window.mountPlugins=async()=>{
   {renderSlot('settings.models.footer',{})}
  </main>)
  const loaded=[]
+ const shared={'react':React,'react-dom':ReactDom,'react/jsx-runtime':ReactJsxRuntime}
+ shared['@deepseek-ai/dsh-client-ui-primitives']=window.__DSH_UI_PRIMITIVES_FACTORY__(specifier=>{if(specifier in shared)return shared[specifier];throw new Error(`Unexpected primitive dependency ${specifier}`)})
  for(const id of ['@local/dsh-pi-login']){
-  const shared={'react':React,'react-dom':ReactDom,'react/jsx-runtime':ReactJsxRuntime}
   const plugin=factories.get(id)(specifier=>{if(specifier in shared)return shared[specifier];throw new Error(`Unexpected external ${specifier}`)})
   const fiber=ctx.plugin(plugin);await fiber.await();loaded.push(fiber)
  }
  await locale.setLocale('ja')
  document.documentElement.lang='ja'
  const unmount=ctx.uiRenderer.mount(document.getElementById('app'))
- window.testRuntime={ctx,locale,dispose:async()=>{unmount();for(const fiber of loaded.reverse())await fiber.dispose();await root.dispose();await ctx.fiber.dispose()}}
+ const hostNode=document.createElement('div')
+ document.body.append(hostNode)
+ const hostApi={}
+ function HostLayer(){
+  const [open,setOpen]=React.useState(false)
+  hostApi.setOpen=setOpen
+  if(!open)return null
+  return React.createElement(shared['@deepseek-ai/dsh-client-ui-primitives'].Modal,{open:true,title:'Host layer',closeLabel:'Close host',onClose:()=>setOpen(false)},'Host dialog')
+ }
+ createRoot(hostNode).render(React.createElement(HostLayer))
+ window.testRuntime={ctx,locale,emitRemote:(name,...args)=>remote.emit(name,...args),openHostModal:()=>hostApi.setOpen(true),closeHostModal:()=>hostApi.setOpen(false),dispose:async()=>{unmount();hostApi.setOpen?.(false);for(const fiber of loaded.reverse())await fiber.dispose();await root.dispose();await ctx.fiber.dispose()}}
 }

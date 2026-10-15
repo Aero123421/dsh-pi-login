@@ -2,12 +2,13 @@ import React, { useEffect, useId, useRef, useState, useSyncExternalStore } from 
 import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { LoginController } from './controller.mjs'
 import { UpdateController } from './update-controller.mjs'
+import { createModelEditor } from './model-snapshot.mjs'
+import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
 import { en, ja } from './locales.mjs'
 import css from './styles.css'
-import controlsCss from '../.cache/native-controls.css'
 
 const NS = 'dsh.piLogin'
-export const inject = ['slots', 'locale', 'connection']
+export const inject = ['slots', 'locale', 'connection', 'remote']
 
 function useCopy(locale) {
   useSyncExternalStore(listener => locale.subscribe(listener), () => locale.getSnapshot().revision)
@@ -19,16 +20,6 @@ function safeUrl(value) {
     const url = new URL(value)
     if (url.protocol === 'https:' || (url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) return url.href
   } catch {}
-}
-
-/** Dates follow the UI language, not the browser default. */
-function time(value, dateOnly = false) {
-  if (!value) return undefined
-  const date = new Date(value)
-  if (Number.isNaN(date.valueOf())) return dateOnly ? value : undefined
-  const lang = document.documentElement.lang || undefined
-  try { return new Intl.DateTimeFormat(lang, dateOnly ? { dateStyle: 'medium' } : { dateStyle: 'medium', timeStyle: 'short' }).format(date) }
-  catch { return date.toLocaleString() }
 }
 
 // A password-type field makes browsers treat the input before it as a username
@@ -154,6 +145,7 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
 
 function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
   const [controller] = useState(() => sourceController.scoped(entry))
+  const editorRef = useRef()
   const [snapshot, setSnapshot] = useState()
   const [search, setSearch] = useState('')
   const [pending, setPending] = useState(() => new Set())
@@ -161,34 +153,51 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
   const [error, setError] = useState(false)
   const [refreshError, setRefreshError] = useState('')
   const refreshAbort = useRef()
-  const generation = useRef(0)
   const queue = useRef(Promise.resolve())
   const lifetime = useRef(new AbortController())
   useEffect(() => {
+    const editor = createModelEditor()
+    editorRef.current = editor
     const abort = new AbortController()
-    void controller.call('models', { connectionId: entry.connectionId }, abort.signal).then(value => { if (!abort.signal.aborted) setSnapshot(value) }, () => { if (!abort.signal.aborted) setError(true) })
-    return () => { lifetime.current.abort(); abort.abort(); refreshAbort.current?.abort(); generation.current++ }
+    const gate = editor.beginReload()
+    void controller.call('models', { connectionId: entry.connectionId }, abort.signal).then(value => {
+      if (abort.signal.aborted || !gate.accept(value)) return
+      setSnapshot(editor.project(value))
+    }, () => { if (!abort.signal.aborted) setError(true) })
+    return () => {
+      lifetime.current.abort()
+      lifetime.current = new AbortController()
+      abort.abort()
+      refreshAbort.current?.abort()
+      editor.invalidate()
+      setPending(new Set())
+    }
   }, [entry.connectionId])
   async function reload() {
-    const request = ++generation.current
+    const editor = editorRef.current
+    const gate = editor.beginReload()
     refreshAbort.current?.abort()
     const abort = new AbortController(); refreshAbort.current = abort
     setReloading(true); setRefreshError(''); setError(false)
     try {
       const next = await controller.call('refresh-models', { connectionId: entry.connectionId }, abort.signal)
-      if (!abort.signal.aborted && request === generation.current) setSnapshot(next)
+      if (!abort.signal.aborted && gate.accept(next)) setSnapshot(editor.project(next))
     } catch (error) {
-      if (!abort.signal.aborted && request === generation.current) {
+      if (!abort.signal.aborted && gate.current()) {
         const code = String(error.code ?? error.message).split('/').pop()
         setRefreshError(snapshot?.refresh?.errors?.[code] ?? 'catalogRefreshFailed')
       }
-    } finally { if (!abort.signal.aborted && request === generation.current) setReloading(false) }
+    } finally { if (!abort.signal.aborted && gate.current()) setReloading(false) }
   }
   // Each switch saves on its own; writes are serialized so every one uses the latest revision.
+  // A catalog response that started before the save, or that is older than the
+  // published revision, cannot put the switch back.
   function toggle(model, enabled) {
+    const editor = editorRef.current
     setError(false)
+    const handle = editor.beginToggle(model, enabled)
     setPending(current => new Set(current).add(model))
-    setSnapshot(current => ({ ...current, models: current.models.map(row => row.id === model ? { ...row, enabled } : row) }))
+    setSnapshot(current => handle.overlay(current))
     queue.current = queue.current.then(async () => {
       const signal = lifetime.current.signal
       if (signal.aborted) return
@@ -196,13 +205,14 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
         const latest = await controller.call('models', { connectionId: entry.connectionId }, signal)
         if (signal.aborted) return
         await controller.mutation('set-model', { connectionId: entry.connectionId, model, enabled, revision: latest.revision }, signal)
+        if (signal.aborted) return
+        const after = await controller.call('models', { connectionId: entry.connectionId }, signal)
+        if (!signal.aborted && handle.accept(after)) setSnapshot(handle.overlay(after))
       } catch { if (!signal.aborted) setError(true) }
-      if (signal.aborted) return
-      try {
-        const latest = await controller.call('models', { connectionId: entry.connectionId }, signal)
-        if (!signal.aborted) setSnapshot(latest)
-      } catch { if (!signal.aborted) setError(true) }
-      if (!signal.aborted) setPending(current => { const next = new Set(current); next.delete(model); return next })
+      finally {
+        handle.finish()
+        if (!signal.aborted) setPending(current => { const next = new Set(current); next.delete(model); return next })
+      }
     })
     void queue.current.then(() => { if (!lifetime.current.signal.aborted) return controller.refresh() }).catch(() => {})
   }
@@ -256,7 +266,7 @@ export function UpdateUI({ controller, t }) {
   const [checked, setChecked] = useState(false)
   useEffect(() => { void controller.load() }, [controller])
   const active = ['checking', 'starting', 'preparing', 'installing'].includes(state.status)
-  const messages = { idle: 'updateIdle', checking: 'updateChecking', current: 'updateCurrent', available: 'updateAvailable', blocked: 'updateBlocked', starting: 'updatePreparing', preparing: 'updatePreparing', installing: 'updateInstalling', 'restart-required': 'updateRestart', applied: 'updateApplied', failed: 'updateFailed', cancelled: 'updateCancelled', overridden: 'updateOverridden', unknown: 'updateUnknown' }
+  const messages = { idle: 'updateIdle', checking: 'updateChecking', current: 'updateCurrent', available: 'updateAvailable', blocked: 'updateBlocked', starting: 'updatePreparing', preparing: 'updatePreparing', installing: 'updateInstalling', 'restart-required': 'updateRestart', applied: 'updateApplied', failed: 'updateFailed', cancelled: 'updateCancelled', overridden: 'updateOverridden', superseded: 'updateSuperseded', unknown: 'updateUnknown' }
   // Before the user asks, only states that need attention are shown.
   const quiet = !checked && ['idle', 'blocked', 'current'].includes(state.status)
   return <div className="dsh-pi-updates">
@@ -271,6 +281,8 @@ export function UpdateUI({ controller, t }) {
     {quiet ? null : <>
       <p role={['failed', 'blocked'].includes(state.status) ? 'alert' : 'status'}>{t(messages[state.status] || 'updateUnknown')}</p>
       {state.reason ? <p className="dsh-pi-muted">{t(`updateReason_${state.reason}`) || t('updateReason_network')} <a className="dsh-pi-link" href="https://github.com/Aero123421/dsh-pi-login/releases" target="_blank" rel="noopener noreferrer">{t('updateManual')}</a></p> : null}
+      {state.reason === 'restored' && state.restoredVersion ? <p className="dsh-pi-muted">{t('updateRestoredVersion').replace('{version}', state.restoredVersion)}</p> : null}
+      {state.reason === 'version-differs' ? <p className="dsh-pi-muted">{versionDiffersLine(state, t)}</p> : null}
       {state.candidate ? <><p>{state.runtimeVersion} → {state.candidate.version} · DSH {state.candidate.compatibility}</p><p className="dsh-pi-update-notes">{state.candidate.notes}</p></> : null}
       {state.result?.stage ? <p className="dsh-pi-muted">{t('updateStage')}: {state.result.stage}{state.result.error?.code ? ` · ${state.result.error.code}` : ''}</p> : null}
     </>}
@@ -285,11 +297,13 @@ function usageWindow(window, t) {
   return window.scope === 'account' ? t('accountQuota') : Object.hasOwn(en, `usageScope_${window.scope}`) ? t(`usageScope_${window.scope}`) : window.scope
 }
 
+const MAX_TIMER = 2 ** 31 - 1
 function UsagePanel({ entry, controller: sourceController, t }) {
   const [controller] = useState(() => sourceController.scoped())
   const [snapshot, setSnapshot] = useState()
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
   const request = useRef()
   const generation = useRef(0)
   async function load(refresh = false) {
@@ -304,23 +318,32 @@ function UsagePanel({ entry, controller: sourceController, t }) {
     finally { if (!abort.signal.aborted && current === generation.current) setBusy(false) }
   }
   useEffect(() => { void load(); return () => { generation.current++; request.current?.abort() } }, [entry.connectionId])
-  const limited = snapshot?.status === 'rate-limited' && new Date(snapshot.retryAt).valueOf() > Date.now()
+  const limited = usageLimited(snapshot, now)
+  useEffect(() => {
+    if (!limited) return
+    const delay = Math.min(retryWait(snapshot.retryAt, Date.now()), MAX_TIMER)
+    const timer = setTimeout(() => setNow(Date.now()), delay)
+    const onVisible = () => { if (document.visibilityState === 'visible') setNow(Date.now()) }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', onVisible) }
+  }, [limited, snapshot?.retryAt])
   const windows = snapshot?.windows ?? []
   return <section className="dsh-pi-section dsh-pi-usage" aria-busy={busy} aria-label={t('usageTab')}>
     <div className="dsh-pi-toolbar"><h4>{t('usageTab')}</h4>
       <Button variant="ghost" size="sm" disabled={busy || limited} onClick={() => { void load(true) }}>{t(busy ? 'loading' : 'refreshUsage')}</Button></div>
-    {failed ? <p role="alert">{t('usageFailed')}</p> : null}
-    {snapshot && (!windows.length || snapshot.status !== 'available') ? <p role="status" className="dsh-pi-muted">{t(`usage_${snapshot.status}`)}</p> : null}
-    {limited && snapshot.retryAt ? <p className="dsh-pi-muted dsh-pi-small">{t('retryAt')}: {time(snapshot.retryAt)}</p> : null}
+    {failed ? <p role="alert">{t(snapshot ? 'usageRefreshFailed' : 'usageFailed')}</p> : null}
+    {failed && snapshot ? <p role="status" className="dsh-pi-muted">{t('usageRetained')}</p> : null}
+    {snapshot && !failed && (!windows.length || snapshot.status !== 'available') ? <p role="status" className="dsh-pi-muted">{t(`usage_${snapshot.status}`)}</p> : null}
+    {limited && snapshot.retryAt ? <p className="dsh-pi-muted dsh-pi-small">{t('retryAt')}: {formatTime(snapshot.retryAt)}</p> : null}
     {windows.map(window => <div key={window.id} className="dsh-pi-usage-window">
       <div className="dsh-pi-toolbar"><span>{usageWindow(window, t)}</span>
         {window.quotaState ? <strong>{t(`quota_${window.quotaState}`)}</strong> : typeof window.usedPercent === 'number' ? <strong>{window.usedPercent}% {t('used')}</strong> : <span className="dsh-pi-muted">{t('quota_unknown')}</span>}</div>
       {!window.quotaState && typeof window.usedPercent === 'number' ? <progress max="100" value={Math.min(100, Math.max(0, window.usedPercent))} aria-label={usageWindow(window, t)} /> : null}
       {window.quota ? <span className="dsh-pi-muted">{window.quota.estimated ? `${t('estimated')} · ` : ''}{window.quota.remaining != null ? `${t('remaining')}: ${window.quota.remaining}` : window.quota.used != null ? `${t('used')}: ${window.quota.used}` : t('quota_unknown')}{window.quota.total != null ? ` / ${window.quota.total}` : ''} {t(`unit_${window.quota.unit}`)}</span> : null}
-      {window.resetsAt ? <span className="dsh-pi-muted">{t('resets')}: {time(window.resetsAt)}</span> : window.resetsOn ? <span className="dsh-pi-muted">{t('resetDate')}: {time(window.resetsOn, true)}</span> : null}
+      {window.resetsAt ? <span className="dsh-pi-muted">{t('resets')}: {formatTime(window.resetsAt)}</span> : window.resetsOn ? <span className="dsh-pi-muted">{t('resetDate')}: {formatTime(window.resetsOn, { dateOnly: true })}</span> : null}
     </div>)}
     {snapshot?.checkedAt || snapshot?.sourceObservedAt ? <p className="dsh-pi-muted dsh-pi-small">
-      {snapshot.source === 'last-observed' ? `${t('lastObservedShort')} · ` : ''}{t(snapshot.sourceObservedAt ? 'observedAt' : 'checkedAt')}: {time(snapshot.sourceObservedAt ?? snapshot.checkedAt)}</p> : null}
+      {snapshot.source === 'last-observed' ? `${t('lastObservedShort')} · ` : ''}{t(snapshot.sourceObservedAt ? 'observedAt' : 'checkedAt')}: {formatTime(snapshot.sourceObservedAt ?? snapshot.checkedAt)}</p> : null}
   </section>
 }
 
@@ -401,16 +424,6 @@ function AddDialog({ state, controller: sourceController, t, onClose, onLogin, o
       </details></> : <p className="dsh-pi-muted">{t('oauthHint')}</p>}
     {error ? <p role="alert">{t(error)}</p> : null}
   </Modal>
-}
-
-function statusOf(entry) {
-  if (entry.deletionPending) return { dot: 'warning', copy: 'deletionPendingShort' }
-  if (entry.inFlight || entry.authStatus === 'updating') return { dot: 'ongoing', copy: 'busy' }
-  if (entry.authStatus === 'expired') return { dot: 'error', copy: 'authExpired' }
-  if (entry.authStatus === 'unavailable') return { dot: 'warning', copy: 'authUnavailable' }
-  if (!entry.configured) return { dot: 'idle', copy: 'notConnected' }
-  if (!entry.enabled) return { dot: 'idle', copy: 'statusOff' }
-  return { dot: 'done', copy: 'connected' }
 }
 
 /** One place for an account: status, usage, settings and removal. */
@@ -545,7 +558,7 @@ export function ConnectionUI({ controller, updates, locale }) {
   const [opened, setOpened] = useState()
   const [notice, setNotice] = useState('')
   const titleId = useId()
-  useEffect(() => { void controller.load() }, [controller])
+  useEffect(() => { const release = controller.retain(); void controller.load(); return release }, [controller])
   useEffect(() => { setOpened(undefined); setNotice('') }, [state.profileKey, state.generation])
   const needle = search.trim().toLocaleLowerCase()
   const groups = new Map()
@@ -574,7 +587,7 @@ export function ConnectionUI({ controller, updates, locale }) {
     {state.status === 'ready' && groups.size === 0 && !state.error ? <p className="dsh-pi-muted">{t(state.entries.length ? 'noResults' : 'emptyConnections')}</p> : null}
     {updates ? <UpdateUI controller={updates} t={t} /> : null}
     {opened?.kind === 'login' ? <LoginDialog {...opened} controller={controller} t={t} onClose={close} onModels={onModels} /> : null}
-    {opened?.kind === 'models' ? <ModelsDialog entry={opened.entry} controller={controller} t={t} onClose={close} /> : null}
+    {opened?.kind === 'models' ? <ModelsDialog key={opened.entry.connectionId} entry={opened.entry} controller={controller} t={t} onClose={close} /> : null}
     {opened?.kind === 'add' ? <AddDialog state={state} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
     {opened?.kind === 'settings' ? <ConnectionDialog key={opened.entry.connectionId} entry={opened.entry} state={state} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
   </section>
@@ -587,10 +600,27 @@ export function apply(ctx) {
   ctx.effect(() => () => controller.dispose(), 'dsh-pi-login: UI requests')
   ctx.effect(() => ctx.locale.register(NS, { en, ja }), 'dsh-pi-login: copy')
   ctx.effect(() => {
-    const style = document.createElement('style'); style.dataset.dshPiLogin = ''; style.textContent = controlsCss + css; document.head.append(style)
+    const style = document.createElement('style'); style.dataset.dshPiLogin = ''; style.textContent = css; document.head.append(style)
     return () => style.remove()
-  }, 'dsh-pi-login: official controls')
-  ctx.on('connection/reset', () => { void controller.refresh(); void updates.load() })
+  }, 'dsh-pi-login: styles')
+  ctx.effect(() => {
+    let timer
+    const refreshMounted = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        void controller.refreshIfMounted()
+        if (controller.mounts > 0) void updates.load()
+      }, 50)
+    }
+    const disposers = [
+      ctx.remote.$on('settings/document-updated', refreshMounted),
+      ctx.remote.$on('credentials/record-updated', refreshMounted),
+      ctx.remote.$on('credentials/reference-updated', refreshMounted),
+      ctx.remote.$on('llm/adapters-updated', refreshMounted),
+      ctx.on('connection/reset', () => { void controller.refresh(); void updates.load() }),
+    ]
+    return () => { clearTimeout(timer); for (const dispose of disposers) dispose() }
+  }, 'dsh-pi-login: connection events')
   const inject = () => ({ controller, updates, locale: ctx.locale })
   ctx.slots.inject('settings.models.footer', () => ctx.slots.register({ name: 'settings.models.footer', id: 'dsh-pi-login', order: 10, inject }, ConnectionUI))
 }

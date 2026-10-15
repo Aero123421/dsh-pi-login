@@ -264,10 +264,14 @@ export function connectionAuthFrom(ctx: Context, binding: ConnectionAuthBinding)
  * A pi-ai `AuthContext` over the harness credential plane and the host
  * filesystem.
  *
- * `env()` answers from the credential seam first, so a value a deployment
- * stored through the harness is found by a provider's own ambient discovery —
- * without this, that discovery reads only the process environment and a stored
- * `AWS_ACCESS_KEY_ID` is invisible to it. `fileExists()` answers about the host
+ * `env()` asks `credentials.resolve` first. When that call returns a value,
+ * this function returns that value and does not replace it with the launch
+ * environment. When resolve misses, or the credentials service is absent, it
+ * answers from the launch snapshot. Which of a stored ref, the process
+ * environment, and a dotenv file wins is decided by the Host credentials
+ * service, not here: DSH 0.2.1-alpha.3 resolves a stored ref before the launch
+ * environment, and 0.2.1-alpha.2 resolves the launch environment first.
+ * `fileExists()` answers about the host
  * process's own filesystem rather than the workspace `ctx.fs` seam, because the
  * paths it is asked about (`~/.aws/credentials`, application-default
  * credentials) are facts about where this process runs, not about the project

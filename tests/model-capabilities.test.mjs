@@ -45,6 +45,15 @@ test('a saved Muse catalog with native Contributor IDs has one Standard and one 
   assert.equal(optedOut.find(choice => choice.id === `${families[0]}::contributor`).enabled, false, 'An explicit old native opt-out must survive normalization')
 })
 
+test('Contributor Max is not inferred from the model name', () => {
+  const named = parseMuseCatalog([{ id: 'muse-spark-1.3', display_label: 'Muse Spark 1.3 Contributor Max', reasoning_effort_variants: ['high'] }])
+  assert.equal(museModels(named).get('muse-spark-1.3').thinkingLevelMap.max, null)
+  assert.deepEqual(getSupportedThinkingLevels(museModels(named).get('muse-spark-1.3')).includes('max'), false)
+  const omitted = parseMuseCatalog([{ id: 'muse-spark-1.3', display_label: 'Muse Spark 1.3' }])
+  assert.equal(omitted[0].efforts.includes('max'), true)
+  assert.equal(museModels(omitted).get('muse-spark-1.3').thinkingLevelMap.max, 'max')
+})
+
 test('a Contributor-only native model keeps its real ID, starts off, and never creates a missing Standard model', () => {
   const id = 'muse-wonder-full-1.0-contributor'
   const models = [...museModels(parseMuseCatalog([{ id }])).values()]

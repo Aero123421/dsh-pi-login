@@ -13,19 +13,36 @@ export async function checkConnectionControls(page, { mode, artifacts }) {
       await route.fulfill({ json: { type: 'server-response', rpcId: envelope.rpcId,
         result: { ok: true, value: { status: 'unsupported', windows: [] } } } })
     })
-    await page.getByRole('button', { name: 'Settings', exact: true }).waitFor()
-    // The native client establishes/replaces its initial connection after
-    // rendering the shell; that reset dismisses any open Settings modal.
-    await page.waitForTimeout(1500)
+    // The shell may show a first-run notice before the sidebar is interactive.
+    // 0.2.1-alpha.2 keeps a Settings button in the sidebar. 0.2.1-alpha.3 puts
+    // that command in the account menu; the Models page and its footer slot
+    // are unchanged.
     const welcome = page.getByRole('button', { name: 'Continue', exact: true })
+    const sidebarSettings = page.getByRole('button', { name: 'Settings', exact: true })
+    const accountMenu = page.getByRole('button', { name: 'Account menu', exact: true })
+    await Promise.race([
+      welcome.waitFor({ state: 'visible' }),
+      sidebarSettings.waitFor({ state: 'visible' }),
+      accountMenu.waitFor({ state: 'visible' }),
+    ])
     if (await welcome.isVisible()) {
       await welcome.click()
       await welcome.waitFor({ state: 'hidden' })
-      // Acknowledging DSH's first-run notice reloads the profile and its
-      // client bundles. Let that finish before opening a settings modal.
-      await page.waitForTimeout(1500)
     }
-    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    // The client replaces its connection after the shell renders. Opening
+    // Settings during that reset dismisses the dialog.
+    await page.waitForTimeout(1500)
+    await Promise.race([
+      sidebarSettings.waitFor({ state: 'visible' }),
+      accountMenu.waitFor({ state: 'visible' }),
+    ])
+    await page.waitForTimeout(1500)
+    if (await sidebarSettings.isVisible()) {
+      await sidebarSettings.click()
+    } else {
+      await accountMenu.click()
+      await page.getByRole('menuitem', { name: 'Settings', exact: true }).click()
+    }
     await page.getByRole('button', { name: 'Models', exact: true }).click()
     await page.getByRole('heading', { name: 'AI connections', exact: true }).waitFor()
     const name = 'Restart Muse fixture'

@@ -5,12 +5,14 @@ import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import assert from 'node:assert/strict'
 import { compileOfficial } from './upstream.mjs'
+import { bundlePrimitives } from './bundle-primitives.mjs'
 import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { modelChoices, fastModelId } from '../src/runtime/fast.ts'
 
 const artifactDir = process.env.DSH_TEST_ARTIFACT_DIR ?? 'work/contributor-model-review'
 const artifact = name => join(artifactDir, name)
 await mkdir(artifactDir, { recursive: true })
+await bundlePrimitives()
 await compileOfficial('scripts/browser-fixture.jsx', '.cache/browser-fixture.js', 'browser')
 await compileOfficial('.cache/host-entry.ts', '.cache/official-host.mjs')
 const { Context, AuthorizationService, MemoryCredentials, HostConnectionService, BrowserAuth, PiPlugin: host } = await import(pathToFileURL(resolve('.cache/official-host.mjs')).href)
@@ -87,7 +89,7 @@ ctx.authorization.registerFlow({ key: 'llm-pi-ai/openai-codex', label: 'OpenAI C
 } })
 const model = getBuiltinModels('openai-codex').find(model => model.id === 'gpt-6.1-sol')
 const fast = fastModelId(model.id)
-let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, museLoaded = false, usageCalls = 0, usageStatus = 'available'
+let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, museLoaded = false, usageCalls = 0, usageStatus = 'available', usageRetryAt = '2099-01-01T00:00:00.000Z'
 const full = 'muse-wonder-full-1.0'
 const catalogs = new host.ProviderCatalogs({
  meta: {
@@ -102,9 +104,11 @@ const plugin = ctx.plugin({ inject: ['authorization', 'credentials', 'connection
  connections: manager, registry, syncFlows: syncMuseFlows, catalogsFor: () => catalogs,
  usage: { get: async connection => {
   usageCalls++
-  return { integrationId: connection.integrationId, serviceId: connection.serviceId, connectionId: connection.connectionId, source: 'internal-http', sourceObservedAt: '2026-10-13T12:00:00.000Z', checkedAt: '2026-10-13T12:01:00.000Z', status: usageStatus, ...(usageStatus === 'rate-limited' ? { retryAt: '2099-01-01T00:00:00.000Z' } : {}), windows: [
+  if (usageStatus === 'fail') throw new Error('fixture-usage')
+  return { integrationId: connection.integrationId, serviceId: connection.serviceId, connectionId: connection.connectionId, source: 'internal-http', sourceObservedAt: '2026-10-13T12:00:00.000Z', checkedAt: '2026-10-13T12:01:00.000Z', status: usageStatus, ...(usageStatus === 'rate-limited' ? { retryAt: usageRetryAt } : {}), windows: [
    { id: 'primary', scope: 'account', usedPercent: 42, resetsAt: '2026-10-13T17:00:00.000Z', windowSeconds: 18000 },
    { id: 'secondary', scope: 'account', usedPercent: null, quotaState: 'unlimited', resetsAt: null, windowSeconds: null },
+   { id: 'calendar', scope: 'account', usedPercent: 10, resetsOn: '2026-10-15', windowSeconds: 86400 },
   ] }
  } },
  catalog: (provider, profile) => provider === 'meta' ? [
@@ -122,6 +126,7 @@ await plugin.await()
 const handler = ctx.connection.createSharedFetchHandler('/api')
 const files = new Map([
  ['/fixture.js', resolve('.cache/browser-fixture.js')], ['/login.js', resolve('dist/client.js')],
+ ['/primitives.js', resolve('.cache/primitives.js')], ['/primitives.css', resolve('.cache/primitives.css')],
  ['/base.css', resolve('.cache/upstream/packages/client/ui-theme/src/styles/base.css')], ['/tokens.css', resolve('.cache/upstream/packages/client/ui-theme/src/styles/design-platform.css')],
  ['/effects.css', resolve('.cache/upstream/packages/client/ui-theme/src/styles/gradient-shadow-text.css')],
 ])
@@ -138,7 +143,7 @@ const server = createServer(async (req, res) => {
   }
   if (files.has(url.pathname)) { res.setHeader('content-type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await readFile(files.get(url.pathname))); return }
   if (!auth.authorizeIndex(req, res)) return
-  res.setHeader('content-type', 'text/html'); res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi login test fixture</title><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/base.css"><link rel="stylesheet" href="/effects.css"><style>body{margin:0;background:var(--dsw-alias-bg-layer-1)}</style></head><body><div id="app"></div><script src="/fixture.js"></script><script src="/login.js"></script><script>mountPlugins()</script></body></html>')
+  res.setHeader('content-type', 'text/html'); res.end('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pi login test fixture</title><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/base.css"><link rel="stylesheet" href="/effects.css"><link rel="stylesheet" href="/primitives.css"><style>body{margin:0;background:var(--dsw-alias-bg-layer-1)}</style></head><body><div id="app"></div><script src="/primitives.js"></script><script src="/fixture.js"></script><script src="/login.js"></script><script>mountPlugins()</script></body></html>')
  } catch { res.writeHead(500); res.end('test fixture failed') }
 })
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
@@ -162,6 +167,14 @@ try {
  assert.ok(page.url().startsWith(base)); assert.equal(await page.title(), 'Pi login test fixture')
  await page.getByRole('heading', { name: 'AI接続', exact: true }).waitFor()
  await page.getByText('個人Pro', { exact: true }).waitFor()
+ const connectionRow = name => page.locator('.dsh-pi-connection-row').filter({ has: page.getByRole('button', { name: `接続設定: ${name}`, exact: true }) })
+ await connectionRow('会社API').getByText('APIキー · 保存済み・未確認', { exact: true }).waitFor()
+ await page.screenshot({ path: artifact('saved-unverified.png') })
+ manager.markVerified('c-company')
+ await page.evaluate(() => testRuntime.emitRemote('credentials/record-updated'))
+ await connectionRow('会社API').getByText('APIキー · 接続済み', { exact: true }).waitFor()
+ await connectionRow('検証API').getByText('APIキー · 保存済み・未確認', { exact: true }).waitFor()
+ await page.screenshot({ path: artifact('saved-verified.png') })
  assert.equal(await page.locator('vite-error-overlay, #webpack-dev-server-client-overlay').count(), 0)
  assert.equal(await page.locator('.dsh-pi-card').count(), 0)
  assert.equal(await page.getByText(/^Piプラグイン/).count(), 1)
@@ -500,7 +513,30 @@ try {
  await settingsButton('個人Pro').click()
  await page.getByText('42% 使用', { exact: true }).waitFor()
  await page.getByText('無制限', { exact: true }).waitFor()
+ await page.getByText(/リセット日（時刻の情報なし）:\s*2026[/年]10[/月]15/).waitFor()
+ await page.screenshot({ path: artifact('usage-reset-date.png') })
  assert.equal(usageCalls, usageBefore + 1)
+ usageStatus = 'fail'
+ await page.getByRole('button', { name: '利用状況を更新', exact: true }).click()
+ await page.getByText('利用状況を更新できませんでした。再試行してください。', { exact: true }).waitFor()
+ await page.getByText('下の数値は前回の取得結果です。今回の更新では確認できていません。', { exact: true }).waitFor()
+ await page.getByText('42% 使用', { exact: true }).waitFor()
+ await page.screenshot({ path: artifact('usage-refresh-failed.png') })
+ usageStatus = 'available'
+ await page.getByRole('button', { name: '利用状況を更新', exact: true }).click()
+ await page.getByText('42% 使用', { exact: true }).waitFor()
+ usageRetryAt = new Date(Date.now() + 600).toISOString()
+ usageStatus = 'rate-limited'
+ const callsAtShortLimit = usageCalls
+ await page.getByRole('button', { name: '利用状況を更新', exact: true }).click()
+ assert.equal(await page.getByRole('button', { name: '利用状況を更新', exact: true }).isDisabled(), true)
+ await page.waitForFunction(() => [...document.querySelectorAll('button')].some(item => item.textContent === '利用状況を更新' && !item.disabled))
+ assert.equal(usageCalls, callsAtShortLimit + 1)
+ await page.screenshot({ path: artifact('usage-retry-enabled.png') })
+ usageRetryAt = '2099-01-01T00:00:00.000Z'
+ usageStatus = 'available'
+ await page.getByRole('button', { name: '利用状況を更新', exact: true }).click()
+ await page.getByText('42% 使用', { exact: true }).waitFor()
  const beforeUsage = structuredClone(settingsValue.connections)
  for (const status of ['stale', 'auth-required', 'unobserved', 'error', 'rate-limited']) {
   usageStatus = status
@@ -548,6 +584,19 @@ try {
  await page.screenshot({ path: artifact('plugin-update-restart-mobile.png') })
  await page.evaluate(async () => { await testRuntime.locale.setLocale('en'); document.documentElement.lang = 'en' })
  await page.getByRole('heading', { name: 'AI connections', exact: true }).waitFor()
+ await page.evaluate(() => testRuntime.openHostModal())
+ await page.getByRole('dialog', { name: 'Host layer', exact: true }).waitFor()
+ await page.evaluate(() => {
+  const button = [...document.querySelectorAll('button')].find(item => item.textContent === 'Add connection')
+  button?.click()
+ })
+ await page.getByRole('dialog', { name: 'Add connection', exact: true }).waitFor()
+ await page.keyboard.press('Escape')
+ await page.getByRole('dialog', { name: 'Add connection', exact: true }).waitFor({ state: 'hidden' })
+ await page.getByRole('dialog', { name: 'Host layer', exact: true }).waitFor()
+ await page.screenshot({ path: artifact('shared-modal-escape.png') })
+ await page.keyboard.press('Escape')
+ await page.getByRole('dialog', { name: 'Host layer', exact: true }).waitFor({ state: 'hidden' })
  await page.evaluate(() => testRuntime.dispose())
  assert.equal(await page.locator('style[data-dsh-pi-login]').count(), 0)
  assert.deepEqual(errors, []); assert.deepEqual(consoleErrors, [])
