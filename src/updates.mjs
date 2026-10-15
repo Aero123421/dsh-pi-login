@@ -281,15 +281,17 @@ function failedRestore(result) {
 /** A completed install receipt can name the version when the bundle list cannot be read.
  * In that case `restored: true` means only that `result.version` equals the
  * captured version. The list was not read, so the package is not confirmed
- * installed at that version. A receipt that itself needs restore, or that
- * names no version, does not prove the package is present. Callers must pass
- * the receipt of the install just attempted, not an earlier one.
+ * installed at that version. A receipt that itself needs restore, that names
+ * no version, or that has no captured version to compare, does not prove the
+ * package is present. Callers must pass the receipt of the install just
+ * attempted, not an earlier one. A different version is a mismatch only when
+ * the captured version is known.
  */
 function admissionFromReceipt(result, previous) {
   if (!result || installNeedsRestore(result)) return undefined
   const version = typeof result.version === 'string' ? result.version : undefined
-  if (typeof version !== 'string') return undefined
-  if (typeof previous?.version === 'string' && version === previous.version) {
+  if (typeof version !== 'string' || typeof previous?.version !== 'string') return undefined
+  if (version === previous.version) {
     return { result, replaced: true, restored: true, restoredVersion: version }
   }
   return versionDrift(result, previous, { installed: true, version })
@@ -335,12 +337,16 @@ async function reinstallOriginal(manager, name, previous, fallbackResult) {
  * receipt. A record captured before that removal is not evidence the package
  * is still installed when the list after removal fails. If that removal or the
  * pin install fails, `previous.spec` is installed again so the package is not
- * left missing. A pin the manager accepted is not replaced by that source when
- * the following list fails. The receipt is then the only evidence, and a
- * receipt that names no version is a failed restore.
+ * left missing. `unconfirmedResult`, when passed, is returned instead of that
+ * reinstall when removal cannot be attempted, or the list does not show the
+ * package is gone. A pin the manager
+ * accepted is not replaced by that source when the following list fails. The
+ * receipt is then the only evidence, and a receipt that names no version, or
+ * that has no captured version, is a failed restore.
  */
-async function installPinned(manager, name, previous, pin, fallbackResult) {
+async function installPinned(manager, name, previous, pin, fallbackResult, unconfirmedResult) {
   if (typeof manager.removeBundle !== 'function') {
+    if (unconfirmedResult) return unconfirmedResult
     return reinstallOriginal(manager, name, previous, fallbackResult)
   }
   try {
@@ -351,6 +357,7 @@ async function installPinned(manager, name, previous, pin, fallbackResult) {
     if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
       return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version }
     }
+    if (unconfirmedResult) return unconfirmedResult
     return reinstallOriginal(manager, name, previous, fallbackResult)
   }
   let pinned
@@ -379,13 +386,16 @@ async function installPinned(manager, name, previous, pin, fallbackResult) {
  * match, is reported as installed at another version. If the removal or the
  * pin fails, the captured source is installed again. A list failure does not
  * reuse the record from before that removal. When a completed install's list
- * then fails, including the list immediately after the first restore install,
- * the receipt is the evidence: a matching version is restored without a list
- * confirmation, another version is a mismatch, and a receipt with no version
- * is a failed restore. A completed pin is not replaced by the original source
- * in that case. An installed package whose captured version and receipt
- * version are both missing, while the list shows it is present, is a version
- * mismatch, not a missing package.
+ * then fails, the receipt is the evidence: a matching version is restored
+ * without a list confirmation, and a receipt with no version, or with no
+ * captured version to compare, is a failed restore. When the list immediately
+ * after the first restore install fails and that receipt names another
+ * version, the other version is removed and pinned only after the list shows
+ * it is gone. If that removal cannot be confirmed, the receipt stays a
+ * version mismatch and the pin is not installed. A completed pin is not
+ * replaced by the original source when its own list fails. An installed
+ * package whose captured version and receipt version are both missing, while
+ * the list shows it is present, is a version mismatch, not a missing package.
  */
 export async function restoreIfMissing(manager, name, installed, previous) {
   if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
@@ -404,7 +414,16 @@ export async function restoreIfMissing(manager, name, installed, previous) {
   }
   let item
   try { item = bundleRecord(await manager.listBundles(), name) }
-  catch { return admissionFromReceipt(restored, previous) ?? failedRestore(restored) }
+  catch {
+    const expected = typeof previous?.version === 'string' ? previous.version : undefined
+    const version = typeof restored?.version === 'string' ? restored.version : undefined
+    const pin = !installNeedsRestore(restored) && expected && version && version !== expected
+      ? githubPin(previous.spec, expected)
+      : undefined
+    if (!pin) return admissionFromReceipt(restored, previous) ?? failedRestore(restored)
+    const drift = versionDrift(restored, previous, { installed: true, version })
+    return installPinned(manager, name, previous, pin, restored, drift)
+  }
   const identity = restoredIdentity(previous, restored, item)
   if (identity === 'match') return { result: restored, replaced: true, restored: true, restoredVersion: item.version }
   if (identity === 'missing') return { result: installed, replaced: true, restored: false, restoreFailed: true }

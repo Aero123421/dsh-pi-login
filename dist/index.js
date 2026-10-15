@@ -3004,8 +3004,8 @@ function failedRestore(result) {
 function admissionFromReceipt(result, previous) {
   if (!result || installNeedsRestore(result)) return void 0;
   const version = typeof result.version === "string" ? result.version : void 0;
-  if (typeof version !== "string") return void 0;
-  if (typeof previous?.version === "string" && version === previous.version) {
+  if (typeof version !== "string" || typeof previous?.version !== "string") return void 0;
+  if (version === previous.version) {
     return { result, replaced: true, restored: true, restoredVersion: version };
   }
   return versionDrift(result, previous, { installed: true, version });
@@ -3032,8 +3032,9 @@ async function reinstallOriginal(manager, name2, previous, fallbackResult) {
   if (!listed.ok) return admissionFromReceipt(again, previous) ?? failedRestore(again);
   return failedRestore(again ?? fallbackResult);
 }
-async function installPinned(manager, name2, previous, pin, fallbackResult) {
+async function installPinned(manager, name2, previous, pin, fallbackResult, unconfirmedResult) {
   if (typeof manager.removeBundle !== "function") {
+    if (unconfirmedResult) return unconfirmedResult;
     return reinstallOriginal(manager, name2, previous, fallbackResult);
   }
   try {
@@ -3045,6 +3046,7 @@ async function installPinned(manager, name2, previous, pin, fallbackResult) {
     if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
       return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version };
     }
+    if (unconfirmedResult) return unconfirmedResult;
     return reinstallOriginal(manager, name2, previous, fallbackResult);
   }
   let pinned;
@@ -3087,7 +3089,12 @@ async function restoreIfMissing(manager, name2, installed, previous) {
   try {
     item = bundleRecord(await manager.listBundles(), name2);
   } catch {
-    return admissionFromReceipt(restored, previous) ?? failedRestore(restored);
+    const expected2 = typeof previous?.version === "string" ? previous.version : void 0;
+    const version = typeof restored?.version === "string" ? restored.version : void 0;
+    const pin2 = !installNeedsRestore(restored) && expected2 && version && version !== expected2 ? githubPin(previous.spec, expected2) : void 0;
+    if (!pin2) return admissionFromReceipt(restored, previous) ?? failedRestore(restored);
+    const drift = versionDrift(restored, previous, { installed: true, version });
+    return installPinned(manager, name2, previous, pin2, restored, drift);
   }
   const identity = restoredIdentity(previous, restored, item);
   if (identity === "match") return { result: restored, replaced: true, restored: true, restoredVersion: item.version };
