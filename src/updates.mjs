@@ -262,32 +262,96 @@ async function bundlePresence(manager, name) {
   }
 }
 
+async function listedBundle(manager, name) {
+  try {
+    return { ok: true, item: bundleRecord(await manager.listBundles(), name) }
+  } catch {
+    return { ok: false }
+  }
+}
+
+function listedVersionMatches(previous, item) {
+  return item?.installed === true && typeof previous?.version === 'string' && item.version === previous.version
+}
+
+/** Put the captured source back when a pin cannot replace the package that is already there.
+ * A running alpha.3 manager returns `already-installed` for any spec of a package
+ * that is still in the profile, so this install runs only after that package is
+ * gone, or when it is still listed and the call itself reports that refusal.
+ * An installed package at the end is a version mismatch. A package that is
+ * still absent is a failed restore.
+ */
+async function reinstallOriginal(manager, name, previous, fallbackResult, fallbackItem) {
+  if (typeof previous?.spec !== 'string' || typeof manager.installBundle !== 'function') {
+    const listed = await listedBundle(manager, name)
+    if (listed.ok && listed.item?.installed) return versionDrift(fallbackResult, previous, listed.item)
+    if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem)
+    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true }
+  }
+  let again
+  try {
+    again = await manager.installBundle(previous.spec, restoreOptions(previous))
+  } catch {
+    const listed = await listedBundle(manager, name)
+    if (listed.ok && listed.item?.installed) return versionDrift(fallbackResult, previous, listed.item)
+    if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem)
+    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true }
+  }
+  const listed = await listedBundle(manager, name)
+  if (listed.ok && listedVersionMatches(previous, listed.item)) {
+    return { result: again, replaced: true, restored: true, restoredVersion: listed.item.version }
+  }
+  if (listed.ok && listed.item?.installed) return versionDrift(again, previous, listed.item)
+  if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem)
+  return { result: again ?? fallbackResult, replaced: true, restored: false, restoreFailed: true }
+}
+
+/** Install `pin` only after the other version is confirmed absent.
+ * alpha.3 with HMR refuses `installBundle` with `already-installed` while the
+ * package name is still a profile dependency, including when the spec names
+ * another ref. Removal is checked with the bundle list, not the removal
+ * receipt. If that removal or the pin install fails, `previous.spec` is
+ * installed again so the package is not left missing.
+ */
 async function installPinned(manager, name, previous, pin, fallbackResult, fallbackItem) {
+  if (typeof manager.removeBundle !== 'function') {
+    return reinstallOriginal(manager, name, previous, fallbackResult, fallbackItem)
+  }
+  try {
+    await manager.removeBundle(name)
+  } catch { /* The list below decides whether the package is actually gone. */ }
+  const cleared = await listedBundle(manager, name)
+  if (!cleared.ok || cleared.item?.installed) {
+    const item = cleared.ok ? cleared.item : fallbackItem
+    if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
+      return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version }
+    }
+    return reinstallOriginal(manager, name, previous, fallbackResult, item)
+  }
   let pinned
   try {
     pinned = await manager.installBundle(pin, restoreOptions(previous))
   } catch {
-    let still = fallbackItem
-    try { still = bundleRecord(await manager.listBundles(), name) ?? still } catch { /* The pre-pin record remains the last confirmed list. */ }
-    if (still?.installed) return versionDrift(fallbackResult, previous, still)
-    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true }
+    return reinstallOriginal(manager, name, previous, fallbackResult, undefined)
   }
-  let after
-  try { after = bundleRecord(await manager.listBundles(), name) }
-  catch { return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true } }
-  if (restoredIdentity(previous, pinned, after) === 'match') {
-    return { result: pinned, replaced: true, restored: true, restoredVersion: after.version }
+  const after = await listedBundle(manager, name)
+  if (after.ok && listedVersionMatches(previous, after.item)) {
+    return { result: pinned, replaced: true, restored: true, restoredVersion: after.item.version }
   }
-  if (after?.installed) return versionDrift(pinned, previous, after)
-  return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true }
+  if (!after.ok || !after.item?.installed || installNeedsRestore(pinned)) {
+    return reinstallOriginal(manager, name, previous, pinned ?? fallbackResult, after.item)
+  }
+  return versionDrift(pinned, previous, after.item)
 }
 
 /** Reinstall the package captured before removal when the replacement is absent.
- * A floating GitHub source that comes back as a different version is installed
- * once more at `github:<repo>#v<previous>`. A source that cannot be pinned, or
- * a pin that still does not match, is reported as installed at another version.
- * An installed package whose captured version and receipt version are both
- * missing is that same report, not a missing package.
+ * A floating GitHub source that comes back as a different version is removed,
+ * then installed once more at `github:<repo>#v<previous>` after the list shows
+ * it is gone. A source that cannot be pinned, or a pin that still does not
+ * match, is reported as installed at another version. If the removal or the
+ * pin fails, the captured source is installed again. An installed package whose
+ * captured version and receipt version are both missing is that same report,
+ * not a missing package.
  */
 export async function restoreIfMissing(manager, name, installed, previous) {
   if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }

@@ -765,6 +765,7 @@ test('an unpinned git URL that restores a newer version is pinned to the previou
   let version
   const manager = {
     listBundles: async () => [{ name: PACKAGE, installed, version }],
+    removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
     installBundle: async (next) => {
       calls.push(next)
       installed = true
@@ -776,6 +777,86 @@ test('an unpinned git URL that restores a newer version is pinned to the previou
   assert.deepEqual(calls, [spec, `${spec}#v0.5.0`])
   assert.equal(restored.restored, true)
   assert.equal(restored.restoredVersion, '0.5.0')
+})
+
+test('a pin waits until the other version is gone, because an installed package is already-installed', async () => {
+  const calls = []
+  const spec = `github:${REPOSITORY}`
+  const pin = `${spec}#v0.5.0`
+  let installed = false
+  let version
+  const manager = {
+    listBundles: async () => [{ name: PACKAGE, installed, version }],
+    removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
+    installBundle: async (next) => {
+      calls.push({ spec: next, installedBefore: installed })
+      if (installed) return { application: 'failed', error: { code: 'already-installed' } }
+      installed = true
+      version = next === pin ? '0.5.0' : '9.9.9'
+      return { application: 'applied', version }
+    },
+  }
+  const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: false, version: '0.5.0' })
+  assert.deepEqual(calls.map(call => call.spec), [spec, pin])
+  assert.equal(calls[1].installedBefore, false)
+  assert.equal(restored.restored, true)
+  assert.equal(restored.restoredVersion, '0.5.0')
+  assert.equal(installed, true)
+  assert.equal(version, '0.5.0')
+})
+
+test('already-installed from the pin reinstalls the original source and leaves the package installed', async () => {
+  const calls = []
+  const spec = `github:${REPOSITORY}`
+  const pin = `${spec}#v0.5.0`
+  let installed = false
+  let version
+  const manager = {
+    listBundles: async () => [{ name: PACKAGE, installed, version }],
+    removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
+    installBundle: async (next) => {
+      calls.push({ spec: next, installedBefore: installed })
+      if (next === pin || installed) return { application: 'failed', error: { code: 'already-installed' } }
+      installed = true
+      version = '9.9.9'
+      return { application: 'applied', version }
+    },
+  }
+  const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: true, version: '0.5.0' })
+  assert.deepEqual(calls.map(call => call.spec), [spec, pin, spec])
+  assert.equal(calls[1].installedBefore, false)
+  assert.equal(calls[2].installedBefore, false)
+  assert.equal(restored.restored, false)
+  assert.equal(restored.restoreFailed, undefined)
+  assert.equal(restored.versionDiffers, true)
+  assert.equal(restored.installedVersion, '9.9.9')
+  assert.equal(restored.expectedVersion, '0.5.0')
+  assert.equal(installed, true)
+})
+
+test('a removal that leaves the other version installed does not pin and does not drop the package', async () => {
+  const calls = []
+  const spec = `github:${REPOSITORY}`
+  let installed = false
+  let version
+  const manager = {
+    listBundles: async () => [{ name: PACKAGE, installed, version }],
+    removeBundle: async () => ({ application: 'failed', error: { code: 'not-removable' }, changed: false }),
+    installBundle: async (next) => {
+      calls.push({ spec: next, installedBefore: installed })
+      if (installed) return { application: 'failed', error: { code: 'already-installed' } }
+      installed = true
+      version = '9.9.9'
+      return { application: 'applied', version: '9.9.9' }
+    },
+  }
+  const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: false, version: '0.5.0' })
+  assert.deepEqual(calls.map(call => call.spec), [spec, spec])
+  assert.equal(calls[1].installedBefore, true)
+  assert.equal(restored.versionDiffers, true)
+  assert.equal(restored.restoreFailed, undefined)
+  assert.equal(restored.installedVersion, '9.9.9')
+  assert.equal(installed, true)
 })
 
 test('published DSH peers accept 0.2.x through the boot checker and reject 0.3 prereleases', () => {
