@@ -3058,7 +3058,7 @@ async function installPinned(manager, name2, previous, pin, fallbackResult) {
     return { result: pinned, replaced: true, restored: true, restoredVersion: after.item.version };
   }
   if (!after.ok && !installNeedsRestore(pinned)) {
-    return admissionFromReceipt(pinned, previous) ?? versionDrift(pinned, previous, { installed: true });
+    return admissionFromReceipt(pinned, previous) ?? failedRestore(pinned);
   }
   if (after.ok && after.item?.installed && !installNeedsRestore(pinned)) {
     return versionDrift(pinned, previous, after.item);
@@ -3087,7 +3087,7 @@ async function restoreIfMissing(manager, name2, installed, previous) {
   try {
     item = bundleRecord(await manager.listBundles(), name2);
   } catch {
-    return { result: installed, replaced: true, restored: false, restoreFailed: true };
+    return admissionFromReceipt(restored, previous) ?? failedRestore(restored);
   }
   const identity = restoredIdentity(previous, restored, item);
   if (identity === "match") return { result: restored, replaced: true, restored: true, restoredVersion: item.version };

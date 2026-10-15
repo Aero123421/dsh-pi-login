@@ -984,6 +984,77 @@ test('a completed pin keeps its receipt version when the bundle list fails and d
   assert.equal(drifted.expectedVersion, '0.5.0')
 })
 
+test('a completed pin with no receipt version is a failed restore when the bundle list fails', async () => {
+  const calls = []
+  const spec = `github:${REPOSITORY}`
+  const pin = `${spec}#v0.5.0`
+  let installed = false
+  let version
+  let lists = 0
+  const manager = {
+    listBundles: async () => {
+      lists += 1
+      if (lists >= 4) throw new Error('list failed')
+      return [{ name: PACKAGE, installed, version }]
+    },
+    removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
+    installBundle: async (next) => {
+      calls.push(next)
+      installed = true
+      if (next === pin) return { application: 'applied' }
+      version = '9.9.9'
+      return { application: 'applied', version: '9.9.9' }
+    },
+  }
+  const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: true, version: '0.5.0' })
+  assert.deepEqual(calls, [spec, pin])
+  assert.equal(restored.restored, false)
+  assert.equal(restored.versionDiffers, undefined)
+  assert.equal(restored.installedVersion, undefined)
+  assert.equal(restored.restoreFailed, true)
+  assert.equal(restored.result?.application, 'applied')
+  assert.equal(restored.result?.version, undefined)
+})
+
+test('a restore install whose bundle list fails keeps the receipt', async () => {
+  const spec = `github:${REPOSITORY}`
+  async function run(receipt) {
+    let lists = 0
+    const calls = []
+    const manager = {
+      listBundles: async () => {
+        lists += 1
+        if (lists >= 2) throw new Error('list failed')
+        return [{ name: PACKAGE, installed: false }]
+      },
+      installBundle: async (next) => {
+        calls.push(next)
+        return receipt
+      },
+    }
+    const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed', error: { code: 'install-failed' } }, { spec, enabled: false, version: '0.5.0' })
+    assert.deepEqual(calls, [spec])
+    return restored
+  }
+  const matched = await run({ application: 'applied', version: '0.5.0' })
+  assert.equal(matched.restored, true)
+  assert.equal(matched.restoredVersion, '0.5.0')
+  assert.equal(matched.restoreFailed, undefined)
+  assert.equal(matched.versionDiffers, undefined)
+  const drifted = await run({ application: 'applied', version: '9.9.9' })
+  assert.equal(drifted.restored, false)
+  assert.equal(drifted.restoreFailed, undefined)
+  assert.equal(drifted.versionDiffers, true)
+  assert.equal(drifted.installedVersion, '9.9.9')
+  assert.equal(drifted.expectedVersion, '0.5.0')
+  const unnamed = await run({ application: 'applied' })
+  assert.equal(unnamed.restored, false)
+  assert.equal(unnamed.versionDiffers, undefined)
+  assert.equal(unnamed.restoreFailed, true)
+  assert.equal(unnamed.result?.application, 'applied')
+  assert.equal(unnamed.result?.version, undefined)
+})
+
 test('a removal that leaves the other version installed does not pin and does not drop the package', async () => {
   const calls = []
   const spec = `github:${REPOSITORY}`

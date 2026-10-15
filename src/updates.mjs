@@ -279,8 +279,11 @@ function failedRestore(result) {
 }
 
 /** A completed install receipt can name the version when the bundle list cannot be read.
- * A receipt that itself needs restore does not prove the package is present.
- * Callers must pass the receipt of the install just attempted, not an earlier one.
+ * In that case `restored: true` means only that `result.version` equals the
+ * captured version. The list was not read, so the package is not confirmed
+ * installed at that version. A receipt that itself needs restore, or that
+ * names no version, does not prove the package is present. Callers must pass
+ * the receipt of the install just attempted, not an earlier one.
  */
 function admissionFromReceipt(result, previous) {
   if (!result || installNeedsRestore(result)) return undefined
@@ -333,7 +336,8 @@ async function reinstallOriginal(manager, name, previous, fallbackResult) {
  * is still installed when the list after removal fails. If that removal or the
  * pin install fails, `previous.spec` is installed again so the package is not
  * left missing. A pin the manager accepted is not replaced by that source when
- * the following list fails; the receipt version is the evidence instead.
+ * the following list fails. The receipt is then the only evidence, and a
+ * receipt that names no version is a failed restore.
  */
 async function installPinned(manager, name, previous, pin, fallbackResult) {
   if (typeof manager.removeBundle !== 'function') {
@@ -360,7 +364,7 @@ async function installPinned(manager, name, previous, pin, fallbackResult) {
     return { result: pinned, replaced: true, restored: true, restoredVersion: after.item.version }
   }
   if (!after.ok && !installNeedsRestore(pinned)) {
-    return admissionFromReceipt(pinned, previous) ?? versionDrift(pinned, previous, { installed: true })
+    return admissionFromReceipt(pinned, previous) ?? failedRestore(pinned)
   }
   if (after.ok && after.item?.installed && !installNeedsRestore(pinned)) {
     return versionDrift(pinned, previous, after.item)
@@ -374,10 +378,14 @@ async function installPinned(manager, name, previous, pin, fallbackResult) {
  * it is gone. A source that cannot be pinned, or a pin that still does not
  * match, is reported as installed at another version. If the removal or the
  * pin fails, the captured source is installed again. A list failure does not
- * reuse the record from before that removal. A completed pin or reinstall
- * whose list then fails is judged from its receipt, and a completed pin is
- * left in place. An installed package whose captured version and receipt
- * version are both missing is that same report, not a missing package.
+ * reuse the record from before that removal. When a completed install's list
+ * then fails, including the list immediately after the first restore install,
+ * the receipt is the evidence: a matching version is restored without a list
+ * confirmation, another version is a mismatch, and a receipt with no version
+ * is a failed restore. A completed pin is not replaced by the original source
+ * in that case. An installed package whose captured version and receipt
+ * version are both missing, while the list shows it is present, is a version
+ * mismatch, not a missing package.
  */
 export async function restoreIfMissing(manager, name, installed, previous) {
   if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
@@ -396,7 +404,7 @@ export async function restoreIfMissing(manager, name, installed, previous) {
   }
   let item
   try { item = bundleRecord(await manager.listBundles(), name) }
-  catch { return { result: installed, replaced: true, restored: false, restoreFailed: true } }
+  catch { return admissionFromReceipt(restored, previous) ?? failedRestore(restored) }
   const identity = restoredIdentity(previous, restored, item)
   if (identity === 'match') return { result: restored, replaced: true, restored: true, restoredVersion: item.version }
   if (identity === 'missing') return { result: installed, replaced: true, restored: false, restoreFailed: true }
