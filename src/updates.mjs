@@ -274,19 +274,39 @@ function listedVersionMatches(previous, item) {
   return item?.installed === true && typeof previous?.version === 'string' && item.version === previous.version
 }
 
+function failedRestore(result) {
+  return { result, replaced: true, restored: false, restoreFailed: true }
+}
+
+/** A completed install receipt can name the version when the bundle list cannot be read.
+ * A receipt that itself needs restore does not prove the package is present.
+ * Callers must pass the receipt of the install just attempted, not an earlier one.
+ */
+function admissionFromReceipt(result, previous) {
+  if (!result || installNeedsRestore(result)) return undefined
+  const version = typeof result.version === 'string' ? result.version : undefined
+  if (typeof version !== 'string') return undefined
+  if (typeof previous?.version === 'string' && version === previous.version) {
+    return { result, replaced: true, restored: true, restoredVersion: version }
+  }
+  return versionDrift(result, previous, { installed: true, version })
+}
+
 /** Put the captured source back when a pin cannot replace the package that is already there.
  * A running alpha.3 manager returns `already-installed` for any spec of a package
  * that is still in the profile, so this install runs only after that package is
  * gone, or when it is still listed and the call itself reports that refusal.
  * An installed package at the end is a version mismatch. A package that is
- * still absent is a failed restore.
+ * still absent is a failed restore. A list that cannot be read is not evidence
+ * that an older bundle record is still installed: the receipt's version is used
+ * when the install completed, and otherwise the restore failed so a later
+ * reconcile does not treat another version as present.
  */
-async function reinstallOriginal(manager, name, previous, fallbackResult, fallbackItem) {
+async function reinstallOriginal(manager, name, previous, fallbackResult) {
   if (typeof previous?.spec !== 'string' || typeof manager.installBundle !== 'function') {
     const listed = await listedBundle(manager, name)
     if (listed.ok && listed.item?.installed) return versionDrift(fallbackResult, previous, listed.item)
-    if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem)
-    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true }
+    return failedRestore(fallbackResult)
   }
   let again
   try {
@@ -294,54 +314,58 @@ async function reinstallOriginal(manager, name, previous, fallbackResult, fallba
   } catch {
     const listed = await listedBundle(manager, name)
     if (listed.ok && listed.item?.installed) return versionDrift(fallbackResult, previous, listed.item)
-    if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem)
-    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true }
+    return failedRestore(fallbackResult)
   }
   const listed = await listedBundle(manager, name)
   if (listed.ok && listedVersionMatches(previous, listed.item)) {
     return { result: again, replaced: true, restored: true, restoredVersion: listed.item.version }
   }
   if (listed.ok && listed.item?.installed) return versionDrift(again, previous, listed.item)
-  if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem)
-  return { result: again ?? fallbackResult, replaced: true, restored: false, restoreFailed: true }
+  if (!listed.ok) return admissionFromReceipt(again, previous) ?? failedRestore(again)
+  return failedRestore(again ?? fallbackResult)
 }
 
 /** Install `pin` only after the other version is confirmed absent.
  * alpha.3 with HMR refuses `installBundle` with `already-installed` while the
  * package name is still a profile dependency, including when the spec names
  * another ref. Removal is checked with the bundle list, not the removal
- * receipt. If that removal or the pin install fails, `previous.spec` is
- * installed again so the package is not left missing.
+ * receipt. A record captured before that removal is not evidence the package
+ * is still installed when the list after removal fails. If that removal or the
+ * pin install fails, `previous.spec` is installed again so the package is not
+ * left missing. A pin the manager accepted is not replaced by that source when
+ * the following list fails; the receipt version is the evidence instead.
  */
-async function installPinned(manager, name, previous, pin, fallbackResult, fallbackItem) {
+async function installPinned(manager, name, previous, pin, fallbackResult) {
   if (typeof manager.removeBundle !== 'function') {
-    return reinstallOriginal(manager, name, previous, fallbackResult, fallbackItem)
+    return reinstallOriginal(manager, name, previous, fallbackResult)
   }
   try {
     await manager.removeBundle(name)
   } catch { /* The list below decides whether the package is actually gone. */ }
   const cleared = await listedBundle(manager, name)
   if (!cleared.ok || cleared.item?.installed) {
-    const item = cleared.ok ? cleared.item : fallbackItem
     if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
       return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version }
     }
-    return reinstallOriginal(manager, name, previous, fallbackResult, item)
+    return reinstallOriginal(manager, name, previous, fallbackResult)
   }
   let pinned
   try {
     pinned = await manager.installBundle(pin, restoreOptions(previous))
   } catch {
-    return reinstallOriginal(manager, name, previous, fallbackResult, undefined)
+    return reinstallOriginal(manager, name, previous, fallbackResult)
   }
   const after = await listedBundle(manager, name)
   if (after.ok && listedVersionMatches(previous, after.item)) {
     return { result: pinned, replaced: true, restored: true, restoredVersion: after.item.version }
   }
-  if (!after.ok || !after.item?.installed || installNeedsRestore(pinned)) {
-    return reinstallOriginal(manager, name, previous, pinned ?? fallbackResult, after.item)
+  if (!after.ok && !installNeedsRestore(pinned)) {
+    return admissionFromReceipt(pinned, previous) ?? versionDrift(pinned, previous, { installed: true })
   }
-  return versionDrift(pinned, previous, after.item)
+  if (after.ok && after.item?.installed && !installNeedsRestore(pinned)) {
+    return versionDrift(pinned, previous, after.item)
+  }
+  return reinstallOriginal(manager, name, previous, pinned ?? fallbackResult)
 }
 
 /** Reinstall the package captured before removal when the replacement is absent.
@@ -349,9 +373,11 @@ async function installPinned(manager, name, previous, pin, fallbackResult, fallb
  * then installed once more at `github:<repo>#v<previous>` after the list shows
  * it is gone. A source that cannot be pinned, or a pin that still does not
  * match, is reported as installed at another version. If the removal or the
- * pin fails, the captured source is installed again. An installed package whose
- * captured version and receipt version are both missing is that same report,
- * not a missing package.
+ * pin fails, the captured source is installed again. A list failure does not
+ * reuse the record from before that removal. A completed pin or reinstall
+ * whose list then fails is judged from its receipt, and a completed pin is
+ * left in place. An installed package whose captured version and receipt
+ * version are both missing is that same report, not a missing package.
  */
 export async function restoreIfMissing(manager, name, installed, previous) {
   if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false }
@@ -378,7 +404,7 @@ export async function restoreIfMissing(manager, name, installed, previous) {
   const listed = typeof item?.version === 'string' ? item.version : undefined
   const pin = expected && listed && listed !== expected ? githubPin(previous.spec, expected) : undefined
   if (!pin) return versionDrift(restored, previous, item)
-  return installPinned(manager, name, previous, pin, restored, item)
+  return installPinned(manager, name, previous, pin, restored)
 }
 
 /** When an install or removal rejects, restore only after the list shows the package is gone.

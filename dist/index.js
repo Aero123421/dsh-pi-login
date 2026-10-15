@@ -2998,12 +2998,23 @@ async function listedBundle(manager, name2) {
 function listedVersionMatches(previous, item) {
   return item?.installed === true && typeof previous?.version === "string" && item.version === previous.version;
 }
-async function reinstallOriginal(manager, name2, previous, fallbackResult, fallbackItem) {
+function failedRestore(result) {
+  return { result, replaced: true, restored: false, restoreFailed: true };
+}
+function admissionFromReceipt(result, previous) {
+  if (!result || installNeedsRestore(result)) return void 0;
+  const version = typeof result.version === "string" ? result.version : void 0;
+  if (typeof version !== "string") return void 0;
+  if (typeof previous?.version === "string" && version === previous.version) {
+    return { result, replaced: true, restored: true, restoredVersion: version };
+  }
+  return versionDrift(result, previous, { installed: true, version });
+}
+async function reinstallOriginal(manager, name2, previous, fallbackResult) {
   if (typeof previous?.spec !== "string" || typeof manager.installBundle !== "function") {
     const listed2 = await listedBundle(manager, name2);
     if (listed2.ok && listed2.item?.installed) return versionDrift(fallbackResult, previous, listed2.item);
-    if (!listed2.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem);
-    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true };
+    return failedRestore(fallbackResult);
   }
   let again;
   try {
@@ -3011,20 +3022,19 @@ async function reinstallOriginal(manager, name2, previous, fallbackResult, fallb
   } catch {
     const listed2 = await listedBundle(manager, name2);
     if (listed2.ok && listed2.item?.installed) return versionDrift(fallbackResult, previous, listed2.item);
-    if (!listed2.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem);
-    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true };
+    return failedRestore(fallbackResult);
   }
   const listed = await listedBundle(manager, name2);
   if (listed.ok && listedVersionMatches(previous, listed.item)) {
     return { result: again, replaced: true, restored: true, restoredVersion: listed.item.version };
   }
   if (listed.ok && listed.item?.installed) return versionDrift(again, previous, listed.item);
-  if (!listed.ok && fallbackItem?.installed) return versionDrift(fallbackResult, previous, fallbackItem);
-  return { result: again ?? fallbackResult, replaced: true, restored: false, restoreFailed: true };
+  if (!listed.ok) return admissionFromReceipt(again, previous) ?? failedRestore(again);
+  return failedRestore(again ?? fallbackResult);
 }
-async function installPinned(manager, name2, previous, pin, fallbackResult, fallbackItem) {
+async function installPinned(manager, name2, previous, pin, fallbackResult) {
   if (typeof manager.removeBundle !== "function") {
-    return reinstallOriginal(manager, name2, previous, fallbackResult, fallbackItem);
+    return reinstallOriginal(manager, name2, previous, fallbackResult);
   }
   try {
     await manager.removeBundle(name2);
@@ -3032,26 +3042,28 @@ async function installPinned(manager, name2, previous, pin, fallbackResult, fall
   }
   const cleared = await listedBundle(manager, name2);
   if (!cleared.ok || cleared.item?.installed) {
-    const item = cleared.ok ? cleared.item : fallbackItem;
     if (cleared.ok && listedVersionMatches(previous, cleared.item)) {
       return { result: fallbackResult, replaced: true, restored: true, restoredVersion: cleared.item.version };
     }
-    return reinstallOriginal(manager, name2, previous, fallbackResult, item);
+    return reinstallOriginal(manager, name2, previous, fallbackResult);
   }
   let pinned;
   try {
     pinned = await manager.installBundle(pin, restoreOptions(previous));
   } catch {
-    return reinstallOriginal(manager, name2, previous, fallbackResult, void 0);
+    return reinstallOriginal(manager, name2, previous, fallbackResult);
   }
   const after = await listedBundle(manager, name2);
   if (after.ok && listedVersionMatches(previous, after.item)) {
     return { result: pinned, replaced: true, restored: true, restoredVersion: after.item.version };
   }
-  if (!after.ok || !after.item?.installed || installNeedsRestore(pinned)) {
-    return reinstallOriginal(manager, name2, previous, pinned ?? fallbackResult, after.item);
+  if (!after.ok && !installNeedsRestore(pinned)) {
+    return admissionFromReceipt(pinned, previous) ?? versionDrift(pinned, previous, { installed: true });
   }
-  return versionDrift(pinned, previous, after.item);
+  if (after.ok && after.item?.installed && !installNeedsRestore(pinned)) {
+    return versionDrift(pinned, previous, after.item);
+  }
+  return reinstallOriginal(manager, name2, previous, pinned ?? fallbackResult);
 }
 async function restoreIfMissing(manager, name2, installed, previous) {
   if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false };
@@ -3084,7 +3096,7 @@ async function restoreIfMissing(manager, name2, installed, previous) {
   const listed = typeof item?.version === "string" ? item.version : void 0;
   const pin = expected && listed && listed !== expected ? githubPin(previous.spec, expected) : void 0;
   if (!pin) return versionDrift(restored, previous, item);
-  return installPinned(manager, name2, previous, pin, restored, item);
+  return installPinned(manager, name2, previous, pin, restored);
 }
 async function recoverThrownInstall(manager, name2, previous) {
   if (typeof manager?.listBundles !== "function") return void 0;

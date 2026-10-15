@@ -834,6 +834,156 @@ test('already-installed from the pin reinstalls the original source and leaves t
   assert.equal(installed, true)
 })
 
+test('a bundle list that fails after removal does not treat the pre-removal record as still installed', async t => {
+  const calls = []
+  const spec = `github:${REPOSITORY}`
+  let installed = false
+  let version = '9.9.9'
+  let lists = 0
+  const manager = {
+    listBundles: async () => {
+      lists += 1
+      if (lists >= 3) throw new Error('list failed')
+      return [{ name: PACKAGE, installed, version }]
+    },
+    removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
+    installBundle: async (next) => {
+      calls.push(next)
+      if (calls.length > 1) throw new Error('reinstall failed')
+      installed = true
+      version = '9.9.9'
+      return { application: 'applied', version: '9.9.9' }
+    },
+  }
+  const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: true, version: '0.5.0' })
+  assert.deepEqual(calls, [spec, spec])
+  assert.equal(restored.versionDiffers, undefined)
+  assert.equal(restored.installedVersion, undefined)
+  assert.equal(restored.restored, false)
+  assert.equal(restored.restoreFailed, true)
+  assert.equal(installed, false)
+
+  const { updater, manager: hosted, bundle, calls: hostedCalls } = await fixture(t)
+  let removes = 0
+  let failLists = false
+  hosted.listBundles = async () => {
+    if (failLists) throw new Error('list failed')
+    return [bundle]
+  }
+  hosted.removeBundle = async () => {
+    removes += 1
+    bundle.installed = false
+    if (removes >= 2) failLists = true
+    return { application: 'applied', changed: true }
+  }
+  hosted.installBundle = async (next, options) => {
+    hostedCalls.push([next, options])
+    if (hostedCalls.length === 1) return { application: 'failed', error: { code: 'already-installed' } }
+    if (hostedCalls.length === 2) { bundle.installed = false; return { application: 'failed', error: { code: 'install-failed' } } }
+    if (hostedCalls.length === 3) {
+      bundle.installed = true
+      bundle.version = '9.9.9'
+      return { application: 'applied', version: '9.9.9' }
+    }
+    throw new Error('reinstall failed')
+  }
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  assert.equal(hostedCalls.length, 4)
+  assert.equal(hostedCalls[3][0], spec)
+  failLists = false
+  bundle.installed = false
+  bundle.version = '9.9.9'
+  const outcome = await updater.reconcile(id)
+  assert.equal(outcome.status, 'failed')
+  assert.equal(outcome.reason, 'restore-failed')
+  assert.notEqual((await updater.check()).reason, 'busy')
+  const again = await updater.reconcile(id)
+  assert.equal(again.reason, 'restore-failed')
+  assert.equal(again.status, 'failed')
+})
+
+test('a completed reinstall keeps its receipt version when the bundle list fails', async () => {
+  const spec = `github:${REPOSITORY}`
+  const pin = `${spec}#v0.5.0`
+  async function run(receiptVersion) {
+    const calls = []
+    let installed = false
+    let version
+    let lists = 0
+    const manager = {
+      listBundles: async () => {
+        lists += 1
+        if (lists >= 4) throw new Error('list failed')
+        return [{ name: PACKAGE, installed, version }]
+      },
+      removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
+      installBundle: async (next) => {
+        calls.push(next)
+        if (next === pin) throw new Error('pin failed')
+        installed = true
+        version = calls.length === 1 ? '9.9.9' : receiptVersion
+        return { application: 'applied', version }
+      },
+    }
+    const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: false, version: '0.5.0' })
+    assert.deepEqual(calls, [spec, pin, spec])
+    return restored
+  }
+  const matched = await run('0.5.0')
+  assert.equal(matched.restored, true)
+  assert.equal(matched.restoredVersion, '0.5.0')
+  assert.equal(matched.restoreFailed, undefined)
+  assert.equal(matched.versionDiffers, undefined)
+  const drifted = await run('9.9.9')
+  assert.equal(drifted.restored, false)
+  assert.equal(drifted.restoreFailed, undefined)
+  assert.equal(drifted.versionDiffers, true)
+  assert.equal(drifted.installedVersion, '9.9.9')
+  assert.equal(drifted.expectedVersion, '0.5.0')
+})
+
+test('a completed pin keeps its receipt version when the bundle list fails and does not reinstall the original source', async () => {
+  const spec = `github:${REPOSITORY}`
+  const pin = `${spec}#v0.5.0`
+  async function run(receiptVersion) {
+    const calls = []
+    let installed = false
+    let version
+    let lists = 0
+    const manager = {
+      listBundles: async () => {
+        lists += 1
+        if (lists >= 4) throw new Error('list failed')
+        return [{ name: PACKAGE, installed, version }]
+      },
+      removeBundle: async () => { installed = false; version = undefined; return { application: 'applied', changed: true } },
+      installBundle: async (next) => {
+        calls.push(next)
+        installed = true
+        version = next === pin ? receiptVersion : '9.9.9'
+        return { application: 'applied', version }
+      },
+    }
+    const restored = await restoreIfMissing(manager, PACKAGE, { application: 'failed' }, { spec, enabled: true, version: '0.5.0' })
+    assert.deepEqual(calls, [spec, pin])
+    return restored
+  }
+  const matched = await run('0.5.0')
+  assert.equal(matched.restored, true)
+  assert.equal(matched.restoredVersion, '0.5.0')
+  assert.equal(matched.restoreFailed, undefined)
+  assert.equal(matched.versionDiffers, undefined)
+  const drifted = await run('9.9.9')
+  assert.equal(drifted.restored, false)
+  assert.equal(drifted.restoreFailed, undefined)
+  assert.equal(drifted.versionDiffers, true)
+  assert.equal(drifted.installedVersion, '9.9.9')
+  assert.equal(drifted.expectedVersion, '0.5.0')
+})
+
 test('a removal that leaves the other version installed does not pin and does not drop the package', async () => {
   const calls = []
   const spec = `github:${REPOSITORY}`
