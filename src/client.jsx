@@ -3,7 +3,7 @@ import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineReg
 import { LoginController } from './controller.mjs'
 import { UpdateController } from './update-controller.mjs'
 import { createModelEditor } from './model-snapshot.mjs'
-import { formatTime, retryWait, statusOf, usageLimited } from './presentation.mjs'
+import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
 import { en, ja } from './locales.mjs'
 import css from './styles.css'
 
@@ -282,6 +282,7 @@ export function UpdateUI({ controller, t }) {
       <p role={['failed', 'blocked'].includes(state.status) ? 'alert' : 'status'}>{t(messages[state.status] || 'updateUnknown')}</p>
       {state.reason ? <p className="dsh-pi-muted">{t(`updateReason_${state.reason}`) || t('updateReason_network')} <a className="dsh-pi-link" href="https://github.com/Aero123421/dsh-pi-login/releases" target="_blank" rel="noopener noreferrer">{t('updateManual')}</a></p> : null}
       {state.reason === 'restored' && state.restoredVersion ? <p className="dsh-pi-muted">{t('updateRestoredVersion').replace('{version}', state.restoredVersion)}</p> : null}
+      {state.reason === 'version-differs' ? <p className="dsh-pi-muted">{versionDiffersLine(state, t)}</p> : null}
       {state.candidate ? <><p>{state.runtimeVersion} → {state.candidate.version} · DSH {state.candidate.compatibility}</p><p className="dsh-pi-update-notes">{state.candidate.notes}</p></> : null}
       {state.result?.stage ? <p className="dsh-pi-muted">{t('updateStage')}: {state.result.stage}{state.result.error?.code ? ` · ${state.result.error.code}` : ''}</p> : null}
     </>}

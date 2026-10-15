@@ -2861,7 +2861,15 @@ function releaseCandidate(release, current) {
   const candidate = { id: String(release.id), version, tag: release.tag_name, url: expectedLink, notes: release.body.slice(0, 6e3), filename, tarball: asset(filename), checksum: asset("SHA256SUMS") };
   return compareVersions(version, current) > 0 ? candidate : null;
 }
-function rangeHasUpperBound(range) {
+var DSH_SERIES_FLOOR = "0.2.1-alpha.2";
+var DSH_NEXT_SERIES = "0.3.0-0";
+function boundedComparator(item, direction) {
+  const exact = (item.operator === "" || item.operator === "=") && typeof item.semver?.version === "string";
+  if (exact) return true;
+  if (direction === "upper") return item.operator === "<" || item.operator === "<=";
+  return item.operator === ">" || item.operator === ">=";
+}
+function peerRangeInCurrentSeries(range) {
   let parsed;
   try {
     parsed = new import_semver.default.Range(range, { includePrerelease: true });
@@ -2869,16 +2877,24 @@ function rangeHasUpperBound(range) {
     return false;
   }
   if (!parsed.set?.length) return false;
-  return parsed.set.every((comparators) => comparators.some((item) => {
-    if (item.operator === "<" || item.operator === "<=") return true;
-    return (item.operator === "" || item.operator === "=") && typeof item.semver?.version === "string";
-  }));
+  const shaped = parsed.set.every(
+    (comparators) => comparators.some((item) => boundedComparator(item, "lower")) && comparators.some((item) => boundedComparator(item, "upper"))
+  );
+  if (!shaped) return false;
+  const options = { includePrerelease: true };
+  try {
+    if (import_semver.default.intersects(range, `<${DSH_SERIES_FLOOR}`, options)) return false;
+    if (import_semver.default.intersects(range, `>=${DSH_NEXT_SERIES}`, options)) return false;
+  } catch {
+    return false;
+  }
+  return true;
 }
 function dshPeerSatisfied(range, runtime) {
   semanticVersion(runtime);
   if (typeof range !== "string") return false;
   const text2 = range.trim();
-  if (text2 === "" || text2.startsWith("workspace:") || !rangeHasUpperBound(text2)) return false;
+  if (text2 === "" || text2.startsWith("workspace:") || !peerRangeInCurrentSeries(text2)) return false;
   try {
     return import_semver.default.satisfies(runtime, text2, { includePrerelease: true });
   } catch {
@@ -2903,11 +2919,99 @@ function installNeedsRestore(result) {
   if (result.packageResult && (result.packageResult.exitCode !== 0 || result.packageResult.timedOut)) return true;
   return result.application !== "applied" && result.application !== "restart-required";
 }
-function sameRestoredVersion(previous, restored, item) {
-  if (!item?.installed || typeof item.version !== "string" || installNeedsRestore(restored)) return false;
-  const expected = typeof previous?.version === "string" ? previous.version : restored?.version;
-  if (typeof expected !== "string" || item.version !== expected) return false;
-  return typeof restored?.version !== "string" || restored.version === item.version;
+function restoreOptions(previous) {
+  const requestId = typeof previous.requestId === "function" ? previous.requestId() : previous.requestId;
+  return { enabled: previous.enabled, requestId, saveExact: true };
+}
+function githubPin(spec, version) {
+  if (typeof spec !== "string" || typeof version !== "string") return void 0;
+  try {
+    semanticVersion(version);
+  } catch {
+    return void 0;
+  }
+  if (spec === `github:${REPOSITORY}`) return `github:${REPOSITORY}#v${version}`;
+  if (/^(?:git\+)?https:\/\/github\.com\/Aero123421\/dsh-pi-login(?:\.git)?$/.test(spec)) return `${spec}#v${version}`;
+  return void 0;
+}
+function restoredIdentity(previous, restored, item) {
+  if (!item?.installed) return "missing";
+  const listed = typeof item.version === "string" ? item.version : void 0;
+  const fromPrevious = typeof previous?.version === "string" ? previous.version : void 0;
+  const fromResult = typeof restored?.version === "string" ? restored.version : void 0;
+  if (installNeedsRestore(restored)) return "present";
+  if (typeof fromPrevious !== "string" && typeof fromResult !== "string") return "unconfirmed";
+  const expected = fromPrevious ?? fromResult;
+  if (typeof listed !== "string" || listed !== expected) return "differs";
+  if (typeof fromResult === "string" && fromResult !== listed) return "differs";
+  return "match";
+}
+function versionDrift(result, previous, item) {
+  const installedVersion = typeof item?.version === "string" ? item.version : void 0;
+  const expectedVersion = typeof previous?.version === "string" ? previous.version : void 0;
+  return {
+    result,
+    replaced: true,
+    restored: false,
+    versionDiffers: true,
+    ...installedVersion ? { installedVersion } : {},
+    ...expectedVersion ? { expectedVersion } : {}
+  };
+}
+function settleRecovery(operation, admission) {
+  if (admission?.restored) {
+    operation.reason = "restored";
+    operation.restoredVersion = admission.restoredVersion;
+    operation.status = "failed";
+    return true;
+  }
+  if (admission?.versionDiffers) {
+    operation.reason = "version-differs";
+    if (typeof admission.installedVersion === "string") operation.installedVersion = admission.installedVersion;
+    if (typeof admission.expectedVersion === "string") operation.expectedVersion = admission.expectedVersion;
+    operation.status = "failed";
+    return true;
+  }
+  if (admission?.restoreFailed) {
+    operation.reason = "restore-failed";
+    operation.status = "failed";
+    return true;
+  }
+  return false;
+}
+async function bundlePresence(manager, name2) {
+  if (typeof manager?.listBundles !== "function") return "unknown";
+  try {
+    const list = await manager.listBundles();
+    return bundleRecord(list, name2)?.installed ? "present" : "absent";
+  } catch {
+    return "unknown";
+  }
+}
+async function installPinned(manager, name2, previous, pin, fallbackResult, fallbackItem) {
+  let pinned;
+  try {
+    pinned = await manager.installBundle(pin, restoreOptions(previous));
+  } catch {
+    let still = fallbackItem;
+    try {
+      still = bundleRecord(await manager.listBundles(), name2) ?? still;
+    } catch {
+    }
+    if (still?.installed) return versionDrift(fallbackResult, previous, still);
+    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true };
+  }
+  let after;
+  try {
+    after = bundleRecord(await manager.listBundles(), name2);
+  } catch {
+    return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true };
+  }
+  if (restoredIdentity(previous, pinned, after) === "match") {
+    return { result: pinned, replaced: true, restored: true, restoredVersion: after.version };
+  }
+  if (after?.installed) return versionDrift(pinned, previous, after);
+  return { result: fallbackResult, replaced: true, restored: false, restoreFailed: true };
 }
 async function restoreIfMissing(manager, name2, installed, previous) {
   if (!installNeedsRestore(installed)) return { result: installed, replaced: true, restored: false };
@@ -2921,28 +3025,26 @@ async function restoreIfMissing(manager, name2, installed, previous) {
     return { result: installed, replaced: true, restored: false, restoreFailed: true };
   }
   if (bundleRecord(list, name2)?.installed) return { result: installed, replaced: true, restored: false };
-  const requestId = typeof previous.requestId === "function" ? previous.requestId() : previous.requestId;
   let restored;
   try {
-    restored = await manager.installBundle(previous.spec, {
-      enabled: previous.enabled,
-      requestId,
-      saveExact: true
-    });
+    restored = await manager.installBundle(previous.spec, restoreOptions(previous));
   } catch {
     return { result: installed, replaced: true, restored: false, restoreFailed: true };
   }
-  let after;
+  let item;
   try {
-    after = await manager.listBundles();
+    item = bundleRecord(await manager.listBundles(), name2);
   } catch {
     return { result: installed, replaced: true, restored: false, restoreFailed: true };
   }
-  const item = bundleRecord(after, name2);
-  if (!sameRestoredVersion(previous, restored, item)) {
-    return { result: installed, replaced: true, restored: false, restoreFailed: true };
-  }
-  return { result: restored, replaced: true, restored: true, restoredVersion: item.version };
+  const identity = restoredIdentity(previous, restored, item);
+  if (identity === "match") return { result: restored, replaced: true, restored: true, restoredVersion: item.version };
+  if (identity === "missing") return { result: installed, replaced: true, restored: false, restoreFailed: true };
+  const expected = typeof previous?.version === "string" ? previous.version : void 0;
+  const listed = typeof item?.version === "string" ? item.version : void 0;
+  const pin = expected && listed && listed !== expected ? githubPin(previous.spec, expected) : void 0;
+  if (!pin) return versionDrift(restored, previous, item);
+  return installPinned(manager, name2, previous, pin, restored, item);
 }
 async function recoverThrownInstall(manager, name2, previous) {
   if (typeof manager?.listBundles !== "function") return void 0;
@@ -2975,9 +3077,13 @@ async function installPreservingPackage(manager, name2, spec, options, previous)
     if (recovered) return recovered;
     throw error;
   }
-  const stopped = removed?.error?.code === "stop-profile";
-  if (!stopped && (!removed || removed.application === "failed" || removed.error)) {
-    return { result: removed ?? { application: "failed" }, replaced: true, restored: false };
+  if (installNeedsRestore(removed)) {
+    if (await bundlePresence(manager, name2) === "absent") {
+      return restoreIfMissing(manager, name2, removed ?? { application: "failed" }, previous);
+    }
+    if (removed?.error?.code !== "stop-profile") {
+      return { result: removed ?? { application: "failed" }, replaced: true, restored: false };
+    }
   }
   let installed;
   try {
@@ -3248,18 +3354,12 @@ var PluginUpdates = class {
         saveExact: true
       }, previous);
       const result = admission.result;
-      if (admission.restored) {
-        operation.reason = "restored";
-        operation.restoredVersion = admission.restoredVersion;
-        operation.status = "failed";
-      } else if (admission.restoreFailed) {
-        operation.reason = "restore-failed";
-        operation.status = "failed";
-      } else if (result?.error?.code === "already-installed" || admission.replaced && (result?.application === "failed" || result?.error)) {
+      const recovered = settleRecovery(operation, admission);
+      if (!recovered && (result?.error?.code === "already-installed" || admission.replaced && (result?.application === "failed" || result?.error))) {
         operation.reason = "replace";
       }
       operation.result = safeResult(result);
-      if (operation.reason !== "restored" && operation.reason !== "restore-failed") {
+      if (!recovered) {
         const installed = (await final.manager.listBundles()).find((item) => item.name === PACKAGE);
         operation.status = resultState(result, operation.version, this.version, installed);
       }
@@ -3275,10 +3375,7 @@ var PluginUpdates = class {
           recovered = void 0;
         }
       }
-      if (recovered?.restored || recovered?.restoreFailed) {
-        operation.reason = recovered.restored ? "restored" : "restore-failed";
-        if (recovered.restored) operation.restoredVersion = recovered.restoredVersion;
-        operation.status = "failed";
+      if (settleRecovery(operation, recovered)) {
         operation.result = safeResult(recovered.result);
       } else {
         operation.status = managerInvoked ? "unknown" : "failed";
@@ -3316,7 +3413,7 @@ var PluginUpdates = class {
     }
     const bundle = (await this.manager()?.listBundles())?.find((item) => item.name === PACKAGE);
     const installed = bundle?.version;
-    const recovery = operation.reason === "restored" || operation.reason === "restore-failed";
+    const recovery = operation.reason === "restored" || operation.reason === "restore-failed" || operation.reason === "version-differs";
     if (operation.result && !recovery) operation.status = resultState(operation.result, operation.version, this.version, bundle);
     if (recovery) operation.status = "failed";
     if (!recovery && operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason && compareVersions(installed, operation.version) > 0) {
@@ -3332,7 +3429,8 @@ var PluginUpdates = class {
     if (["installing", "restart-required", "unknown", "applied"].includes(operation.status) && this.version === operation.version) {
       operation.status = bundle?.installed && !bundle.error && !bundle.readOnlyReason && installed === operation.version ? "applied" : "unknown";
     }
-    return { ...this.base(), ...operation, installedVersion: installed };
+    const shown = typeof installed === "string" ? installed : operation.installedVersion;
+    return { ...this.base(), ...operation, installedVersion: shown };
   }
   dispose() {
     this.closed = true;

@@ -41,7 +41,11 @@ export const en = {
   "updateReason_replace": "DSH will not install over the current package. Removing it and installing the release did not finish. Saved credentials stay in the profile.",
   "updateReason_restored": "The new release did not install. The previous package was installed again. Saved credentials stay in the profile. Check the release and retry.",
   "updateReason_restore-failed": "The new release did not install, and the previous package could not be restored. Install the previous release manually. Saved credentials stay in the profile.",
+  "updateReason_version-differs": "The new release did not install. A package is installed, but it is not the previous version. Saved credentials stay in the profile. Install the previous release if you need that version.",
   "updateRestoredVersion": "Restored package version: {version}.",
+  "updateVersionDiffers": "Installed version: {installed}. Previous version: {expected}.",
+  "updateVersionInstalled": "Installed version: {installed}. The previous version could not be confirmed.",
+  "updateVersionUnconfirmed": "A package is installed, but its version could not be confirmed as the previous one.",
 
   metaRateLimited: 'Meta limited the account check. Wait before trying again.',
   reloadModels: 'Update model list',
@@ -117,7 +121,11 @@ export const ja = {
   "updateReason_replace": "このDSHは導入済みパッケージへ上書き導入しません。パッケージを削除してから導入し直す処理が完了しませんでした。保存済みの認証情報はprofileに残ります。",
   "updateReason_restored": "新しい配布版は導入できませんでした。直前のパッケージを入れ直しました。保存済みの認証情報はprofileに残ります。配布版を確認して再試行してください。",
   "updateReason_restore-failed": "新しい配布版は導入できず、直前のパッケージも入れ直せませんでした。直前の配布版を手動で導入してください。保存済みの認証情報はprofileに残ります。",
+  "updateReason_version-differs": "新しい配布版は導入できませんでした。パッケージは入っていますが、直前の版ではありません。保存済みの認証情報はprofileに残ります。直前の版が必要なときは、その配布版を手動で導入してください。",
   "updateRestoredVersion": "入れ直したパッケージの版: {version}",
+  "updateVersionDiffers": "入っている版: {installed}。直前の版: {expected}。",
+  "updateVersionInstalled": "入っている版: {installed}。直前の版は確認できませんでした。",
+  "updateVersionUnconfirmed": "パッケージは入っていますが、直前の版であることは確認できませんでした。",
 
   metaRateLimited: 'Metaの契約確認が回数制限に達しました。時間を置いて再試行してください。',
   reloadModels: 'モデル一覧を更新',

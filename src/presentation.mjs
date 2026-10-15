@@ -18,6 +18,17 @@ export function usageLimited(snapshot, now = Date.now()) {
   return Number.isFinite(at) && at > now
 }
 
+/** Copy for a package that is installed without confirming the previous version. */
+export function versionDiffersLine(state, translate) {
+  const installed = typeof state?.installedVersion === 'string' ? state.installedVersion : ''
+  const expected = typeof state?.expectedVersion === 'string' ? state.expectedVersion : ''
+  if (installed && expected && installed !== expected) {
+    return translate('updateVersionDiffers').replaceAll('{installed}', installed).replaceAll('{expected}', expected)
+  }
+  if (installed) return translate('updateVersionInstalled').replaceAll('{installed}', installed)
+  return translate('updateVersionUnconfirmed')
+}
+
 /** Milliseconds until a manual retry is allowed. Zero means the button can be used. */
 export function retryWait(retryAt, now = Date.now()) {
   const at = new Date(retryAt).valueOf()
