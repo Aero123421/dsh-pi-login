@@ -1,6 +1,6 @@
 import { applyLoginUI } from './routes.mjs'
 import { apply as applyRuntime, Config } from './runtime/index.ts'
-import { catalogModels, catalogProvider, catalogProviderIds, resolveRouteModels } from './runtime/catalog.ts'
+import { catalogModels, catalogProvider, resolveRouteModels } from './runtime/catalog.ts'
 import { credentialStoreFrom, connectionAuthFrom } from './runtime/auth.ts'
 import { createModels } from './runtime/models.ts'
 import { resolveConnectionProfiles, sdkServiceOf, MUSE_CODE_INTEGRATION_ID } from './runtime/connections.ts'
@@ -16,7 +16,7 @@ import { ProviderCatalogs } from './provider-catalogs.mjs'
 import { DISCOVERED_MODEL } from './catalog-metadata.mjs'
 import { DEFAULT_INPUT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './runtime/config.ts'
 import { modelChoices } from './runtime/fast.ts'
-import { supportedProtocols } from './runtime/provider.ts'
+import { listPiServices } from './runtime/provider.ts'
 export { Config, applyLoginUI }
 export { IntegrationRegistry, ConnectionManager, connectionAuthFrom, resolveConnectionProfiles }
 export { createMuseCodeOwner }
@@ -50,19 +50,11 @@ export function apply(ctx, config, options = {}) {
   const external = createExternalIntegrations({ llm: ctx.llm, profileKey: registry.profileKey,
     generation: () => registry.generation, excludeRoutes: () => Object.values(config.connections.get()).map(connection => connection.routeId) })
   manager.extraConnections = () => external.publicConnections()
-  const piServices = () => {
-    const ids = new Set([...catalogProviderIds(), ...Object.keys(legacyProviders()), ...Object.keys(config.providers.get()), ...Object.values(config.connections.get()).filter(connection => connection.integrationId === 'pi').map(connection => connection.serviceId)])
-    return [...ids].map(serviceId => {
-      const provider = catalogProvider(serviceId)
-      const methods = [
-        ...provider?.auth.oauth ? [{ id: 'oauth', label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }] : [],
-        ...provider?.auth.apiKey || !provider ? [{ id: 'api-key', label: provider?.auth.apiKey?.name ?? 'API key' }] : [],
-      ]
-      return { serviceId, label: serviceId === 'meta' ? 'Meta Model API（Pi経由）' : provider?.name ?? serviceId, methods,
-        apis: [...supportedProtocols()],
-        capabilities: { auth: methods.length > 0, models: true, settings: true, usage: ['openai-codex', 'anthropic', 'github-copilot', 'opencode-go', 'meta'].includes(serviceId) } }
-    })
-  }
+  const piServices = () => listPiServices([
+    ...Object.keys(legacyProviders()),
+    ...Object.keys(config.providers.get()),
+    ...Object.values(config.connections.get()).filter(connection => connection.integrationId === 'pi').map(connection => connection.serviceId),
+  ])
   registry.register({ integrationId: 'pi', label: 'Pi', source: '@earendil-works/pi-ai', listServices: piServices, listConnections: () => Object.values(manager.raw()) })
   const muse = createMuseCodeOwner({ ctx, connections: manager })
   registry.register(muse)

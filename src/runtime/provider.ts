@@ -16,7 +16,7 @@ import type { Api, ApiKeyAuth, Model, Provider, ProviderStreams } from '@earendi
 import { anthropicMessagesApi } from '@earendil-works/pi-ai/api/anthropic-messages.lazy'
 import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy'
 import { openAIResponsesApi } from '@earendil-works/pi-ai/api/openai-responses.lazy'
-import { catalogProvider, PiAiCatalogError } from './catalog.ts'
+import { catalogProvider, catalogProviderIds, PiAiCatalogError } from './catalog.ts'
 import { createProvider } from './models.ts'
 
 /**
@@ -53,6 +53,45 @@ const PROTOCOLS: Readonly<Record<string, () => ProviderStreams>> = {
  */
 export function supportedProtocols(): readonly string[] {
   return Object.keys(PROTOCOLS)
+}
+
+const USAGE_SERVICES = new Set(['openai-codex', 'anthropic', 'github-copilot', 'opencode-go', 'meta'])
+
+/**
+ * Login-screen services for installed Pi providers.
+ * Extra ids keep legacy or hand-declared routes addressable after a catalog
+ * rename. An installed provider without api-key auth does not gain one here.
+ */
+export function listPiServices(extraServiceIds: readonly string[] = []): Array<{
+  serviceId: string
+  label: string
+  methods: Array<{ id: string, label: string }>
+  apis: string[]
+  capabilities: { auth: boolean, models: boolean, settings: boolean, usage: boolean }
+}> {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const serviceId of [...catalogProviderIds(), ...extraServiceIds]) {
+    if (seen.has(serviceId)) continue
+    seen.add(serviceId)
+    ids.push(serviceId)
+  }
+  return ids.map(serviceId => {
+    const provider = catalogProvider(serviceId)
+    const methods = [
+      ...provider?.auth.oauth ? [{ id: 'oauth', label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }] : [],
+      ...provider?.auth.apiKey || !provider ? [{ id: 'api-key', label: provider?.auth.apiKey?.name ?? 'API key' }] : [],
+    ]
+    return {
+      serviceId,
+      label: serviceId === 'meta' ? 'Meta Model API（Pi経由）' : provider?.name ?? serviceId,
+      methods,
+      apis: [...supportedProtocols()],
+      capabilities: {
+        auth: methods.length > 0, models: true, settings: true, usage: USAGE_SERVICES.has(serviceId),
+      },
+    }
+  })
 }
 
 /**

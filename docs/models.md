@@ -6,7 +6,7 @@
 
 | 連携 | 実行とモデルの確認 |
 | --- | --- |
-| Meta Model API（Pi経由） | Pi SDKのResponses API。`muse-wonder-1.0`を補完し、Full等の追加モデルは認証したアカウントのAPI応答に実際に返ったIDだけを使います。 |
+| Meta Model API（Pi経由） | Pi SDKのResponses API。`muse-wonder-1.0`は Pi SDK 1.3.0 の定義を使い、SDKに同じIDが無いときだけ補完します。Full等の追加モデルは認証したアカウントのAPI応答に実際に返ったIDだけを使います。 |
 | Meta Muse Code | Pi SDKのMetaログインとResponses API。モデル一覧はMuse Code専用の`/muse-code/models`、Contributorはリクエストヘッダーで選択します。 |
 
 ## Meta Muse Code
@@ -26,16 +26,16 @@
 
 ## Muse Wonder
 
-MetaのMuse Wonderを`muse-wonder-1.0`として追加しています。APIは既存のMetaプロバイダーのResponses API、認証は既存のAPIキーまたはMetaログインを使います。プラグインの設定画面とHarnessのモデル一覧は同じ補完カタログを使用します。
+MetaのMuse Wonderを`muse-wonder-1.0`として扱います。APIは既存のMetaプロバイダーのResponses API、認証は既存のAPIキーまたはMetaログインを使います。
 
-Pi SDK `1.1.0`には未収録のため、`src/runtime/catalog-additions.ts`で補完しています。同じIDがSDKに追加されたらSDKの情報を優先します。既存モデルの順序、明示的なモデル一覧、ON/OFF、モデルごとの設定上書きは保持します。
+Pi SDK 1.3.0 の meta カタログにこのIDがあるため、設定画面とHarnessのモデル一覧はその定義を使います。`src/runtime/catalog-additions.ts`の補完は、同じIDがSDKに無い場合だけ入ります。1.1.0 には無かったため補完を残しています。既存モデルの順序、明示的なモデル一覧、ON/OFF、モデルごとの設定上書きは保持します。
 
 根拠はmodels.devの[モデル定義](https://github.com/anomalyco/models.dev/blob/ad059c238d070e1132f9d5ced2fe5d50d44c0ee4/models/meta/muse-wonder-1.0.toml)と[Metaプロバイダー定義](https://github.com/anomalyco/models.dev/blob/ad059c238d070e1132f9d5ced2fe5d50d44c0ee4/providers/meta/models/muse-wonder-1.0.toml)です。これらは[Metaの告知](https://research.meta.ai/blog/muse-wonder)と2026年10月12日のMeta API確認結果を参照しています。この開発環境ではMeta公式サイトへの接続が許可されておらず、公式ページと実APIを直接再検証していません。
 
 - コンテキストは1,048,576トークン。出力はカタログ記載の実用上の上限131,072トークンを使用します。Metaが公表した独立した出力上限という意味ではありません。
 - Thinking effortは`minimal`、`low`、`medium`、`high`、`xhigh`、`max`。`off`は選択肢に含めません。
 - このアダプターが扱える入力はテキストと画像です。カタログに記載されたPDF・音声・動画入力は、現在のPi SDK／Harnessの入力型では追加していません。
-- 補完カタログの料金情報は未取得です。内部の0は無料という意味ではありません。後に料金公開を引用する資料もありますが、この環境では直接再検証していません。Harnessはこの値から料金表示を行いません。
+- 補完カタログの料金 0 は未取得であり、無料という意味ではありません。SDK 1.3.0 の定義を使うときは、そのカタログの料金が入ります。Harnessはこの値から料金表示を行いません。この環境では Meta 公式の料金ページを直接再検証していません。
 
 単体テストで、実SDKとMetaプロバイダーによるモデルID、全推論レベル、画像付きResponsesリクエスト、ローカルのSSE応答を確認しています。runtimeテストで、ビルド済みプラグインのモデル選択、能力情報、ON/OFFを確認します。実アカウントでの生成・契約ごとの利用可否は別途確認が必要です。
 

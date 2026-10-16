@@ -1,5 +1,5 @@
 import { buildBaseOptions } from '@earendil-works/pi-ai/api/simple-options'
-import type { Api, Model, Models, SimpleStreamOptions, TranscriptContext } from '@earendil-works/pi-ai'
+import type { Api, Context, Model, Models, SimpleStreamOptions, TranscriptContext } from '@earendil-works/pi-ai'
 import { catalogProvider, PiAiCatalogError } from './catalog.ts'
 import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_ONLY, MUSE_CONTRIBUTOR_HEADER } from '../catalog-metadata.mjs'
 
@@ -93,11 +93,13 @@ export function modelChoices(provider: string, models: readonly Model<Api>[], pr
 
 /** Use Pi's own option builder, reasoning mapping and service-tier accounting. */
 export function streamWithTier(
-  models: Models, model: Model<Api>, context: TranscriptContext,
+  models: Models, model: Model<Api>, context: Context,
   options: SimpleStreamOptions, serviceTier: 'default' | 'priority',
 ) {
   const full = {
-    ...buildBaseOptions(model, context, options, options.apiKey),
+    // The transcript brand is type-only. Models.stream normalizes before the
+    // provider, and buildBaseOptions only estimates tokens from the messages.
+    ...buildBaseOptions(model, context as TranscriptContext, options, options.apiKey),
     ...options.reasoning === undefined ? {} : { reasoningEffort: options.reasoning },
     ...options.toolChoice === undefined ? {} : { toolChoice: options.toolChoice },
     serviceTier,
