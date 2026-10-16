@@ -1,5 +1,72 @@
 import assert from 'node:assert/strict'
 
+/** Open the real composer menu and read one model's effort choices. */
+async function effortNames(page, modelName, shot) {
+  const trigger = () => page.getByRole('button', { name: /Select model/ })
+  await trigger().click()
+  await page.getByRole('menuitem', { name: /^Model\b/ }).click()
+  const search = page.getByRole('searchbox', { name: 'Search models…' })
+  if (await search.count()) await search.fill(modelName)
+  const option = page.getByRole('menuitemradio', { name: modelName, exact: true })
+  await option.click()
+  const escaped = modelName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  await page.getByRole('button', { name: new RegExp(`Select model, current ${escaped}\\b`) }).waitFor()
+  await trigger().click()
+  await page.getByRole('menuitem', { name: /^Effort\b/ }).click()
+  const menu = page.getByRole('menu', { name: 'Model and reasoning effort' })
+  const names = (await menu.getByRole('menuitemradio').allTextContents()).map(name => name.trim()).filter(Boolean)
+  if (shot) await page.screenshot({ path: shot })
+  await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  return names
+}
+
+/**
+ * Standard and same-ID Contributor limits stay apart in the real model menu.
+ * The account catalog is a local fixture; this does not call Meta.
+ */
+export async function checkContributorEffortMenu(page, { artifacts, workspacePath } = {}) {
+  const errors = []
+  const onError = error => errors.push(error.name)
+  page.on('pageerror', onError)
+  try {
+    if (workspacePath) {
+      const created = await page.evaluate(async path => {
+        const method = 'workspace/create'
+        const response = await fetch('/api/' + method, {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ type: 'client-request', rpcId: 'effort-workspace', method, payload: { args: { request: { path } } } }),
+        })
+        return response.json()
+      }, workspacePath)
+      if (created.result?.ok !== true) throw new Error('Workspace create failed: ' + JSON.stringify(created.result?.error ?? created))
+      await page.reload()
+    }
+    const welcome = page.getByRole('button', { name: 'Continue', exact: true })
+    const trigger = page.getByRole('button', { name: /Select model/ })
+    await Promise.race([
+      welcome.waitFor({ state: 'visible' }),
+      trigger.waitFor({ state: 'visible' }),
+    ])
+    if (await welcome.isVisible()) {
+      await welcome.click()
+      await welcome.waitFor({ state: 'hidden' })
+    }
+    await trigger.waitFor()
+    const contributor = await effortNames(page, 'muse-wonder-full-1.0 Contributor', artifacts ? `${artifacts}/contributor-efforts.png` : undefined)
+    assert.deepEqual(contributor, ['High', 'Xhigh'])
+    const standard = await effortNames(page, 'muse-wonder-full-1.0', artifacts ? `${artifacts}/standard-efforts.png` : undefined)
+    assert.deepEqual(standard, ['High', 'Xhigh', 'Max'])
+    assert.deepEqual(errors, [])
+    console.log('Real DSH model menu: same-ID Contributor offers High and Xhigh, Standard also offers Max')
+  } catch (error) {
+    if (artifacts) await page.screenshot({ path: `${artifacts}/effort-menu-failed.png` }).catch(() => {})
+    throw error
+  } finally {
+    page.off('pageerror', onError)
+  }
+}
+
 /** Run the shipped client inside the real DSH Settings modal, not a fixture shell. */
 export async function checkConnectionControls(page, { mode, artifacts }) {
   const errors = []
