@@ -2,7 +2,7 @@
 
 Pi対応プロバイダーのログイン、接続ごとのモデル選択、アカウントの利用状況をDeepSeek Harnessに追加します。同じサービスで個人用OAuth、会社用APIキー、別Gatewayを個別に管理できます。Pi SDKはプラグイン側で更新します。
 
-対応版：DS Harness `0.2.1-alpha.2` 以上、`0.3.0` 未満（`0.2.1-alpha.3` を含む。`0.3.0` のプレリリースは含まない）。SDK：`@earendil-works/pi-ai` `1.1.0`。
+対応版：DS Harness `0.2.1-alpha.2` 以上、`0.3.0` 未満（`0.2.1-alpha.3` を含む。`0.3.0` のプレリリースは含まない）。SDK：`@earendil-works/pi-ai` `1.3.0`。
 
 ## 導入
 
@@ -12,7 +12,7 @@ Pi対応プロバイダーのログイン、接続ごとのモデル選択、ア
 github:Aero123421/dsh-pi-login
 ```
 
-「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.7.4)を使えます。
+「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.7.5)を使えます。
 
 WebプロファイルではCLIからも追加できます。
 
@@ -33,6 +33,24 @@ dsh plugin --profile web add -w github:Aero123421/dsh-pi-login
 新しいGateway接続は、モデル能力を明示しない場合にテキスト・接続先既定の推論で扱い、未確認と表示します。画像やThinkingが必要な場合はHost側のモデル宣言で設定してください。
 
 旧設定の`apiKeyEnv`は移行後も優先されます。同じ旧設定に保存済みOAuthもある場合は、元のrouteを持つAPI参照接続と、オフで作成する保存済みOAuth接続の2件へ分けます。OAuth接続を有効にすれば再ログインせず使用でき、API側の鍵変更・削除でOAuthを失いません。
+
+## OpenCode Zen と Go
+
+OpenCode の API キーで、Zen（従量）と Go（月額）に接続できます。どちらも OAuth はありません。
+
+1. [OpenCode Zen](https://opencode.ai/docs/zen/) では Console にサインインし、支払い情報とクレジットを追加して API キーをコピーします。[OpenCode Go](https://opencode.ai/docs/go/) では Go または Go Plus を契約してから API キーをコピーします。
+2. 「設定 → モデル」の「接続を追加」でサービス「OpenCode Zen」または「OpenCode Go」を選び、API キーを入力して「追加」します。
+3. 「モデル」で使うモデルをオンにします。接続先を空のままにすると、SDK のモデル定義を使います。Zen の `deepseek-v4.1-flash-free` は `https://opencode.ai/inference/v1` へ、パス `/chat/completions` を付けて送ります。Go の OpenAI 互換モデルは `https://opencode.ai/inference/go/v1`、Anthropic 形式のモデルは `https://opencode.ai/inference/go` です。同じ日の Zen 文書は `https://opencode.ai/inference/openai/v1/chat/completions` も案内しています。空の接続先では SDK の URL を使います。
+
+Go は会話ごとの `x-opencode-session` を要求します。Harness が session ID を渡した呼び出しでは、Pi SDK がそのヘッダーを付けます。2026-10-16 に、このヘッダーがない Go の `deepseek-v4.1-flash` は 400 `MissingSessionID`、ヘッダーだけでキーがない場合は 401、無効なキーは 401 `Invalid credential` でした。
+
+2026-10-16 に、キーなしの `deepseek-v4.1-flash-free` を SDK の URL と文書の URL の両方へ送ると、どちらも 403 `FreeTierError` でした。Authorization を付けた OpenCode 以外のクライアントも同じ 403 で、応答は無料枠が OpenCode 内からだけ使えるというものでした。有効な API キーでの生成は未検証です。
+
+Zen の無料モデルは期間限定です。提供元によっては、その期間の利用データをモデルの改善や学習に使います。OpenCode の説明では、Big Pickle、LL Alpha Free、Exo Free、MiMo の無料モデル、Nemotron の無料エンドポイント、Muse Spark 1.3 Contributor Free がこの対象です。DeepSeek V4.1 Flash Free、GLM-5.3-Flash Free、Space Bunny Free、LongCat 2.5 Preview Free は、学習に使わず保持しないとされています。条件は変わるので、使う前に [Zen の料金とプライバシー](https://opencode.ai/docs/zen/) を確認してください。
+
+Go の `deepseek-v4.1-flash` は無料モデルではありません。契約の利用枠を使う有料モデルで、Zen の `deepseek-v4.1-flash-free` とは別の ID です。Go の一覧に `deepseek-v4.1-flash-free` はありません。
+
+Go の API キー接続は、利用枠を `https://opencode.ai/inference/go/v1/usage` から読みます。接続先が空でも、`https://opencode.ai/inference/go`、`https://opencode.ai/inference/go/v1`、以前の `https://opencode.ai/zen/go` でも同じ取得先です。2026-10-16 に、この URL と以前の `https://opencode.ai/zen/go/v1/usage` はキーなしでどちらも 401 `AuthError` でした。成功した利用枠の応答は未検証です。Zen の利用枠取得はこのプラグインでは未対応です。
 
 ## アカウントの利用状況
 
@@ -80,7 +98,7 @@ MetaのMuse Code契約は、接続追加でサービス「Muse Code」を選び�
 
 ## Meta Model API（Pi経由）のMuseモデル
 
-Muse Wonder（`muse-wonder-1.0`）に対応しています。Metaの既存の接続方法で使えます。行の「モデル」で確認してください。SDK未収録のため、プラグイン側でモデル情報を補完しています。[モデル情報と根拠](docs/models.md)
+Muse Wonder（`muse-wonder-1.0`）に対応しています。Metaの既存の接続方法で使えます。行の「モデル」で確認してください。Pi SDK 1.3.0 のカタログにこのモデルがあるため、その定義を使います。SDKに同じIDが無い場合だけ、プラグイン側の補完を使います。[モデル情報と根拠](docs/models.md)
 
 MetaでMuseログインを使っている場合は、行の「モデル」→「モデル一覧を更新」で契約情報とアカウントの最新モデル一覧を取得できます。契約が有効で、一覧にWonder FullやContributorのIDが返れば、選択候補に追加します。新しく取得したモデルは最初はオフです。能力情報が返らないモデルは、テキスト・接続先の既定の推論・設定したトークン上限で扱い、その旨を表示します。
 

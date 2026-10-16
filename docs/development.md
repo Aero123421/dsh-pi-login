@@ -102,7 +102,7 @@ Muse Code接続はPi SDKのMetaプロバイダーでログイン・生成し、�
 ```sh
 npm run update:pi
 # バージョンを指定する場合
-npm run update:pi -- 1.1.0
+npm run update:pi -- 1.3.0
 ```
 
 このコマンドはSDKを指定版、またはnpmの`latest`版に固定し、プラグインのパッチ版を上げます。同じSDK版なら変更しません。Dependabotには週1回の更新確認を設定しています（`.github/dependabot.yml`）。

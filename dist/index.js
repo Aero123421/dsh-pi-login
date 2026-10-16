@@ -2631,7 +2631,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.7.4",
+  version: "0.7.5",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -2674,7 +2674,7 @@ var package_default = {
     }
   },
   dependencies: {
-    "@earendil-works/pi-ai": "1.1.0"
+    "@earendil-works/pi-ai": "1.3.0"
   },
   engines: {
     node: ">=22.19.0"
@@ -4699,7 +4699,9 @@ var RESPONSES_COMPAT_GATE = {
   supportsAdditionalTools: "withhold",
   supportsToolSearch: "withhold",
   supportsExplicitPromptCacheMode: "withhold",
-  supportsMidConvoSystemMessages: "withhold"
+  supportsMidConvoSystemMessages: "withhold",
+  // Same catalog-owned switch as Anthropic. Unset stays pi-ai's false default.
+  supportsMidConvoEffort: "withhold"
 };
 var ANTHROPIC_COMPAT_GATE = {
   supportsEagerToolInputStreaming: "offer",
@@ -4982,6 +4984,35 @@ var PROTOCOLS = {
 function supportedProtocols() {
   return Object.keys(PROTOCOLS);
 }
+var USAGE_SERVICES = /* @__PURE__ */ new Set(["openai-codex", "anthropic", "github-copilot", "opencode-go", "meta"]);
+function listPiServices(extraServiceIds = []) {
+  const ids = [];
+  const seen = /* @__PURE__ */ new Set();
+  for (const serviceId of [...catalogProviderIds(), ...extraServiceIds]) {
+    if (seen.has(serviceId)) continue;
+    seen.add(serviceId);
+    ids.push(serviceId);
+  }
+  return ids.map((serviceId) => {
+    const provider = catalogProvider(serviceId);
+    const methods = [
+      ...provider?.auth.oauth ? [{ id: "oauth", label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }] : [],
+      ...provider?.auth.apiKey || !provider ? [{ id: "api-key", label: provider?.auth.apiKey?.name ?? "API key" }] : []
+    ];
+    return {
+      serviceId,
+      label: serviceId === "meta" ? "Meta Model API\uFF08Pi\u7D4C\u7531\uFF09" : provider?.name ?? serviceId,
+      methods,
+      apis: [...supportedProtocols()],
+      capabilities: {
+        auth: methods.length > 0,
+        models: true,
+        settings: true,
+        usage: USAGE_SERVICES.has(serviceId)
+      }
+    };
+  });
+}
 function harnessApiKeyAuth(name2) {
   return {
     name: name2,
@@ -5142,6 +5173,8 @@ function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ *
 }
 function streamWithTier(models, model, context, options, serviceTier) {
   const full = {
+    // The transcript brand is type-only. Models.stream normalizes before the
+    // provider, and buildBaseOptions only estimates tokens from the messages.
     ...buildBaseOptions(model, context, options, options.apiKey),
     ...options.reasoning === void 0 ? {} : { reasoningEffort: options.reasoning },
     ...options.toolChoice === void 0 ? {} : { toolChoice: options.toolChoice },
@@ -7217,7 +7250,7 @@ var USAGE_ENDPOINTS = Object.freeze({
   anthropic: "https://api.anthropic.com/api/oauth/usage",
   "openai-codex": "https://chatgpt.com/backend-api/wham/usage",
   "github-copilot": "https://api.github.com/copilot_internal/user",
-  "opencode-go": "https://opencode.ai/zen/go/v1/usage",
+  "opencode-go": "https://opencode.ai/inference/go/v1/usage",
   meta: "https://api.meta.ai/muse-code/key"
 });
 var invalid2 = () => {
@@ -7391,7 +7424,7 @@ function createPiUsageProviders({ fetch: request = (...args) => globalThis.fetch
     anthropic: { bases: ["https://api.anthropic.com"], parser: parseClaudeUsage, refreshAccess: true },
     "openai-codex": { bases: ["https://chatgpt.com/backend-api"], parser: parseCodexUsage, refreshAccess: true },
     "github-copilot": { bases: ["https://api.individual.githubcopilot.com", "https://api.business.githubcopilot.com", "https://api.enterprise.githubcopilot.com"], parser: parseCopilotUsage },
-    "opencode-go": { bases: ["https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"], parser: parseOpenCodeUsage, apiKey: true }
+    "opencode-go": { bases: ["https://opencode.ai/inference/go", "https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"], parser: parseOpenCodeUsage, apiKey: true }
   };
   const providers = Object.fromEntries(Object.entries(definitions).map(([id, definition]) => [id, {
     source: "internal-http",
@@ -8509,23 +8542,11 @@ function apply2(ctx, config, options = {}) {
     excludeRoutes: () => Object.values(config.connections.get()).map((connection) => connection.routeId)
   });
   manager.extraConnections = () => external.publicConnections();
-  const piServices = () => {
-    const ids = /* @__PURE__ */ new Set([...catalogProviderIds(), ...Object.keys(legacyProviders()), ...Object.keys(config.providers.get()), ...Object.values(config.connections.get()).filter((connection) => connection.integrationId === "pi").map((connection) => connection.serviceId)]);
-    return [...ids].map((serviceId) => {
-      const provider = catalogProvider(serviceId);
-      const methods = [
-        ...provider?.auth.oauth ? [{ id: "oauth", label: provider.auth.oauth.loginLabel ?? provider.auth.oauth.name }] : [],
-        ...provider?.auth.apiKey || !provider ? [{ id: "api-key", label: provider?.auth.apiKey?.name ?? "API key" }] : []
-      ];
-      return {
-        serviceId,
-        label: serviceId === "meta" ? "Meta Model API\uFF08Pi\u7D4C\u7531\uFF09" : provider?.name ?? serviceId,
-        methods,
-        apis: [...supportedProtocols()],
-        capabilities: { auth: methods.length > 0, models: true, settings: true, usage: ["openai-codex", "anthropic", "github-copilot", "opencode-go", "meta"].includes(serviceId) }
-      };
-    });
-  };
+  const piServices = () => listPiServices([
+    ...Object.keys(legacyProviders()),
+    ...Object.keys(config.providers.get()),
+    ...Object.values(config.connections.get()).filter((connection) => connection.integrationId === "pi").map((connection) => connection.serviceId)
+  ]);
   registry.register({ integrationId: "pi", label: "Pi", source: "@earendil-works/pi-ai", listServices: piServices, listConnections: () => Object.values(manager.raw()) });
   const muse = createMuseCodeOwner({ ctx, connections: manager });
   registry.register(muse);

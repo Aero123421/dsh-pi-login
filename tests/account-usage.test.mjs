@@ -72,6 +72,26 @@ test('API keys are unsupported for OAuth quota services and first-party Go keys 
   assert.equal(calls, 2)
 })
 
+test('OpenCode Go usage reads the inference URL for current and legacy bases', async t => {
+  const calls = []
+  const manager = new AccountUsageManager({ now: () => at, credentials: { read: async () => ({ type: 'api_key', key: 'fixture-go-key' }) }, providers: createPiUsageProviders({ fetch: async (url, init) => {
+    calls.push({ url: String(url), authorization: init.headers.authorization, redirect: init.redirect })
+    return Response.json({ usage: Object.fromEntries(['rolling', 'weekly', 'monthly'].map(id => [id, { status: 'ok', percent: 12, resetsAt: '2026-11-01T12:00:00Z' }])) })
+  }, now: () => at }) })
+  t.after(() => manager.dispose())
+  const go = baseURL => ({ ...connection(baseURL ?? 'default', 'opencode-go'), authMethod: 'api-key', profile: baseURL === undefined ? {} : { baseURL } })
+  for (const baseURL of [undefined, 'https://opencode.ai/inference/go/v1/', 'https://opencode.ai/inference/go', 'https://opencode.ai/zen/go/v1', 'https://opencode.ai/zen/go']) {
+    const result = await manager.get(go(baseURL))
+    assert.equal(result.status, 'available', String(baseURL))
+    assert.equal(result.windows.find(window => window.id === 'rolling').usedPercent, 12)
+    assert.doesNotMatch(JSON.stringify(result), /fixture-go-key/)
+  }
+  assert.deepEqual(calls.map(call => call.url), Array(5).fill('https://opencode.ai/inference/go/v1/usage'))
+  assert.ok(calls.every(call => call.authorization === 'Bearer fixture-go-key' && call.redirect === 'error'))
+  assert.equal((await manager.get({ ...go('https://proxy.test'), connectionId: 'proxy' })).status, 'unsupported')
+  assert.equal(calls.length, 5)
+})
+
 test('failures keep a bounded stale observation and never reset it after the reset date', async t => {
   let now = at, failure, calls = 0
   const manager = new AccountUsageManager({ now: () => now, ttl: 50, maxStale: 200, credentials: { read: async () => ({ type: 'oauth', refresh: 'secret' }) }, providers: { 'openai-codex': { read: async () => { calls++; if (failure) throw failure; return snapshot(84) } } } })

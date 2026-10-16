@@ -285,6 +285,8 @@ const RESPONSES_COMPAT_GATE = {
   supportsToolSearch: 'withhold',
   supportsExplicitPromptCacheMode: 'withhold',
   supportsMidConvoSystemMessages: 'withhold',
+  // Same catalog-owned switch as Anthropic. Unset stays pi-ai's false default.
+  supportsMidConvoEffort: 'withhold',
 } as const satisfies Record<keyof OpenAIResponsesCompat, CompatDisposition>
 
 /** Disposition of every `AnthropicMessagesCompat` field; a drift gate like the one above. */

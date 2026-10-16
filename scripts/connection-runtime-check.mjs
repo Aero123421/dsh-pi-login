@@ -109,7 +109,12 @@ try {
     assert.equal(sent.headers['x-fixture-connection'], id)
     assert.equal(sent.body.model, model)
     assert.notEqual(sent.body.service_tier, 'priority')
-    assert.equal(sent.body.reasoning.effort, 'high')
+    // Pi 1.3.0 sends the selected effort in configuration_update when the
+    // catalog model supports mid-conversation changes, and keeps reasoning.effort
+    // at its fixed placeholder. Other models still carry the effort directly.
+    const configured = [...sent.body.input ?? []].reverse().find(item => item?.type === 'configuration_update')
+    assert.equal(configured?.reasoning?.effort ?? sent.body.reasoning?.effort, 'high', id)
+    if (configured) assert.equal(sent.body.reasoning.effort, 'medium', id)
     assert.equal(replay.response.model, model)
     if (connections[id].authMethod === 'api-key') assert.equal(sent.headers.authorization, `Bearer fixture-key-${id}`)
     else assert.equal(sent.headers['chatgpt-account-id'], id === 'c-oauth-a' ? 'account-a' : 'account-b')
