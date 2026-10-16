@@ -293,6 +293,23 @@ export interface MuseCatalogRow {
   input: Array<'text' | 'image'>
   efforts: string[]
   contributor: boolean
+  /** True when the account catalog did not name a known effort list. */
+  effortsUnverified?: boolean
+  /** Catalog default, kept only when this row offers that level. */
+  defaultEffort?: string
+  /**
+   * Contributor-mode limits for this same provider ID. Absent when that mode
+   * matches Standard or a native `-contributor` ID carries the descriptor.
+   */
+  contributorMode?: {
+    name?: string
+    contextWindow?: number
+    maxTokens?: number
+    input?: Array<'text' | 'image'>
+    efforts?: string[]
+    defaultEffort?: string
+    effortsUnverified?: boolean
+  } | null
 }
 
 /** Plain options accepted by the provider resolver. */
@@ -440,6 +457,14 @@ export const Config = z.object({
       id: z.string().required(), name: z.string().required(),
       contextWindow: z.natural().required(), maxTokens: z.natural().required(),
       input: z.array(z.union(['text', 'image'])), efforts: z.array(z.string()), contributor: z.boolean(),
+      effortsUnverified: z.boolean(), defaultEffort: z.string(),
+      // A bare object is materialized for every saved row. The union stays
+      // absent until a refresh stores a real mode-specific descriptor.
+      contributorMode: z.union([z.const(null), z.object({
+        name: z.string(), contextWindow: z.natural(), maxTokens: z.natural(),
+        input: z.array(z.union(['text', 'image'])), efforts: z.array(z.string()),
+        defaultEffort: z.string(), effortsUnverified: z.boolean(),
+      })]),
     })),
   })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile(),

@@ -214,7 +214,11 @@ try {
     const route = config.connections.get()[muse.connectionId].routeId
     const museRequests = []
     let nativeCatalog = false, heldListing
-    const catalogRow = (id, name) => ({ id, display_label: name, context_limit: 1048576, output_limit: 65536, reasoning_effort_variants: [{ effort: 'low' }, { effort: 'high' }] })
+    const catalogRow = (id, name, efforts = ['low', 'high'], limits = {}) => ({
+      id, display_label: name, context_limit: limits.context ?? 1048576, output_limit: limits.output ?? 65536,
+      reasoning_effort_variants: efforts.map(effort => ({ effort })),
+      ...limits.defaultEffort ? { defaultReasoningEffort: limits.defaultEffort } : {},
+    })
     const originalFetch = globalThis.fetch
     globalThis.fetch = async (input, init) => {
       const url = new URL(input instanceof Request ? input.url : input)
@@ -226,8 +230,9 @@ try {
         if (heldListing) { heldListing.enter(); await heldListing.wait }
         if (nativeCatalog) return Response.json({ data: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2']
           .flatMap(id => [catalogRow(`${id}-contributor`, `${id} Contributor`), catalogRow(id, id)]) })
-        return Response.json({ data: mode === '1' ? [catalogRow('muse-wonder-full-1.0', 'Muse Wonder Full')]
-          : [catalogRow('muse-wonder-1.0', 'Muse Wonder'), catalogRow('muse-wonder-full-1.0', 'Muse Wonder Full')] })
+        return Response.json({ data: mode === '1'
+          ? [catalogRow('muse-wonder-full-1.0', 'Muse Wonder Full', ['high', 'xhigh'], { output: 32768, context: 524288, defaultEffort: 'high' })]
+          : [catalogRow('muse-wonder-1.0', 'Muse Wonder'), catalogRow('muse-wonder-full-1.0', 'Muse Wonder Full', ['high', 'xhigh', 'max'], { defaultEffort: 'max' })] })
       }
       assert.equal(url.pathname, '/v1/responses')
       const body = JSON.parse(init?.body ?? await input.clone().text())
@@ -249,6 +254,14 @@ try {
         ['muse-wonder-1.0', true, false], ['muse-wonder-full-1.0', true, false], ['muse-wonder-full-1.0::contributor', false, true]])
       assert.deepEqual(museRequests.map(request => [request.mode, request.authorization]), [['0', 'Bearer runtime-muse-key'], ['1', 'Bearer runtime-muse-key']])
       assert.deepEqual(config.connections.get()[muse.connectionId].museCatalog.map(row => [row.id, row.contributor]), [['muse-wonder-1.0', false], ['muse-wonder-full-1.0', true]])
+      const storedFull = config.connections.get()[muse.connectionId].museCatalog.find(row => row.id === 'muse-wonder-full-1.0')
+      assert.deepEqual(storedFull.efforts, ['high', 'xhigh', 'max'])
+      assert.equal(storedFull.defaultEffort, 'max')
+      assert.deepEqual(storedFull.contributorMode.efforts, ['high', 'xhigh'])
+      assert.equal(storedFull.contributorMode.maxTokens, 32768)
+      assert.equal(storedFull.contributorMode.contextWindow, 524288)
+      assert.equal(storedFull.contributorMode.defaultEffort, 'high')
+      assert.doesNotMatch(JSON.stringify(storedFull), /runtime-muse-/)
       assert.doesNotMatch(JSON.stringify(config.connections.get()[muse.connectionId]), /runtime-muse-/)
       const current = await call('models', { connectionId: muse.connectionId })
       await call('set-model', { connectionId: muse.connectionId, model: 'muse-wonder-full-1.0::contributor', enabled: true, revision: current.revision })
@@ -265,6 +278,19 @@ try {
       assert.equal(await stream('muse-wonder-1.0'), 'muse-fixture')
       assert.deepEqual(museRequests.filter(request => request.path === '/v1/responses').map(request => [request.model, request.mode, request.effort, request.authorization]), [
         ['muse-wonder-full-1.0', '1', 'high', 'Bearer runtime-muse-key'], ['muse-wonder-1.0', '0', 'high', 'Bearer runtime-muse-key']])
+      const standardInfo = await adapter.resolveModel(route, 'muse-wonder-full-1.0')
+      const contributorInfo = await adapter.resolveModel(route, 'muse-wonder-full-1.0::contributor')
+      assert.ok(standardInfo.reasoning.efforts.some(level => level.name === 'Max'))
+      assert.ok(!contributorInfo.reasoning.efforts.some(level => level.name === 'Max'))
+      assert.equal(contributorInfo.context.contextWindow, 524288)
+      assert.equal(standardInfo.reasoning.defaultEffort, standardInfo.reasoning.efforts.find(level => level.name === 'Max').id)
+      assert.equal(contributorInfo.reasoning.defaultEffort, contributorInfo.reasoning.efforts.find(level => level.name === 'High').id)
+      const beforeMax = museRequests.length
+      await assert.rejects(async () => {
+        const prepared = await adapter.prepareCall(route, 'muse-wonder-full-1.0::contributor')
+        for await (const _chunk of prepared.stream({ provider: route, model: 'muse-wonder-full-1.0::contributor', reasoningEffort: 'max', messages: [{ role: 'user', content: [{ type: 'text', text: 'fixture' }] }] })) {}
+      }, error => /does not support reasoning effort "max"/.test(String(error?.message)))
+      assert.equal(museRequests.length, beforeMax)
       // The saved catalog keeps the models routable without a new listing.
       const count = museRequests.length
       ctx.emit('dsh-pi-login/catalog-updated')

@@ -2260,7 +2260,8 @@ var PiLoginBroker = class {
           fast: model.serviceTier === "priority",
           ...model.contributor ? { contributor: true } : {},
           ...model.discovered ? { discovered: true } : {},
-          ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {}
+          ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {},
+          ...model.effortsUnverified === true ? { effortsUnverified: true } : {}
         }))
       };
     }
@@ -2279,7 +2280,8 @@ var PiLoginBroker = class {
         enabled: model.enabled ?? !profile2.disabledModels?.includes(model.id),
         fast: model.serviceTier === "priority",
         ...model.discovered ? { discovered: true } : {},
-        ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {}
+        ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {},
+        ...model.effortsUnverified === true ? { effortsUnverified: true } : {}
       }))
     };
   }
@@ -5065,6 +5067,9 @@ import { buildBaseOptions } from "@earendil-works/pi-ai/api/simple-options";
 var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
 var MUSE_CONTRIBUTOR = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor");
 var MUSE_CONTRIBUTOR_ONLY = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-only");
+var MUSE_CONTRIBUTOR_CAPS = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-caps");
+var MUSE_EFFORTS_UNVERIFIED = /* @__PURE__ */ Symbol("dsh-pi-login/muse-efforts-unverified");
+var MUSE_DEFAULT_EFFORT = /* @__PURE__ */ Symbol("dsh-pi-login/muse-default-effort");
 var MUSE_CONTRIBUTOR_HEADER = "x-tbh-contributor-mode";
 
 // src/runtime/fast.ts
@@ -5092,25 +5097,32 @@ function fastModelId(model) {
 function contributorModelId(model) {
   return `${model}::contributor`;
 }
+function museRecord(model) {
+  return model;
+}
+function unverifiedChoice(model) {
+  return museRecord(model)[MUSE_EFFORTS_UNVERIFIED] === true ? { effortsUnverified: true } : {};
+}
 function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ */ new Set()) {
   const ids = new Set(models.map((model) => model.id));
   const byId = new Map(models.map((model) => [model.id, model]));
   const configuredIds = new Set(profile2.models?.map((model) => model.id) ?? []);
   return models.flatMap((model) => {
     const supported = supportsFastTier(provider, model);
-    const muse = model[MUSE_CONTRIBUTOR];
+    const muse = museRecord(model)[MUSE_CONTRIBUTOR];
     if (muse !== void 0) {
-      const contributorOnly = model[MUSE_CONTRIBUTOR_ONLY] === true;
+      const contributorOnly = museRecord(model)[MUSE_CONTRIBUTOR_ONLY] === true;
       if (contributorOnly) {
         const base = byId.get(model.id.slice(0, -"-contributor".length));
-        if (base && base[MUSE_CONTRIBUTOR] !== void 0) return [];
+        if (base && museRecord(base)[MUSE_CONTRIBUTOR] !== void 0) return [];
         return [{
           id: model.id,
           name: model.name,
           model,
           contributor: true,
           enabled: profile2.enabledContributorModels?.includes(model.id) === true && !profile2.disabledModels?.includes(model.id),
-          headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" }
+          headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" },
+          ...unverifiedChoice(model)
         }];
       }
       const standard = {
@@ -5118,20 +5130,25 @@ function modelChoices(provider, models, profile2, discoveredIds = /* @__PURE__ *
         name: model.name,
         model,
         enabled: !profile2.disabledModels?.includes(model.id),
-        headers: { [MUSE_CONTRIBUTOR_HEADER]: "0" }
+        headers: { [MUSE_CONTRIBUTOR_HEADER]: "0" },
+        ...unverifiedChoice(model)
       };
       const native = byId.get(`${model.id}-contributor`);
-      const nativeContributor = native && native[MUSE_CONTRIBUTOR_ONLY] === true ? native : void 0;
-      if (!muse && !nativeContributor) return [standard];
+      const nativeContributor = native && museRecord(native)[MUSE_CONTRIBUTOR_ONLY] === true ? native : void 0;
+      const caps = museRecord(model)[MUSE_CONTRIBUTOR_CAPS];
+      const sameIdCaps = caps && typeof caps === "object" && caps.id === model.id ? caps : void 0;
+      if (!muse && !nativeContributor && !sameIdCaps) return [standard];
       const id2 = contributorModelId(model.id);
       if (ids.has(id2)) throw new PiAiCatalogError(`Contributor model ID "${id2}" conflicts with a configured model`);
+      const contributorModel = nativeContributor ?? sameIdCaps ?? model;
       return [standard, {
         id: id2,
         name: `${model.name} Contributor`,
-        model: nativeContributor ?? model,
+        model: contributorModel,
         contributor: true,
         enabled: profile2.enabledContributorModels?.includes(id2) === true && !(nativeContributor && profile2.disabledModels?.includes(nativeContributor.id)),
-        headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" }
+        headers: { [MUSE_CONTRIBUTOR_HEADER]: "1" },
+        ...unverifiedChoice(contributorModel)
       }];
     }
     const ordinary = {
@@ -5301,7 +5318,20 @@ var Config = z.object({
       maxTokens: z.natural().required(),
       input: z.array(z.union(["text", "image"])),
       efforts: z.array(z.string()),
-      contributor: z.boolean()
+      contributor: z.boolean(),
+      effortsUnverified: z.boolean(),
+      defaultEffort: z.string(),
+      // A bare object is materialized for every saved row. The union stays
+      // absent until a refresh stores a real mode-specific descriptor.
+      contributorMode: z.union([z.const(null), z.object({
+        name: z.string(),
+        contextWindow: z.natural(),
+        maxTokens: z.natural(),
+        input: z.array(z.union(["text", "image"])),
+        efforts: z.array(z.string()),
+        defaultEffort: z.string(),
+        effortsUnverified: z.boolean()
+      })])
     }))
   })).default({}).volatile(),
   providers: z.dict(profile).default({}).volatile()
@@ -5978,7 +6008,8 @@ var PiAiAdapter = class extends LlmAdapter {
     const profile2 = this.profileOf(snapshot, provider);
     const choice = this.modelOf(snapshot, provider, model);
     const resolvedModel = choice.model;
-    const defaultLevel = describableReasoningLevel(resolvedModel, profile2.reasoning);
+    const catalogDefault2 = resolvedModel[MUSE_DEFAULT_EFFORT];
+    const defaultLevel = describableReasoningLevel(resolvedModel, profile2.reasoning ?? catalogDefault2);
     const configuredMaxTokens = profile2.configuredMaxTokens.get(resolvedModel.id);
     return {
       provider,
@@ -7672,7 +7703,7 @@ function createExternalIntegrations({ llm, profileKey = "default", generation = 
   function copyRows() {
     return structuredClone(rows);
   }
-  const descriptor = {
+  const descriptor2 = {
     integrationId,
     label: "External integrations",
     source: "Host LLM directory",
@@ -7720,7 +7751,7 @@ function createExternalIntegrations({ llm, profileKey = "default", generation = 
         key: id,
         connectionId: id,
         integrationId,
-        integrationLabel: descriptor.label,
+        integrationLabel: descriptor2.label,
         serviceId: routeId,
         serviceLabel: name2,
         routeId,
@@ -7769,7 +7800,7 @@ function createExternalIntegrations({ llm, profileKey = "default", generation = 
     return structuredClone(result);
   }
   return {
-    descriptor,
+    descriptor: descriptor2,
     publicConnections,
     refresh: publicConnections,
     models,
@@ -7790,6 +7821,11 @@ var MUSE_CODE_MODELS_URL = "https://api.meta.ai/muse-code/models";
 var MUSE_CODE_KEY_URL = "https://api.meta.ai/muse-code/key";
 var BASE_URL = "https://api.meta.ai/v1";
 var LEVELS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+var BASE_LEVELS = ["minimal", "low", "medium", "high"];
+var KNOWN_EFFORTS = /* @__PURE__ */ new Set([...LEVELS, "none"]);
+var DOCUMENTED_STANDARD_EFFORTS = /* @__PURE__ */ new Map([
+  ["muse-wonder-1.0", ["minimal", "low", "medium", "high", "xhigh", "max"]]
+]);
 var ID3 = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 var NON_CHAT = /^(?:muse-image|muse-voice|sam-)/;
 var oauth = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
@@ -7803,9 +7839,79 @@ function rowsOf(body) {
 }
 function effortsOf(row) {
   const variants = first(row, ["reasoning_effort_variants", "reasoningEffortVariants", "reasoning_efforts", "reasoningEfforts", "variants"]);
-  if (!Array.isArray(variants)) return void 0;
+  if (!Array.isArray(variants)) return { efforts: [], unverified: true };
   const names = variants.map((item) => typeof item === "string" ? item : item && typeof item === "object" ? first(item, ["effort", "reasoning_effort", "reasoningEffort", "level", "id", "name"]) : void 0);
-  return [...new Set(names.filter((name2) => typeof name2 === "string").map((name2) => name2.toLowerCase()))];
+  const efforts = [...new Set(names.filter((name2) => typeof name2 === "string").map((name2) => name2.toLowerCase()))].filter((name2) => KNOWN_EFFORTS.has(name2));
+  if (!efforts.length) return { efforts: [], unverified: true };
+  return { efforts, unverified: false };
+}
+function catalogDefault(row) {
+  const value = first(row, ["default_reasoning_effort", "defaultReasoningEffort", "default_effort"]);
+  if (typeof value !== "string") return void 0;
+  const level = value.toLowerCase();
+  return KNOWN_EFFORTS.has(level) ? level : void 0;
+}
+function offeredMuseEfforts(row) {
+  const listed = Array.isArray(row?.efforts) ? row.efforts.filter((effort) => KNOWN_EFFORTS.has(effort)) : [];
+  if (listed.length) return listed;
+  if (row?.effortsUnverified === true) return [...BASE_LEVELS];
+  return [];
+}
+function assignDefault(row, candidate) {
+  const offered = offeredMuseEfforts(row);
+  if (candidate && offered.includes(candidate)) row.defaultEffort = candidate;
+  else delete row.defaultEffort;
+}
+function withDocumentedStandardEfforts(rows) {
+  return rows.map((row) => {
+    if (row.effortsUnverified !== true) return row;
+    const documented = DOCUMENTED_STANDARD_EFFORTS.get(row.id);
+    if (!documented) return row;
+    const next = { ...row, efforts: [...documented] };
+    delete next.effortsUnverified;
+    const candidate = next.catalogDefault ?? next.defaultEffort;
+    delete next.catalogDefault;
+    delete next.defaultEffort;
+    assignDefault(next, candidate);
+    return next;
+  });
+}
+function finalizeRow(row) {
+  const next = { ...row };
+  const candidate = next.catalogDefault ?? next.defaultEffort;
+  delete next.catalogDefault;
+  delete next.defaultEffort;
+  assignDefault(next, candidate);
+  return next;
+}
+function modeSnapshot(row) {
+  return {
+    name: row.name,
+    contextWindow: row.contextWindow,
+    maxTokens: row.maxTokens,
+    input: [...row.input],
+    efforts: [...row.efforts],
+    ...row.effortsUnverified === true ? { effortsUnverified: true } : {},
+    ...row.defaultEffort ? { defaultEffort: row.defaultEffort } : {}
+  };
+}
+function mergeMuseModes(standard, contributor) {
+  const offered = new Set(contributor.map((row) => row.id));
+  const byContributor = new Map(contributor.map((row) => [row.id, row]));
+  const merged = /* @__PURE__ */ new Map();
+  for (const row of standard) {
+    const other = byContributor.get(row.id);
+    const contributorChoice = offered.has(row.id) && !row.id.endsWith("-contributor");
+    const next = { ...row, contributor: contributorChoice };
+    if (other && contributorChoice && !offered.has(`${row.id}-contributor`) && JSON.stringify(modeSnapshot(row)) !== JSON.stringify(modeSnapshot(other))) {
+      next.contributorMode = modeSnapshot(other);
+    }
+    merged.set(row.id, next);
+  }
+  for (const row of contributor) {
+    if (row.id.startsWith("muse-") && row.id.endsWith("-contributor")) merged.set(row.id, { ...row, contributor: false });
+  }
+  return [...merged.values()];
 }
 function parseMuseCatalog(body) {
   const rows = [];
@@ -7814,40 +7920,66 @@ function parseMuseCatalog(body) {
     const id = first(row, ["id", "model_id", "modelId", "model"]);
     if (typeof id !== "string" || !ID3.test(id) || NON_CHAT.test(id) || rows.some((entry) => entry.id === id)) continue;
     if (row.enabled === false || ["hidden", "internal", "disabled"].includes(row.visibility)) continue;
-    const efforts = effortsOf(row);
-    rows.push({
+    const parsed = effortsOf(row);
+    const next = {
       id,
       name: label3(first(row, ["display_label", "displayLabel", "display_name", "displayName", "name"])) ?? id,
       contextWindow: positive(first(row, ["context_limit", "contextLimit", "context_window", "contextWindow"])) ?? 1048576,
       maxTokens: positive(first(row, ["output_limit", "outputLimit", "max_output_tokens", "maxTokens"])) ?? 131072,
       // Muse chat models accept images; the catalog only flags video and image output.
       input: ["text", "image"],
-      // An absent list keeps Muse's documented minimal-through-max range.
-      efforts: efforts?.length ? efforts.filter((effort) => [...LEVELS, "none"].includes(effort)) : [...LEVELS],
-      contributor: false
-    });
+      efforts: parsed.efforts,
+      contributor: false,
+      ...parsed.unverified ? { effortsUnverified: true } : {}
+    };
+    const rawDefault = catalogDefault(row);
+    if (rawDefault && offeredMuseEfforts(next).includes(rawDefault)) next.defaultEffort = rawDefault;
+    else if (rawDefault) next.catalogDefault = rawDefault;
+    rows.push(next);
   }
   return rows;
 }
-function museModels(rows = []) {
-  return new Map(rows.map((row) => [row.id, {
+function descriptor(row) {
+  const efforts = offeredMuseEfforts(row);
+  const reasoning = efforts.some((effort) => effort !== "none");
+  const model = {
     id: row.id,
     name: row.name,
     provider: "meta",
     api: "openai-responses",
     baseUrl: BASE_URL,
-    reasoning: row.efforts.some((effort) => effort !== "none"),
-    ...row.efforts.some((effort) => effort !== "none") ? { thinkingLevelMap: {
-      off: row.efforts.includes("none") ? "none" : null,
-      ...Object.fromEntries(LEVELS.map((level) => [level, row.efforts.includes(level) ? level : null]))
+    reasoning,
+    ...reasoning ? { thinkingLevelMap: {
+      off: efforts.includes("none") ? "none" : null,
+      ...Object.fromEntries(LEVELS.map((level) => [level, efforts.includes(level) ? level : null]))
     } } : {},
     input: [...row.input],
     contextWindow: row.contextWindow,
     maxTokens: row.maxTokens,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     [MUSE_CONTRIBUTOR]: row.contributor === true,
-    [MUSE_CONTRIBUTOR_ONLY]: row.id.startsWith("muse-") && row.id.endsWith("-contributor")
-  }]));
+    [MUSE_CONTRIBUTOR_ONLY]: row.id.startsWith("muse-") && row.id.endsWith("-contributor"),
+    ...row.effortsUnverified === true ? { [MUSE_EFFORTS_UNVERIFIED]: true } : {},
+    ...row.defaultEffort && efforts.includes(row.defaultEffort) ? { [MUSE_DEFAULT_EFFORT]: row.defaultEffort } : {}
+  };
+  const mode = row.contributorMode;
+  if (mode && positive(mode.contextWindow) && positive(mode.maxTokens) && Array.isArray(mode.efforts)) {
+    model[MUSE_CONTRIBUTOR_CAPS] = descriptor({
+      id: row.id,
+      name: mode.name || row.name,
+      contextWindow: mode.contextWindow,
+      maxTokens: mode.maxTokens,
+      input: mode.input?.length ? mode.input : row.input,
+      efforts: mode.efforts,
+      effortsUnverified: mode.effortsUnverified === true,
+      defaultEffort: mode.defaultEffort,
+      contributor: true
+    });
+  }
+  return model;
+}
+function museModels(rows = []) {
+  return new Map(rows.map((row) => [row.id, descriptor(row)]));
 }
 var MuseCodeCatalogSession = class {
   constructor({
@@ -7946,18 +8078,10 @@ var MuseCodeCatalogSession = class {
     return this.cache.get(async (requestSignal) => {
       const credential = await this.access(requestSignal);
       const principal = principalOf(credential);
-      const standard = parseMuseCatalog(await this.list(credential, "0", requestSignal));
+      const standard = withDocumentedStandardEfforts(parseMuseCatalog(await this.list(credential, "0", requestSignal))).map(finalizeRow);
       if (!standard.length) throw new ProviderReadError("error");
-      const contributor = parseMuseCatalog(await this.list(credential, "1", requestSignal));
-      const offered = new Set(contributor.map((row) => row.id));
-      const merged = new Map(standard.map((row) => [row.id, row]));
-      for (const row of contributor) {
-        if (row.id.startsWith("muse-") && row.id.endsWith("-contributor")) merged.set(row.id, row);
-      }
-      const rows = [...merged.values()].map((row) => ({
-        ...row,
-        contributor: offered.has(row.id) && !row.id.endsWith("-contributor")
-      }));
+      const contributor = parseMuseCatalog(await this.list(credential, "1", requestSignal)).map(finalizeRow);
+      const rows = mergeMuseModes(standard, contributor);
       const current = await this.credentials.read("meta");
       if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError("account-changed");
       if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) {

@@ -116,7 +116,7 @@ const plugin = ctx.plugin({ inject: ['authorization', 'credentials', 'connection
   ...(metaRefreshed ? [{ id: full, name: 'Muse Wonder Full', discovered: true, capabilityUnverified: true, enabled: profile.enabledDiscoveredModels?.includes(full) === true }] : []),
  ] : provider === 'muse-code' ? (museLoaded ? [['muse-wonder-1.0', 'Muse Wonder'], [full, 'Muse Wonder Full']] : []).flatMap(([id, name]) => [
   { id, name, enabled: !profile.disabledModels?.includes(id) },
-  { id: `${id}::contributor`, name: `${name} Contributor`, contributor: true, enabled: profile.enabledContributorModels?.includes(`${id}::contributor`) === true },
+  { id: `${id}::contributor`, name: `${name} Contributor`, contributor: true, ...id === full ? { effortsUnverified: true } : {}, enabled: profile.enabledContributorModels?.includes(`${id}::contributor`) === true },
  ]) : provider === 'example' ? [
   { id: 'example-base', name: 'Example Base', enabled: true },
   ...(exampleRefreshed ? [{ id: 'example-new', name: 'Example New', discovered: true, enabled: profile.enabledDiscoveredModels?.includes('example-new') === true }] : []),
@@ -432,6 +432,7 @@ try {
  assert.equal(await page.getByRole('switch', { name: 'モデルを使う: Muse Wonder', exact: true }).getAttribute('aria-checked'), 'true')
  assert.equal(await contributorSwitch.getAttribute('aria-checked'), 'false')
  await page.getByText(/^Contributor版は、利用枠が増える代わりに/).waitFor()
+ await page.getByText('このアカウントの一覧に推論レベルがないため、Maxは出していません。', { exact: true }).waitFor()
  await contributorSwitch.click()
  await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'true' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: Muse Wonder Full Contributor"]')))
  assert.deepEqual(settingsValue.connections['c-muse-code'].profile.enabledContributorModels, [`${full}::contributor`])

@@ -92,7 +92,7 @@ MetaのMuse Code契約は、接続追加でサービス「Muse Code」を選び�
 
 行の「設定」で接続の編集・複製・削除を行います。削除は接続と専用の認証情報を対象とし、確認後に実行します。接続は上段の標準プロバイダー編集欄には重複表示しません。
 
-行の「モデル」を開くと、そのアカウントのMuse Code用モデル一覧（`/muse-code/models`）を読み込みます。Wonder、Wonder Fullなど一覧にあるモデルと、それぞれ1つのContributor版を個別のスイッチでオンにでき、オンにしたモデルはチャットやエージェントのモデル選択に出ます。Contributor版は、Metaが内容を学習に使う代わりに利用枠が増えるモードで、最初はオフです。提供元の`-contributor`付きIDとプラグインのContributor選択を1つにまとめ、APIへは提供元が返した実モデルIDと`x-tbh-contributor-mode`を送ります。読み込んだ一覧は接続に保存するので、再起動後も使えます。利用状況は契約の利用枠を表示します。
+行の「モデル」を開くと、そのアカウントのMuse Code用モデル一覧（`/muse-code/models`）を読み込みます。Wonder、Wonder Fullなど一覧にあるモデルと、それぞれ1つのContributor版を個別のスイッチでオンにでき、オンにしたモデルはチャットやエージェントのモデル選択に出ます。Contributor版は、Metaが内容を学習に使う代わりに利用枠が増えるモードで、最初はオフです。提供元の`-contributor`付きIDとプラグインのContributor選択を1つにまとめ、APIへは提供元が返した実モデルIDと`x-tbh-contributor-mode`を送ります。同じIDのContributorは、そのモードの一覧にある推論レベルと出力上限を使い、StandardのMaxを引き継ぎません。読み込んだ一覧は接続に保存するので、再起動後も使えます。利用状況は契約の利用枠を表示します。
 
 一覧の項目名とContributorヘッダーの値は、公式CLI 1.4.7の実装から読み取ったもので、実アカウントでの生成・Contributor利用枠・課金は未検証です。0.6.xの（CLI経由の）Muse Code接続は再ログインが必要です。[モデル選択の詳細](docs/models.md#meta-muse-code)
 

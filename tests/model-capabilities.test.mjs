@@ -6,6 +6,7 @@ import { getSupportedThinkingLevels } from '../src/runtime/models.ts'
 import { supplementCatalog } from '../src/runtime/catalog-additions.ts'
 import { modelChoices, fastModelId, streamWithTier, supportsFastTier } from '../src/runtime/fast.ts'
 import { parseMuseCatalog, museModels } from '../src/muse-code-catalog.mjs'
+import { MUSE_CONTRIBUTOR_CAPS } from '../src/catalog-metadata.mjs'
 
 const meta = {
   provider: 'meta',
@@ -50,8 +51,42 @@ test('Contributor Max is not inferred from the model name', () => {
   assert.equal(museModels(named).get('muse-spark-1.3').thinkingLevelMap.max, null)
   assert.deepEqual(getSupportedThinkingLevels(museModels(named).get('muse-spark-1.3')).includes('max'), false)
   const omitted = parseMuseCatalog([{ id: 'muse-spark-1.3', display_label: 'Muse Spark 1.3' }])
-  assert.equal(omitted[0].efforts.includes('max'), true)
-  assert.equal(museModels(omitted).get('muse-spark-1.3').thinkingLevelMap.max, 'max')
+  assert.equal(omitted[0].efforts.includes('max'), false)
+  assert.equal(omitted[0].effortsUnverified, true)
+  assert.equal(museModels(omitted).get('muse-spark-1.3').thinkingLevelMap.max, null)
+  assert.equal(getSupportedThinkingLevels(museModels(omitted).get('muse-spark-1.3')).includes('max'), false)
+})
+
+test('same-id Contributor efforts survive catalog materialization and reject Max at call time', () => {
+  const rows = [{
+    id: 'muse-wonder-1.0', name: 'Muse Wonder', contextWindow: 1048576, maxTokens: 131072,
+    input: ['text', 'image'], efforts: ['high', 'xhigh', 'max'], contributor: true, defaultEffort: 'max',
+    contributorMode: { name: 'Muse Wonder', contextWindow: 1048576, maxTokens: 65536, input: ['text', 'image'], efforts: ['high', 'xhigh'], defaultEffort: 'high' },
+  }, {
+    id: 'muse-wonder-full-1.0', name: 'Muse Wonder Full', contextWindow: 1048576, maxTokens: 131072,
+    input: ['text', 'image'], efforts: ['high', 'max'], contributor: true,
+    contributorMode: { contextWindow: 524288, maxTokens: 32768, input: ['text', 'image'], efforts: ['high'] },
+  }]
+  const route = resolveRouteModels({ ...meta, provider: 'meta' }, 'deferred', museModels(rows))
+  const choices = modelChoices('meta', route.models, { enabledContributorModels: rows.map(row => `${row.id}::contributor`) })
+  assert.equal(choices.length, 4)
+  for (const id of rows.map(row => row.id)) {
+    const standard = choices.find(choice => choice.id === id)
+    const contributor = choices.find(choice => choice.id === `${id}::contributor`)
+    assert.equal(standard.headers['x-tbh-contributor-mode'], '0')
+    assert.equal(contributor.headers['x-tbh-contributor-mode'], '1')
+    assert.equal(contributor.model.id, id)
+    assert.notEqual(contributor.model, standard.model)
+    assert.equal(contributor.model[MUSE_CONTRIBUTOR_CAPS], undefined)
+    assert.ok(getSupportedThinkingLevels(standard.model).includes('max'))
+    assert.equal(getSupportedThinkingLevels(contributor.model).includes('max'), false)
+  }
+  const fullContributor = choices.find(choice => choice.id === 'muse-wonder-full-1.0::contributor')
+  assert.equal(fullContributor.model.maxTokens, 32768)
+  assert.equal(fullContributor.model.contextWindow, 524288)
+  const old = museModels([{ id: 'muse-wonder-1.0', name: 'Muse Wonder', contextWindow: 1048576, maxTokens: 131072, input: ['text', 'image'], efforts: ['high', 'max'], contributor: true }])
+  const legacy = modelChoices('meta', [...old.values()], {})
+  assert.equal(legacy.find(choice => choice.id === 'muse-wonder-1.0::contributor').model, legacy.find(choice => choice.id === 'muse-wonder-1.0').model)
 })
 
 test('a Contributor-only native model keeps its real ID, starts off, and never creates a missing Standard model', () => {
