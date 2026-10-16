@@ -117,6 +117,7 @@ export class PiLoginBroker {
           ...model.contributor ? { contributor: true } : {},
           ...model.discovered ? { discovered: true } : {},
           ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {},
+          ...model.effortsUnverified === true ? { effortsUnverified: true } : {},
         })) }
     }
     if (!KEY_PATTERN.test(requireString(key, 200)) || !this.authorization.describe(key) || !this.catalog) throw new LoginError('invalid-request')
@@ -131,6 +132,7 @@ export class PiLoginBroker {
         fast: model.serviceTier === 'priority',
         ...model.discovered ? { discovered: true } : {},
         ...model.capabilityUnverified === true ? { capabilityUnverified: true } : {},
+        ...model.effortsUnverified === true ? { effortsUnverified: true } : {},
       })) }
   }
 

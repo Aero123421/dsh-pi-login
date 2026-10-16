@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { parse, stringify } from 'yaml'
-import { checkConnectionControls } from './connection-install-ui.mjs'
+import { checkConnectionControls, checkContributorEffortMenu } from './connection-install-ui.mjs'
 const home = await mkdtemp(join(tmpdir(), 'pi-update-clean-'))
 const env = { ...process.env, DSH_HOME: home }
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
@@ -104,13 +104,24 @@ try {
   const patches = parse(await readFile(patchPath, 'utf8'))
   const entry = patches.find(entry => entry.id === 'dsh-pi-login')
   assert.ok(entry?.config?.connections?.[crud.museId])
+  const nativePair = id => [
+    { id: `${id}-contributor`, name: `${id}-contributor`, contextWindow: 1048576, maxTokens: 32768, input: ['text', 'image'], efforts: ['high'], contributor: false },
+    { id, name: id, contextWindow: 1048576, maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true },
+  ]
+  // Full uses one provider ID in both modes. Its Contributor limits are stored
+  // beside Standard so a restart cannot offer Standard's Max on that choice.
+  const splitFull = {
+    id: 'muse-wonder-full-1.0', name: 'muse-wonder-full-1.0', contextWindow: 1048576, maxTokens: 131072,
+    input: ['text', 'image'], efforts: ['high', 'xhigh', 'max'], defaultEffort: 'max', contributor: true,
+    contributorMode: {
+      name: 'muse-wonder-full-1.0', contextWindow: 524288, maxTokens: 32768, input: ['text', 'image'],
+      efforts: ['high', 'xhigh'], defaultEffort: 'high',
+    },
+  }
   Object.assign(entry.config.connections[crud.museId], {
     enabled: true,
     museCode: { modelId: 'muse-wonder-1.0', contributorMode: false },
-    museCatalog: ['muse-wonder-full-1.0', 'muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2'].flatMap(id => [
-      { id: `${id}-contributor`, name: `${id}-contributor`, contextWindow: 1048576, maxTokens: 32768, input: ['text', 'image'], efforts: ['high'], contributor: false },
-      { id, name: id, contextWindow: 1048576, maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true },
-    ]),
+    museCatalog: [splitFull, ...['muse-wonder-1.0', 'muse-spark-1.3', 'muse-spark-1.2'].flatMap(nativePair)],
     profile: { enabledContributorModels: ['muse-wonder-full-1.0::contributor'] },
   })
   const credentialKey = `llm-pi-ai/${entry.config.connections[crud.museId].credentialRecordId}`
@@ -166,6 +177,11 @@ export async function apply(ctx) {
   assert.ok(restoredModels.models.every(model => !model.id.endsWith('-contributor')))
   console.log('Clean DSH profile: restart with saved API-key and Muse connections, Credentials, persisted catalog/Contributor selection, migration and fresh profile generation passed')
   const artifacts = process.env.DSH_TEST_ARTIFACT_DIR
+  const effortArtifacts = artifacts ?? 'work/contributor-efforts'
+  await mkdir(effortArtifacts, { recursive: true })
+  const workspacePath = join(home, 'effort-workspace')
+  await mkdir(workspacePath, { recursive: true })
+  await checkContributorEffortMenu(page, { artifacts: effortArtifacts, workspacePath })
   if (artifacts) await mkdir(artifacts, { recursive: true })
   await checkConnectionControls(page, { connectionId: crud.museId, mode: 'toggle', artifacts })
   await page.close(); await stopApp(); startApp()

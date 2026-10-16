@@ -437,6 +437,9 @@ test('unverified configured gateway models retain their independent capability w
  connected.broker.catalog=()=>[{id:'gateway-model',name:'Gateway model',capabilityUnverified:true}]
  assert.equal(connected.broker.models('c-account-a').models[0].capabilityUnverified,true)
  assert.equal(connected.broker.models('c-account-a').models[0].discovered,undefined)
+ connected.broker.catalog=()=>[{id:'muse-wonder-1.0::contributor',name:'Muse Wonder Contributor',contributor:true,effortsUnverified:true}]
+ assert.equal(connected.broker.models('c-account-a').models[0].effortsUnverified,true)
+ assert.equal(connected.broker.models('c-account-a').models[0].capabilityUnverified,undefined)
 })
 
 test('scoped model reads and writes reject previous profile and authentication generations before any catalog work', async t => {

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { ProviderCache, ProviderReadError } from './provider-cache.mjs'
 import { readProviderJson, parseMuseUsage } from './account-usage-providers.mjs'
-import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_ONLY, MUSE_CONTRIBUTOR_HEADER } from './catalog-metadata.mjs'
+import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_ONLY, MUSE_CONTRIBUTOR_CAPS, MUSE_EFFORTS_UNVERIFIED, MUSE_DEFAULT_EFFORT, MUSE_CONTRIBUTOR_HEADER } from './catalog-metadata.mjs'
 
 /**
  * Muse Code's own account catalog. The official CLI lists models from
@@ -14,6 +14,15 @@ export const MUSE_CODE_MODELS_URL = 'https://api.meta.ai/muse-code/models'
 export const MUSE_CODE_KEY_URL = 'https://api.meta.ai/muse-code/key'
 const BASE_URL = 'https://api.meta.ai/v1'
 const LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+// Levels pi-ai already treats as the base set. max and xhigh stay off until
+// the account catalog, or a published Standard exception, names them.
+const BASE_LEVELS = ['minimal', 'low', 'medium', 'high']
+const KNOWN_EFFORTS = new Set([...LEVELS, 'none'])
+// Meta's reasoning docs list these levels for muse-wonder-1.0 Standard.
+// Contributor listings and every other model ID do not inherit them.
+const DOCUMENTED_STANDARD_EFFORTS = new Map([
+  ['muse-wonder-1.0', ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']],
+])
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/
 const NON_CHAT = /^(?:muse-image|muse-voice|sam-)/
 const oauth = value => value?.type === 'oauth' && typeof value.refresh === 'string' && value.refresh.length > 0
@@ -29,10 +38,96 @@ function rowsOf(body) {
 
 function effortsOf(row) {
   const variants = first(row, ['reasoning_effort_variants', 'reasoningEffortVariants', 'reasoning_efforts', 'reasoningEfforts', 'variants'])
-  if (!Array.isArray(variants)) return undefined
+  if (!Array.isArray(variants)) return { efforts: [], unverified: true }
   const names = variants.map(item => typeof item === 'string' ? item
     : item && typeof item === 'object' ? first(item, ['effort', 'reasoning_effort', 'reasoningEffort', 'level', 'id', 'name']) : undefined)
-  return [...new Set(names.filter(name => typeof name === 'string').map(name => name.toLowerCase()))]
+  const efforts = [...new Set(names.filter(name => typeof name === 'string').map(name => name.toLowerCase()))].filter(name => KNOWN_EFFORTS.has(name))
+  // An empty list or only unknown keys is not a list of supported levels.
+  if (!efforts.length) return { efforts: [], unverified: true }
+  return { efforts, unverified: false }
+}
+
+function catalogDefault(row) {
+  const value = first(row, ['default_reasoning_effort', 'defaultReasoningEffort', 'default_effort'])
+  if (typeof value !== 'string') return undefined
+  const level = value.toLowerCase()
+  return KNOWN_EFFORTS.has(level) ? level : undefined
+}
+
+/** Levels this stored row may offer. An unlisted catalog does not include max or xhigh. */
+export function offeredMuseEfforts(row) {
+  const listed = Array.isArray(row?.efforts) ? row.efforts.filter(effort => KNOWN_EFFORTS.has(effort)) : []
+  if (listed.length) return listed
+  if (row?.effortsUnverified === true) return [...BASE_LEVELS]
+  return []
+}
+
+function assignDefault(row, candidate) {
+  const offered = offeredMuseEfforts(row)
+  if (candidate && offered.includes(candidate)) row.defaultEffort = candidate
+  else delete row.defaultEffort
+}
+
+/**
+ * muse-wonder-1.0 Standard has a published effort range. Apply it only when
+ * that Standard listing omitted a usable effort array.
+ */
+export function withDocumentedStandardEfforts(rows) {
+  return rows.map(row => {
+    if (row.effortsUnverified !== true) return row
+    const documented = DOCUMENTED_STANDARD_EFFORTS.get(row.id)
+    if (!documented) return row
+    const next = { ...row, efforts: [...documented] }
+    delete next.effortsUnverified
+    const candidate = next.catalogDefault ?? next.defaultEffort
+    delete next.catalogDefault
+    delete next.defaultEffort
+    assignDefault(next, candidate)
+    return next
+  })
+}
+
+function finalizeRow(row) {
+  const next = { ...row }
+  const candidate = next.catalogDefault ?? next.defaultEffort
+  delete next.catalogDefault
+  delete next.defaultEffort
+  assignDefault(next, candidate)
+  return next
+}
+
+function modeSnapshot(row) {
+  return {
+    name: row.name,
+    contextWindow: row.contextWindow,
+    maxTokens: row.maxTokens,
+    input: [...row.input],
+    efforts: [...row.efforts],
+    ...row.effortsUnverified === true ? { effortsUnverified: true } : {},
+    ...row.defaultEffort ? { defaultEffort: row.defaultEffort } : {},
+  }
+}
+
+/** Keep one stored row per provider ID, with Contributor limits beside Standard when they differ. */
+export function mergeMuseModes(standard, contributor) {
+  const offered = new Set(contributor.map(row => row.id))
+  const byContributor = new Map(contributor.map(row => [row.id, row]))
+  const merged = new Map()
+  for (const row of standard) {
+    const other = byContributor.get(row.id)
+    const contributorChoice = offered.has(row.id) && !row.id.endsWith('-contributor')
+    const next = { ...row, contributor: contributorChoice }
+    // A native "<id>-contributor" row is the Contributor descriptor. The same
+    // base ID's mode-1 row must not become a second choice.
+    if (other && contributorChoice && !offered.has(`${row.id}-contributor`) && JSON.stringify(modeSnapshot(row)) !== JSON.stringify(modeSnapshot(other))) {
+      next.contributorMode = modeSnapshot(other)
+    }
+    merged.set(row.id, next)
+  }
+  for (const row of contributor) {
+    if (row.id.startsWith('muse-') && row.id.endsWith('-contributor')) merged.set(row.id, { ...row, contributor: false })
+  }
+  return [...merged.values()]
 }
 
 /** Accept the catalog's documented row fields without guessing entitlement. */
@@ -43,35 +138,56 @@ export function parseMuseCatalog(body) {
     const id = first(row, ['id', 'model_id', 'modelId', 'model'])
     if (typeof id !== 'string' || !ID.test(id) || NON_CHAT.test(id) || rows.some(entry => entry.id === id)) continue
     if (row.enabled === false || ['hidden', 'internal', 'disabled'].includes(row.visibility)) continue
-    const efforts = effortsOf(row)
-    rows.push({
+    const parsed = effortsOf(row)
+    const next = {
       id, name: label(first(row, ['display_label', 'displayLabel', 'display_name', 'displayName', 'name'])) ?? id,
       contextWindow: positive(first(row, ['context_limit', 'contextLimit', 'context_window', 'contextWindow'])) ?? 1048576,
       maxTokens: positive(first(row, ['output_limit', 'outputLimit', 'max_output_tokens', 'maxTokens'])) ?? 131072,
       // Muse chat models accept images; the catalog only flags video and image output.
       input: ['text', 'image'],
-      // An absent list keeps Muse's documented minimal-through-max range.
-      efforts: efforts?.length ? efforts.filter(effort => [...LEVELS, 'none'].includes(effort)) : [...LEVELS],
+      efforts: parsed.efforts,
       contributor: false,
-    })
+      ...parsed.unverified ? { effortsUnverified: true } : {},
+    }
+    const rawDefault = catalogDefault(row)
+    if (rawDefault && offeredMuseEfforts(next).includes(rawDefault)) next.defaultEffort = rawDefault
+    else if (rawDefault) next.catalogDefault = rawDefault
+    rows.push(next)
   }
   return rows
 }
 
-/** Pi model descriptors for the persisted rows. */
-export function museModels(rows = []) {
-  return new Map(rows.map(row => [row.id, {
+function descriptor(row) {
+  const efforts = offeredMuseEfforts(row)
+  const reasoning = efforts.some(effort => effort !== 'none')
+  const model = {
     id: row.id, name: row.name, provider: 'meta', api: 'openai-responses', baseUrl: BASE_URL,
-    reasoning: row.efforts.some(effort => effort !== 'none'),
-    ...row.efforts.some(effort => effort !== 'none') ? { thinkingLevelMap: {
-      off: row.efforts.includes('none') ? 'none' : null,
-      ...Object.fromEntries(LEVELS.map(level => [level, row.efforts.includes(level) ? level : null])),
+    reasoning,
+    ...reasoning ? { thinkingLevelMap: {
+      off: efforts.includes('none') ? 'none' : null,
+      ...Object.fromEntries(LEVELS.map(level => [level, efforts.includes(level) ? level : null])),
     } } : {},
     input: [...row.input], contextWindow: row.contextWindow, maxTokens: row.maxTokens,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     [MUSE_CONTRIBUTOR]: row.contributor === true,
     [MUSE_CONTRIBUTOR_ONLY]: row.id.startsWith('muse-') && row.id.endsWith('-contributor'),
-  }]))
+    ...row.effortsUnverified === true ? { [MUSE_EFFORTS_UNVERIFIED]: true } : {},
+    ...row.defaultEffort && efforts.includes(row.defaultEffort) ? { [MUSE_DEFAULT_EFFORT]: row.defaultEffort } : {},
+  }
+  const mode = row.contributorMode
+  if (mode && positive(mode.contextWindow) && positive(mode.maxTokens) && Array.isArray(mode.efforts)) {
+    model[MUSE_CONTRIBUTOR_CAPS] = descriptor({
+      id: row.id, name: mode.name || row.name, contextWindow: mode.contextWindow, maxTokens: mode.maxTokens,
+      input: mode.input?.length ? mode.input : row.input, efforts: mode.efforts,
+      effortsUnverified: mode.effortsUnverified === true, defaultEffort: mode.defaultEffort, contributor: true,
+    })
+  }
+  return model
+}
+
+/** Pi model descriptors for the persisted rows. */
+export function museModels(rows = []) {
+  return new Map(rows.map(row => [row.id, descriptor(row)]))
 }
 
 export class MuseCodeCatalogSession {
@@ -143,23 +259,17 @@ export class MuseCodeCatalogSession {
     return this.cache.get(async requestSignal => {
       const credential = await this.access(requestSignal)
       const principal = principalOf(credential)
-      const standard = parseMuseCatalog(await this.list(credential, '0', requestSignal))
+      const standard = withDocumentedStandardEfforts(parseMuseCatalog(await this.list(credential, '0', requestSignal))).map(finalizeRow)
       if (!standard.length) throw new ProviderReadError('error')
       // Contributor choices exist only for models the account lists in that mode.
       // A failed read is not evidence that Contributor models disappeared.
       // Publish one complete two-mode catalog, or retain the previous value.
-      const contributor = parseMuseCatalog(await this.list(credential, '1', requestSignal))
+      const contributor = parseMuseCatalog(await this.list(credential, '1', requestSignal)).map(finalizeRow)
       // Keep provider-returned IDs intact, including native Contributor IDs.
       // Choices pair those with their base instead of offering both a native
-      // row and a synthetic duplicate. Contributor-only rows must not become
-      // ordinary, default-on models when the account catalog is persisted.
-      const offered = new Set(contributor.map(row => row.id))
-      const merged = new Map(standard.map(row => [row.id, row]))
-      for (const row of contributor) {
-        if (row.id.startsWith('muse-') && row.id.endsWith('-contributor')) merged.set(row.id, row)
-      }
-      const rows = [...merged.values()].map(row => ({ ...row,
-        contributor: offered.has(row.id) && !row.id.endsWith('-contributor') }))
+      // row and a synthetic duplicate. Same-ID Contributor limits stay on the
+      // base row so a restart does not inherit Standard's effort list.
+      const rows = mergeMuseModes(standard, contributor)
       const current = await this.credentials.read('meta')
       if (this.closed || requestSignal.aborted || !oauth(current) || principalOf(current) !== principal) throw new ProviderReadError('account-changed')
       if (JSON.stringify(rows) !== JSON.stringify(this.snapshot() ?? [])) {

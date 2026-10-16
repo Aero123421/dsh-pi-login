@@ -240,6 +240,7 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
     <div className="dsh-pi-model-list">
       {models?.map(model => <div className="dsh-pi-model-row" key={model.id}>
         <div className="dsh-pi-model-label"><span>{model.name}</span>
+          {model.effortsUnverified ? <span className="dsh-pi-muted">{t('museEffortsUnlisted')}</span> : null}
           {model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
         <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={pending.has(model.id) || !entry.writable} onChange={enabled => toggle(model.id, enabled)} />
       </div>)}

@@ -51,6 +51,7 @@ import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { toPiContext } from './context.ts'
 import { conversationUpdates, createModels, getSupportedThinkingLevels } from './models.ts'
+import { MUSE_DEFAULT_EFFORT } from '../catalog-metadata.mjs'
 import { streamWithTier } from './fast.ts'
 import type { ModelChoice } from './fast.ts'
 import { toStreamChunks } from './stream.ts'
@@ -356,7 +357,8 @@ export class PiAiAdapter extends LlmAdapter {
     const profile = this.profileOf(snapshot, provider)
     const choice = this.modelOf(snapshot, provider, model)
     const resolvedModel = choice.model
-    const defaultLevel = describableReasoningLevel(resolvedModel, profile.reasoning)
+    const catalogDefault = (resolvedModel as unknown as Record<symbol, ModelThinkingLevel | undefined>)[MUSE_DEFAULT_EFFORT]
+    const defaultLevel = describableReasoningLevel(resolvedModel, profile.reasoning ?? catalogDefault)
     // Only a cap the deployment configured is a request default; the
     // catalog's `maxTokens` sizes the model and stops there.
     const configuredMaxTokens = profile.configuredMaxTokens.get(resolvedModel.id)
