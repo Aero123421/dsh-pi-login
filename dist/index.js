@@ -7219,7 +7219,7 @@ var USAGE_ENDPOINTS = Object.freeze({
   anthropic: "https://api.anthropic.com/api/oauth/usage",
   "openai-codex": "https://chatgpt.com/backend-api/wham/usage",
   "github-copilot": "https://api.github.com/copilot_internal/user",
-  "opencode-go": "https://opencode.ai/zen/go/v1/usage",
+  "opencode-go": "https://opencode.ai/inference/go/v1/usage",
   meta: "https://api.meta.ai/muse-code/key"
 });
 var invalid2 = () => {
@@ -7393,7 +7393,7 @@ function createPiUsageProviders({ fetch: request = (...args) => globalThis.fetch
     anthropic: { bases: ["https://api.anthropic.com"], parser: parseClaudeUsage, refreshAccess: true },
     "openai-codex": { bases: ["https://chatgpt.com/backend-api"], parser: parseCodexUsage, refreshAccess: true },
     "github-copilot": { bases: ["https://api.individual.githubcopilot.com", "https://api.business.githubcopilot.com", "https://api.enterprise.githubcopilot.com"], parser: parseCopilotUsage },
-    "opencode-go": { bases: ["https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"], parser: parseOpenCodeUsage, apiKey: true }
+    "opencode-go": { bases: ["https://opencode.ai/inference/go", "https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"], parser: parseOpenCodeUsage, apiKey: true }
   };
   const providers = Object.fromEntries(Object.entries(definitions).map(([id, definition]) => [id, {
     source: "internal-http",

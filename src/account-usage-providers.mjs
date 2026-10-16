@@ -2,13 +2,17 @@ import { ProviderReadError, retryAfterMilliseconds } from './provider-cache.mjs'
 
 // Protocol evidence: Pi SDK 1.1.0 auth/oauth/{openai-codex,meta,github-copilot}.js;
 // https://github.com/46ki75/pix/tree/2da5907338b7ef9e952b1decd1a6fe8e74f4c23c/packages/pix-usage
+// OpenCode Go: anomalyco/opencode packages/console/app/src/lib/inference-proxy.ts
+// maps GET /zen/go/v1/usage onto /go/v1/usage. The public URL is
+// https://opencode.ai/inference/go/v1/usage. On 2026-10-16 that URL and the
+// legacy zen path both returned 401 AuthError without a key.
 // These independent parsers describe internal HTTP interfaces, not stable public
 // billing APIs. Fixture verification is not a live-account compatibility claim.
 export const USAGE_ENDPOINTS = Object.freeze({
   anthropic: 'https://api.anthropic.com/api/oauth/usage',
   'openai-codex': 'https://chatgpt.com/backend-api/wham/usage',
   'github-copilot': 'https://api.github.com/copilot_internal/user',
-  'opencode-go': 'https://opencode.ai/zen/go/v1/usage',
+  'opencode-go': 'https://opencode.ai/inference/go/v1/usage',
   meta: 'https://api.meta.ai/muse-code/key',
 })
 const invalid = () => { throw new ProviderReadError('error') }
@@ -170,7 +174,7 @@ export function createPiUsageProviders({ fetch: request = (...args) => globalThi
     anthropic: { bases: ['https://api.anthropic.com'], parser: parseClaudeUsage, refreshAccess: true },
     'openai-codex': { bases: ['https://chatgpt.com/backend-api'], parser: parseCodexUsage, refreshAccess: true },
     'github-copilot': { bases: ['https://api.individual.githubcopilot.com', 'https://api.business.githubcopilot.com', 'https://api.enterprise.githubcopilot.com'], parser: parseCopilotUsage },
-    'opencode-go': { bases: ['https://opencode.ai/zen/go', 'https://opencode.ai/zen/go/v1'], parser: parseOpenCodeUsage, apiKey: true },
+    'opencode-go': { bases: ['https://opencode.ai/inference/go', 'https://opencode.ai/inference/go/v1', 'https://opencode.ai/zen/go', 'https://opencode.ai/zen/go/v1'], parser: parseOpenCodeUsage, apiKey: true },
   }
   const providers = Object.fromEntries(Object.entries(definitions).map(([id, definition]) => [id, {
     source: 'internal-http', refreshAccess: definition.refreshAccess === true,

@@ -50,7 +50,7 @@ Zen の無料モデルは期間限定です。提供元によっては、その�
 
 Go の `deepseek-v4.1-flash` は無料モデルではありません。契約の利用枠を使う有料モデルで、Zen の `deepseek-v4.1-flash-free` とは別の ID です。Go の一覧に `deepseek-v4.1-flash-free` はありません。
 
-Go の API キー接続は、既存の利用枠表示に対応します。Zen の利用枠取得はこのプラグインでは未対応です。
+Go の API キー接続は、利用枠を `https://opencode.ai/inference/go/v1/usage` から読みます。接続先が空でも、`https://opencode.ai/inference/go`、`https://opencode.ai/inference/go/v1`、以前の `https://opencode.ai/zen/go` でも同じ取得先です。2026-10-16 に、この URL と以前の `https://opencode.ai/zen/go/v1/usage` はキーなしでどちらも 401 `AuthError` でした。成功した利用枠の応答は未検証です。Zen の利用枠取得はこのプラグインでは未対応です。
 
 ## アカウントの利用状況
 
