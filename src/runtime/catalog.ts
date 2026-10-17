@@ -872,7 +872,7 @@ export function resolveRouteModels(
   // after catalog removal rather than silently disappearing.
   for (const [id, override] of Object.entries(overrides)) {
     if (id.length === 0) invalid(provider, 'has a modelOverrides entry with an empty model id')
-    if (defaults.size === 0) {
+    if (defaults.size === 0 && installed === undefined) {
       invalid(provider, `sets modelOverrides for "${id}", but the installed catalog does not describe this route;`
         + ' a declared route spells every model out in its models list')
     }
@@ -882,7 +882,9 @@ export function resolveRouteModels(
     }
     if (!defaults.has(id)) {
       const message = `modelOverrides names "${id}", which the installed catalog does not describe`
-      if (validation === 'strict') invalid(provider, message)
+      // Account catalogs can be cold or temporarily omit an installed model.
+      // Keep its saved override dormant until that account advertises it again.
+      if (validation === 'strict' && !(installed !== undefined && catalogModels(provider).has(id))) invalid(provider, message)
       modelErrors.set(id, `llm-pi-ai: provider "${provider}" ${message}`)
     }
     // The id lives in the dict key; a value carrying its own would quietly
@@ -898,6 +900,10 @@ export function resolveRouteModels(
   const entries: readonly PiAiModelProfile[] = configured.length > 0
     ? configured
     : [...defaults.values()].map(model => ({ id: model.id, ...overrides[model.id] }))
+  // An account-owned catalog may legitimately advertise no selectable models.
+  if (entries.length === 0 && installed !== undefined) {
+    return { models: [], configuredMaxTokens: new Map(), modelErrors }
+  }
   if (entries.length === 0) {
     invalid(provider, 'resolves no models; the installed catalog does not describe this route, so its models'
       + ' must be listed in configuration')

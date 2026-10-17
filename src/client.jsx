@@ -152,6 +152,7 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
   const [reloading, setReloading] = useState(false)
   const [error, setError] = useState(false)
   const [refreshError, setRefreshError] = useState('')
+  const [uncertain, setUncertain] = useState(false)
   const refreshAbort = useRef()
   const queue = useRef(Promise.resolve())
   const lifetime = useRef(new AbortController())
@@ -173,15 +174,15 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
       setPending(new Set())
     }
   }, [entry.connectionId])
-  async function reload() {
+  async function reload(refresh = true) {
     const editor = editorRef.current
     const gate = editor.beginReload()
     refreshAbort.current?.abort()
     const abort = new AbortController(); refreshAbort.current = abort
     setReloading(true); setRefreshError(''); setError(false)
     try {
-      const next = await controller.call('refresh-models', { connectionId: entry.connectionId }, abort.signal)
-      if (!abort.signal.aborted && gate.accept(next)) setSnapshot(editor.project(next))
+      const next = await controller.call(refresh ? 'refresh-models' : 'models', { connectionId: entry.connectionId }, abort.signal)
+      if (!abort.signal.aborted && gate.accept(next)) { setSnapshot(editor.project(next)); setUncertain(false) }
     } catch (error) {
       if (!abort.signal.aborted && gate.current()) {
         const code = String(error.code ?? error.message).split('/').pop()
@@ -207,8 +208,26 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
         await controller.mutation('set-model', { connectionId: entry.connectionId, model, enabled, revision: latest.revision }, signal)
         if (signal.aborted) return
         const after = await controller.call('models', { connectionId: entry.connectionId }, signal)
-        if (!signal.aborted && handle.accept(after)) setSnapshot(handle.overlay(after))
-      } catch { if (!signal.aborted) setError(true) }
+        if (!signal.aborted) {
+          const confirmed = handle.reconcile(after)
+          if (confirmed) { setSnapshot(confirmed); setUncertain(false) }
+          else setUncertain(true)
+        }
+      } catch {
+        if (!signal.aborted) {
+          setError(true)
+          // A rejected mutation may have committed before the reply failed.
+          // Read the Host's confirmed state instead of undoing optimistically.
+          try {
+            const after = await controller.call('models', { connectionId: entry.connectionId }, signal)
+            if (!signal.aborted) {
+              const confirmed = handle.reconcile(after)
+              if (confirmed) { setSnapshot(confirmed); setUncertain(false) }
+              else setUncertain(true)
+            }
+          } catch { if (!signal.aborted) setUncertain(true) }
+        }
+      }
       finally {
         handle.finish()
         if (!signal.aborted) setPending(current => { const next = new Set(current); next.delete(model); return next })
@@ -230,7 +249,8 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
     </div>
     {snapshot?.refresh?.status ? <p role="status" className="dsh-pi-muted">{t(snapshot.refresh.status.message)}{snapshot.refresh.status.detail ? ` · ${snapshot.refresh.status.detail}` : ''}</p> : null}
     {refreshError ? <p role="alert">{t(refreshError)}</p> : null}
-    {error ? <p role="alert">{t(snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
+    {error || uncertain ? <p role="alert">{t(uncertain ? 'modelsStateUnknown' : snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
+    {uncertain ? <Button variant="outline" size="sm" disabled={reloading || saving} onClick={() => { void reload(false) }}>{t('modelsReconcile')}</Button> : null}
     {snapshot && !snapshot.models.length && snapshot.refresh?.canRefresh ? <div className="dsh-pi-empty-models">
       {(snapshot.refresh.notes ?? []).map(note => <p key={note} className="dsh-pi-muted">{t(note)}</p>)}
       <Button variant="primary" disabled={reloading || !entry.writable} onClick={() => { void reload() }}>{t(reloading ? 'loading' : 'reloadModels')}</Button>
@@ -242,7 +262,7 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
         <div className="dsh-pi-model-label"><span>{model.name}</span>
           {model.effortsUnverified ? <span className="dsh-pi-muted">{t('museEffortsUnlisted')}</span> : null}
           {model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
-        <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={pending.has(model.id) || !entry.writable} onChange={enabled => toggle(model.id, enabled)} />
+        <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={uncertain || pending.has(model.id) || !entry.writable} onChange={enabled => toggle(model.id, enabled)} />
       </div>)}
       {models?.length === 0 ? <p className="dsh-pi-muted">{t('noResults')}</p> : null}
     </div>

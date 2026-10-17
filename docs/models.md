@@ -11,7 +11,7 @@
 
 ## Meta Muse Code
 
-公式Muse Code CLI 1.4.7の実装を確認した結果に基づきます。
+HTTPの項目名とヘッダーは公式Muse Code CLI 1.4.7の実装を基準に、[1.4.10までの公式変更履歴](https://dev.meta.ai/docs/muse-code/changelog)と照合しています。CLI本体のセッション・サブエージェント実装はこのプラグインには含みません。
 
 - **ログイン:** `auth.meta.com`の端末コード（CLIと同じクライアントID）で本人確認し、`POST https://api.meta.ai/muse-code/key`でAPIキーを発行します。Pi SDKの`meta`プロバイダーがこれを行い、期限切れ時に再発行します。認証情報は接続専用の`llm-pi-ai/<credentialRecordId>`に保存します。
 - **モデル一覧:** CLIと同じ`GET https://api.meta.ai/muse-code/models`を、`x-tbh-contributor-mode: 0`と`1`の両方で読み込みます。Model APIの`/v1/models`はWonder FullなどMuse Code専用のモデルを含まないため使いません。行の`id`／`display_label`／`context_limit`／`output_limit`／`reasoning_effort_variants`を読み、画像・音声生成用のモデルや非公開の行は除外します。
@@ -77,3 +77,15 @@ Full（`muse-wonder-full-1.0`）やContributorを名前に含む候補は、そ�
 本人のPower Usage／Maximum UsageのキーでFullが一覧に返るか、実際に生成できるか、Contributorの利用枠が適用されるかは未検証です。一覧にIDが載ることは生成や課金の検証ではありません。一覧にFullがないことも利用不可の断定材料ではなく、この版ではその場合に候補を推測して追加しません。必要ならMuse本体／MSPとの連携を別途検討します。
 
 調査上の根拠: [MuseでWonder Contributorが応答した第三者の報告](https://github.com/HarjjotSinghh/helicon/pull/131)、[FullのIDとプラン条件をMeta仕様から引用する報告](https://github.com/HarjjotSinghh/helicon/issues/132)、[サブスクリプションキーを解析する別クライアントの実装](https://github.com/can1357/oh-my-pi/blob/818dd42b73ab1caad17fa06d4edcc3a97086dc57/packages/ai/src/registry/oauth/muse-code.ts)。これらはこのプラグインによる実アカウント検証を意味しません。Muse本体のContributor実行モードと、このAPI経路のContributorモデルIDは区別して扱います。
+
+## OpenAI ChatGPTログイン
+
+[SIWC仕様](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference)に従い、アカウントのトークンで `GET https://api.openai.com/v1/models` を読み、`models[]` の `slug`、`display_name`、`visibility: "list"` から候補を作ります。返された順序を保ち、ログイン・認証変更・再起動・キャッシュ期限で再取得します。設定の上書きと、アカウントが提供するモデルの有無は別に検査します。
+
+既知IDの能力はPi 1.3.0の定義を使います。`gpt-6.1-sol` の既定コンテキストは従来 `openai-codex` OAuthが500,000、`openai` のSIWCとAPIキーが272,000です。Fastも共通です。明示したコンテキスト上書きは維持します。SIWC一覧には各モデルのコンテキスト・推論能力の保証がないため、未知IDは接続設定の保守的な上限、テキスト入力、接続先既定の推論で初期オフにします。
+
+SIWCは公開 `/v1/responses` を使い、`store: false`、`stream: true` を送ります。Codex専用 `wham/usage` へのSIWCトークン送信は行いません。アカウント利用枠の公開契約が確認できないため、Usageは未対応です。独自接続先へのSIWCトークン転送も対応しません。
+
+モデル一覧の形式・認証世代・取得失敗・解除・SDK送信値はfixtureで検証します。実SIWCアカウントのログイン、500K入力の生成、アカウント固有の能力と課金は未検証です。
+
+Museのeffort一覧は文字列と `tier` / `id` / `name` 形式を受け付けます。`tier` は公式MSPの型にもありますが、同形式が `/muse-code/models` の実応答で返ることは未確認です。StandardとContributorは各モードの情報を使い、Maxを一律に追加・削除しません。WonderとWonder Fullは別IDです。

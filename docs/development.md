@@ -4,7 +4,7 @@
 
 ## テスト
 
-ソースからビルドするにはNode.js 22.19.0以上が必要です。
+ソースからビルドするにはNode.js 22.19.0以上が必要です。現在の固定検証版はDSH `0.2.1-rc.2`（`687f282e8625c6b8d11ff58211a90524be2e4317`）です。古い検証記録のalpha版とは区別します。
 
 ```sh
 npm ci
@@ -26,16 +26,16 @@ npm run pack:plugin
 | `pack:plugin` | ビルド済みファイル・locale・ドキュメントを含むtgzとSHA-256 |
 | `test:peers` | 宣言したDSH peer範囲が `0.2.1-alpha.2` から `0.2.x` を受け、`0.3.0` とそのプレリリースを拒否すること。`DSH_PEER_CHECK_OFFLINE=1` ではnpm問い合わせを省く |
 | `test:boot` | 配布tgzを現在のDSH alphaへ導入し、起動時にプラグインが無効化されず `update-status` が実行版を返すこと |
-| `test:install` | 実DSH `0.2.1-alpha.2`の空profileへ導入し、APIキー接続とMuse Codeの保存済み一覧・Contributor選択を残して再起動し、接続・認証・実行版・update manager・公開Release照合を確認。実Settings画面で8選択肢・オフの再起動保持・確認付き接続削除・Credentials削除・再起動後の非復活を検証 |
+| `test:install` | 実DSH `0.2.1-rc.2`の空profileへ導入し、APIキー接続とMuse Codeの保存済み一覧・Contributor選択を残して再起動し、接続・認証・実行版・update manager・公開Release照合を確認。実Settings画面で8選択肢・オフの再起動保持・確認付き接続削除・Credentials削除・再起動後の非復活を検証 |
 
 モデル一覧更新の共通処理は単体テストで、Meta以外への委譲、未対応・不正なプロバイダーの拒否、同時更新の共有、破棄時の終了、公開する情報を確認します。Muse契約の再取得は単体テストで、OAuthとAPIキーの分離、契約状態、応答上限、取得失敗、アカウント変更を確認します。runtimeテストでは認証済みRPCからFullを選択し、実SDKによるリクエストとテスト用SSE応答を確認します。ブラウザテストでは共通の更新ボタンによるMetaと別のテスト用プロバイダーの再取得・モデル選択、未対応の案内、契約名・Full選択・APIキー優先時のエラーを確認します。いずれも実Metaアカウントや有料生成を使いません。[実アカウントで確認する項目](models.md#検証範囲と残る確認)
 
 環境にChromiumがある場合は`DSH_TEST_CHROMIUM=/usr/bin/chromium npm run test:browser`を使えます。画面証拠をチェックアウト外に保存する場合は`DSH_TEST_ARTIFACT_DIR=/tmp/dsh-ui-evidence`を指定します。
 
-`test:install`はNode.js 22.19.0以上、DSH CLI `0.2.1-alpha.2`、pnpm `11.28.5`をPATHに必要とします。公式CLIの`dsh plugin`はpnpmへ委譲します。以下はユーザーのhomeやglobal環境を変更せずに検証用CLIを用意する方法です。pnpmの版は固定した公式ソースの`packageManager`に合わせています。
+`test:install`はNode.js 22.19.0以上、DSH CLI `0.2.1-rc.2`、pnpm `11.28.5`をPATHに必要とします。公式CLIの`dsh plugin`はpnpmへ委譲します。以下はユーザーのhomeやglobal環境を変更せずに検証用CLIを用意する方法です。pnpmの版は固定した公式ソースの`packageManager`に合わせています。
 
 ```sh
-npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.2 pnpm@11.28.5
+npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2 pnpm@11.28.5
 PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install
 ```
 
@@ -134,3 +134,9 @@ Clientはbegin送信前にUUIDをsessionStorageへ保存します。HostはUUID�
 [状態の所有と失敗時の復旧](design.md)に保存と認証の責任分担を記載しています。接続テストはキー作成・交換・削除の途中失敗と再起動後の回収、Museテストは再認証・両モード取得・保存・使用量のアカウント照合、discoveryテストは保存認証のendpoint/API境界を確認します。ブラウザーテストは、古い画面・保存競合・部分作成・削除と認証回収の失敗をHostのRPCへ注入し、表示と安全な再試行を操作します。
 
 実DSHの `test:install` は配布tgzの起動・保存済みMuse一覧・実Settingsのモデル切替・再起動後の保持・削除と認証除去を確認します。失敗注入のfixture検証と、この実DSH導入検証を区別して報告してください。Clientの第三者通知は `THIRD_PARTY_NOTICES.md` を配布物に含めます。
+
+## 0.7.6の互換性と回帰確認
+
+DSH `0.2.1-rc.2` のConnection APIは `fetch(request, peer)` を要求します。テストも実サービスのowner peerを渡し、非ownerの拒否と解除後404を確認します。Cordis・Schemasteryのpeer範囲は旧alpha完全固定と安定版の範囲の両方を受け付けます。
+
+画像予算10,000pxの1,000×1,000画像が事前問い合わせ・送信の両方で100×100となること、資格情報欠落時にチャット候補だけが消えること、保存失敗・保存済み応答失敗・再照合失敗時の画面、SIWCのアカウント別一覧を回帰検証します。SDK性能パッチはビルド成果物へ含めます。[詳細](pi-stream-patch.md)

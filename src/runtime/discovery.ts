@@ -3,7 +3,7 @@
  *
  * Catalog providers use the SDK's local catalog, including model capacities.
  * Custom providers query OpenAI-compatible or Anthropic listing endpoints.
- * Both the standard data array and enriched models map are supported.
+ * Standard data arrays, enriched models maps and SIWC model arrays are supported.
  * Other protocols require manual model entry.
  *
  * Discovery does not save or refresh the configured catalog. The caller chooses
@@ -16,6 +16,7 @@ import { INVALID_CREDENTIAL_CODE, LlmError, normalizeApiKey } from '@deepseek-ai
 import type { LlmDiscoveredModel, LlmModelDiscoveryOperation } from '@deepseek-ai/dsh-llm'
 import { attributionHeaders } from '@deepseek-ai/dsh-llm'
 import { catalogModels } from './catalog.ts'
+import { chatGPTModelRows } from '../openai-chatgpt-models.mjs'
 
 /**
  * Protocols whose model listing this module can read. OpenAI protocols use
@@ -170,6 +171,7 @@ async function readBounded(response: Response, url: string): Promise<string> {
  */
 function readListing(body: unknown): LlmDiscoveredModel[] {
   const listing = body as { data?: unknown; models?: unknown } | null
+  if (!Array.isArray(listing?.data) && Array.isArray(listing?.models)) return chatGPTModelRows(listing)
   const data = listing?.data
   let listed: { readonly key?: string; readonly raw: unknown }[]
   if (Array.isArray(data)) {
@@ -179,7 +181,7 @@ function readListing(body: unknown): LlmDiscoveredModel[] {
     const models = listing?.models
     if (models === null || typeof models !== 'object' || Array.isArray(models)) {
       throw new LlmError(
-        'the endpoint\'s model listing has neither a "data" array nor a "models" object; '
+        'the endpoint\'s model listing has neither a "data" array nor a "models" array or object; '
         + 'enter this provider\'s models by hand',
         'DISCOVERY_FAILED',
       )
@@ -242,6 +244,9 @@ function usableProbeKey(raw: string): string {
 export interface StoredModelDiscoveryProfile {
   /** Exact saved transport to which inherited credentials belong. */
   readonly baseURL: string | undefined
+  /** Native service and saved method decide whether the account owns its catalog. */
+  readonly serviceId?: string
+  readonly authMethod?: string
   readonly api: string | undefined
   /** Refuse results and credentials after the saved account/transport changes. */
   readonly isCurrent?: () => boolean
@@ -268,8 +273,8 @@ function assertDiscoveryCurrent(stored: StoredModelDiscoveryProfile | undefined)
  * Interrogate one draft provider endpoint for the models it advertises.
  * @param request - the endpoint, protocol, and one-shot credential to use.
  * @param storedProfile - Host-owned headers and lazy credential resolution for
- *   the named route. It is read only on the path that reaches the network; the
- *   credential is resolved only when the draft carries none.
+ *   the named route. Its identity selects account or SDK discovery; the
+ *   credential is resolved only for a network request without a draft key.
  * @returns the advertised models in endpoint order.
  * @throws LlmError when the protocol has no readable listing, the endpoint
  *   refuses or fails the request, or the reply is not a model listing.
@@ -280,7 +285,10 @@ export async function discoverModels(
 ): Promise<readonly LlmDiscoveredModel[]> {
   // A catalog route already has its answer, and a better one: the installed
   // entries carry context windows and output caps no listing endpoint reports.
-  if (request.provider !== undefined) {
+  const profile = storedProfile?.()
+  const accountCatalog = profile?.serviceId === 'openai' && profile.authMethod === 'oauth'
+    && request.apiKey === undefined
+  if (request.provider !== undefined && !accountCatalog) {
     const installed = catalogModels(request.provider)
     if (installed.size > 0) {
       return [...installed.values()].map(model => ({
@@ -292,7 +300,8 @@ export async function discoverModels(
       }))
     }
   }
-  if (request.baseURL === undefined || request.baseURL.length === 0) {
+  const baseURL = request.baseURL ?? (accountCatalog ? profile?.baseURL : undefined)
+  if (baseURL === undefined || baseURL.length === 0) {
     throw new LlmError(
       `pi-ai ships no catalog for provider "${request.provider ?? ''}", so its models can only come from its`
       + " endpoint; set a baseURL, or enter this provider's models by hand",
@@ -305,21 +314,24 @@ export async function discoverModels(
   // the action from the case it exists for. The cost is a misdirected message
   // when the endpoint speaks something else (an Anthropic gateway answers 401,
   // which reads as a credential problem), and hand-entry remains the way out.
-  const api = request.api ?? 'openai-completions'
+  const api = request.api ?? (accountCatalog ? profile?.api : undefined) ?? 'openai-completions'
   if (!LISTABLE_PROTOCOLS.has(api)) {
     throw new LlmError(
       `pi-ai protocol "${api}" has no model listing this build can read; enter this provider's models by hand`,
       'DISCOVERY_UNSUPPORTED',
     )
   }
-  const endpoint = discoveryEndpoint(request.baseURL)
+  const endpoint = discoveryEndpoint(baseURL)
+  if (accountCatalog && (endpoint !== 'https://api.openai.com/v1' || api !== 'openai-responses')) {
+    throw new LlmError('Sign in with ChatGPT model discovery requires the public OpenAI Responses endpoint.', 'DISCOVERY_UNSUPPORTED')
+  }
   const url = listingUrl(endpoint, api)
   // A key typed into the form wins: it may replace the stored key that is
-  // failing. The stored profile is asked past the catalog and protocol checks,
-  // and its credential resolver remains lazy so a typed key cannot fail over a
+  // failing. The saved identity is inspected before catalog selection; its
+  // credential resolver remains lazy so a typed key cannot fail over a
   // stored credential it supersedes. A route may still authenticate through a
   // deployment-owned Authorization header when neither key exists.
-  const candidate = storedProfile?.()
+  const candidate = profile
   assertDiscoveryCurrent(candidate)
   const matches = candidate !== undefined && candidate.baseURL !== undefined
     && discoveryEndpoint(candidate.baseURL) === endpoint && candidate.api === api

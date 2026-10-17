@@ -40,7 +40,7 @@ function effortsOf(row) {
   const variants = first(row, ['reasoning_effort_variants', 'reasoningEffortVariants', 'reasoning_efforts', 'reasoningEfforts', 'variants'])
   if (!Array.isArray(variants)) return { efforts: [], unverified: true }
   const names = variants.map(item => typeof item === 'string' ? item
-    : item && typeof item === 'object' ? first(item, ['effort', 'reasoning_effort', 'reasoningEffort', 'level', 'id', 'name']) : undefined)
+    : item && typeof item === 'object' ? first(item, ['effort', 'reasoning_effort', 'reasoningEffort', 'tier', 'level', 'id', 'name']) : undefined)
   const efforts = [...new Set(names.filter(name => typeof name === 'string').map(name => name.toLowerCase()))].filter(name => KNOWN_EFFORTS.has(name))
   // An empty list or only unknown keys is not a list of supported levels.
   if (!efforts.length) return { efforts: [], unverified: true }
@@ -341,7 +341,7 @@ export function museCatalogProvider(session) {
     presentation() {
       const { count, account } = session.state()
       return {
-        ...account?.tierName ? { status: { message: account.active === false ? 'metaSubscriptionInactive' : 'metaSubscriptionActive', detail: account.tierName } } : {},
+        ...account ? { status: { message: account.active === true ? 'metaSubscriptionActive' : account.active === false ? 'metaSubscriptionInactive' : 'metaSubscriptionUnknown', detail: account.tierName } } : {},
         notes: count ? [] : ['museCatalogEmpty'],
       }
     },

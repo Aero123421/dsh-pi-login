@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { checkCompatibility, semanticVersion } from '../src/updates.mjs'
 import manifest from '../package.json' with { type: 'json' }
 
-const ACCEPT = ['0.2.1-alpha.2', '0.2.1-alpha.3', '0.2.1-alpha.10', '0.2.2-0', '0.2.2-alpha.1', '0.2.9']
+const ACCEPT = ['0.2.1-alpha.2', '0.2.1-alpha.3', '0.2.1-alpha.10', '0.2.1-rc.2', '0.2.1', '0.2.2-0', '0.2.2-alpha.1', '0.2.9']
 const REJECT = ['0.2.1-alpha.1', '0.2.0-rc.2', '0.3.0-0', '0.3.0-alpha.1', '0.3.0', '1.0.0']
 
 const peers = Object.entries(manifest.peerDependencies ?? {}).filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))

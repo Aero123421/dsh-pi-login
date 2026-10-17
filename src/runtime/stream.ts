@@ -46,7 +46,8 @@ function classifyPiAiError(message: string): string {
   // same request cannot succeed, so it is invalid, not transient.
   if (/\b413\b|failed to buffer the request body:\s*length limit exceeded|payload too large|request body too large/i.test(message)) return 'INVALID_REQUEST'
   if (/\b400\b|invalid.?request/i.test(message)) return 'INVALID_REQUEST'
-  if (/\b5\d\d\b/.test(message)) return 'SERVER'
+  if (/\b5\d\d\b/.test(message) || /\b(?:the service is temporarily unavailable|service temporarily unavailable)\b/i.test(message)) return 'SERVER'
+  if (/\b(?:Unable to forward upstream stream|upstream_stream_read_error|Upstream HTTP\/2 stream failed)\b/i.test(message)) return 'TRANSPORT'
   if (/\btime(?:d)?\s*out\b|timeout/i.test(message)) return 'TIMEOUT'
   // A stream truncated before the provider's terminal event: each pi-ai provider
   // throws its own wording when the wire closes mid-response without a terminal
@@ -64,6 +65,10 @@ function classifyPiAiError(message: string): string {
     return 'TRANSPORT'
   }
   return 'PI_AI_ERROR'
+}
+
+function invalidToolArgumentsReason(): FinishReason {
+  return { kind: 'error', failure: { message: 'pi-ai returned invalid tool-call arguments', code: 'INVALID_TOOL_ARGUMENTS' } }
 }
 
 /**
@@ -149,6 +154,7 @@ export async function* toStreamChunks(
   // pi-ai contentIndex ↔ our block index map 1:1 (both count blocks from 0
   // in stream order), but we track ids per index for tool calls.
   const toolIds = new Map<number, { id: string; name: string }>()
+  let invalidToolArguments = false
 
   for await (const event of events) {
     switch (event.type) {
@@ -201,6 +207,12 @@ export async function* toStreamChunks(
         break
       }
       case 'toolcall_end':
+        // Pi deliberately replaces malformed arguments with {} and records
+        // argumentsError. Never turn that sentinel into executable defaults.
+        if (event.toolCall.argumentsError !== undefined) {
+          invalidToolArguments = true
+          break
+        }
         yield {
           type: 'block-end',
           index: event.contentIndex,
@@ -214,14 +226,21 @@ export async function* toStreamChunks(
           },
         }
         break
-      case 'done':
+      case 'done': {
+        const invalidArguments = invalidToolArguments
+          || event.message.content.some(block => block.type === 'toolCall' && block.argumentsError !== undefined)
         yield { type: 'usage', usage: mapUsage(event.message.usage) }
         yield {
           type: 'finish',
-          reason: mapStopReason(event.message, contextWindow),
-          replayState: toPiReplayState(event.message, requestedModel, replayScope, requestedProvider),
+          reason: invalidArguments
+            ? invalidToolArgumentsReason()
+            : mapStopReason(event.message, contextWindow),
+          ...invalidArguments
+            ? {}
+            : { replayState: toPiReplayState(event.message, requestedModel, replayScope, requestedProvider) },
         }
         return
+      }
       case 'error':
         // In-stream error delivery (pi-ai's style) → error finish chunk
         // (the harness's other sanctioned error path besides throwing).

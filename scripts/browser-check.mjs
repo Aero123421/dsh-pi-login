@@ -138,7 +138,7 @@ const server = createServer(async (req, res) => {
    if ('rejection' in admission) { res.writeHead(admission.rejection); res.end(); return }
    const chunks = []; for await (const chunk of req) chunks.push(chunk)
    const request = new Request(`http://${req.headers.host}${req.url}`, { method: req.method, headers: req.headers, body: Buffer.concat(chunks) })
-   const result = await handler.fetch(request)
+   const result = await handler.fetch(request, admission.peer)
    res.writeHead(result.status, Object.fromEntries(result.headers)); res.end(Buffer.from(await result.arrayBuffer())); return
   }
   if (files.has(url.pathname)) { res.setHeader('content-type', url.pathname.endsWith('.css') ? 'text/css' : 'text/javascript'); res.end(await readFile(files.get(url.pathname))); return }
@@ -232,6 +232,45 @@ try {
  assert.deepEqual(settingsValue.connections['c-personal'].profile.disabledModels, [model.id])
  assert.deepEqual(settingsValue.connections['c-personal'].profile.enabledFastModels, [fast])
  assert.equal(settingsValue.connections['c-company'].profile.disabledModels, undefined)
+ // A rejected write is reconciled against the Host, including a lost reply after commit.
+ const rpcFailure = route => route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: false, error: { code: 'fixture-save-failed' } } } })
+ await page.route('**/api/dsh-pi-login/set-model', rpcFailure, { times: 1 })
+ await modelSwitch.click()
+ await page.getByRole('alert').filter({ hasText: '設定を保存できませんでした' }).waitFor()
+ await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'false' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: GPT-6.1 Sol"]')))
+ assert.deepEqual(settingsValue.connections['c-personal'].profile.disabledModels, [model.id])
+ await page.route('**/api/dsh-pi-login/set-model', async route => { await route.fetch(); await rpcFailure(route) }, { times: 1 })
+ await modelSwitch.click()
+ await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'true' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: GPT-6.1 Sol"]')))
+ assert.deepEqual(settingsValue.connections['c-personal'].profile.disabledModels, [])
+ // If confirmation also fails, stop editing until a plain saved-state read succeeds.
+ await page.route('**/api/dsh-pi-login/set-model', async route => {
+  await page.route('**/api/dsh-pi-login/models', rpcFailure, { times: 1 })
+  await rpcFailure(route)
+ }, { times: 1 })
+ await modelSwitch.click()
+ await page.getByRole('alert').filter({ hasText: 'モデルの保存状態を確認できません' }).waitFor()
+ assert.equal(await modelSwitch.isDisabled(), true)
+ await page.getByRole('button', { name: '保存状態を確認', exact: true }).click()
+ await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'true' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: GPT-6.1 Sol"]')))
+ // A failed first switch must not undo a different pending switch.
+ let releaseFailedWrite, failedWriteStarted
+ const failedWriteGate = new Promise(resolve => { releaseFailedWrite = resolve })
+ const failedWriteHeld = new Promise(resolve => { failedWriteStarted = resolve })
+ await page.route('**/api/dsh-pi-login/set-model', async route => { failedWriteStarted(); await failedWriteGate; await rpcFailure(route) }, { times: 1 })
+ await modelSwitch.click()
+ await failedWriteHeld
+ const fastSwitch = page.getByRole('switch', { name: 'モデルを使う: GPT-6.1 Sol Fast', exact: true })
+ await fastSwitch.click()
+ releaseFailedWrite()
+ await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'true' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: GPT-6.1 Sol"]')))
+ await page.waitForFunction(() => (element => element?.getAttribute('aria-checked') === 'false' && !element.disabled)(document.querySelector('[aria-label="モデルを使う: GPT-6.1 Sol Fast"]')))
+ assert.deepEqual(settingsValue.connections['c-personal'].profile.disabledModels, [])
+ assert.deepEqual(settingsValue.connections['c-personal'].profile.enabledFastModels, [])
+ // Restore the selections used by the following profile/reset checks.
+ await modelSwitch.click()
+ await fastSwitch.click()
+ await page.waitForFunction(() => [...document.querySelectorAll('.dsh-pi-model-list [role="switch"]')].every(element => !element.disabled))
  await page.screenshot({ path: artifact('models-desktop.png') })
  await page.keyboard.press('Escape')
  await page.getByRole('dialog').waitFor({ state: 'hidden' })
@@ -400,12 +439,14 @@ try {
  await page.getByRole('button', { name: '通信方式', exact: true }).click()
  await page.getByRole('menuitem', { name: 'openai-completions', exact: true }).click()
  await page.getByRole('button', { name: '保存', exact: true }).click()
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
  assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '追加API改').profile.api, 'openai-completions')
  await settingsButton('追加API改').click()
  await page.getByText('詳細設定', { exact: true }).click()
  await page.getByRole('button', { name: '通信方式', exact: true }).click()
  await page.getByRole('menuitem', { name: 'プロバイダーの既定値', exact: true }).click()
  await page.getByRole('button', { name: '保存', exact: true }).click()
+ await page.getByRole('dialog').waitFor({ state: 'hidden' })
  assert.equal(Object.values(settingsValue.connections).find(entry => entry.displayName === '追加API改').profile.api, undefined)
  // A custom origin requires Host trust and gives a specific actionable error.
  await settingsButton('追加API改').click()

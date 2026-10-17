@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { MuseCodeCatalogSession, parseMuseCatalog, museModels, mergeMuseModes, offeredMuseEfforts, MUSE_CODE_MODELS_URL, MUSE_CODE_KEY_URL } from '../src/muse-code-catalog.mjs'
+import { MuseCodeCatalogSession, parseMuseCatalog, museModels, mergeMuseModes, offeredMuseEfforts, museCatalogProvider, MUSE_CODE_MODELS_URL, MUSE_CODE_KEY_URL } from '../src/muse-code-catalog.mjs'
 import { MUSE_CONTRIBUTOR, MUSE_CONTRIBUTOR_CAPS, MUSE_DEFAULT_EFFORT, MUSE_EFFORTS_UNVERIFIED } from '../src/catalog-metadata.mjs'
 import { modelChoices } from '../src/runtime/fast.ts'
 import { getSupportedThinkingLevels } from '../src/runtime/models.ts'
@@ -363,4 +363,61 @@ test('a credential-store failure has a fixed public error without raw diagnostic
   const session = new MuseCodeCatalogSession({ credentials: { read: () => { throw Error('SECRET credential diagnostic') } } })
   await assert.rejects(session.usage(), error => error.code === 'error' && error.message === 'error')
   session.dispose()
+})
+
+
+test('tier-shaped efforts preserve mode-specific ranges, defaults and limits', async () => {
+  const f = setup({
+    standard: { data: [row('muse-spark-1.3', { reasoning_effort_variants: [{ tier: 'high', description: 'Deep' }, { tier: 'max', description: 'Most' }], default_reasoning_effort: 'max', context_limit: 1048576, output_limit: 65536 })] },
+    contributor: { data: [row('muse-spark-1.3', { reasoning_effort_variants: [{ tier: 'high', description: 'Deep' }], default_reasoning_effort: 'high', context_limit: 524288, output_limit: 32768 })] },
+  })
+  await f.session.refresh()
+  const [saved] = f.persisted.at(-1)
+  assert.deepEqual(saved.efforts, ['high', 'max'])
+  assert.equal(saved.defaultEffort, 'max')
+  assert.deepEqual(saved.contributorMode.efforts, ['high'])
+  assert.equal(saved.contributorMode.defaultEffort, 'high')
+  assert.equal(saved.contributorMode.contextWindow, 524288)
+  assert.equal(saved.contributorMode.maxTokens, 32768)
+  const unknown = parseMuseCatalog([{ id: 'muse-spark-1.3', reasoning_effort_variants: [{ tier: 'ultra' }, { description: 'high' }, { tier: 123 }] }])
+  assert.equal(unknown[0].effortsUnverified, true)
+  assert.deepEqual(unknown[0].efforts, [])
+  f.session.dispose()
+})
+
+test('subscription presentation distinguishes active, inactive and unknown even without a tier name', () => {
+  for (const [active, expected] of [[true, 'metaSubscriptionActive'], [false, 'metaSubscriptionInactive'], [null, 'metaSubscriptionUnknown'], [undefined, 'metaSubscriptionUnknown']]) {
+    for (const tierName of ['Power Usage', undefined]) {
+      const provider = museCatalogProvider({ state: () => ({ count: 0, account: { active, tierName } }) })
+      assert.equal(provider.presentation().status.message, expected)
+      assert.equal(provider.presentation().status.detail, tierName)
+    }
+  }
+  assert.equal(museCatalogProvider({ state: () => ({ count: 0 }) }).presentation().status, undefined)
+})
+
+test('a refreshed native Contributor ID replaces the same-ID descriptor under the saved choice', async () => {
+  const id = 'muse-spark-1.3', choiceId = `${id}::contributor`
+  const f = setup({ standard: { data: [row(id)] }, contributor: { data: [row(id, { reasoning_effort_variants: ['high'] })] } })
+  const profile = { enabledContributorModels: [choiceId] }
+  await f.session.refresh()
+  let choices = modelChoices('meta', [...f.session.catalog().values()], profile)
+  assert.equal(choices.find(choice => choice.id === choiceId).model.id, id)
+  assert.deepEqual(levels(choices.find(choice => choice.id === choiceId).model), ['high'])
+  f.session.fetch = async (_url, init) => Response.json({ data: new Headers(init.headers).get('x-tbh-contributor-mode') === '1'
+    ? [row(id), row(`${id}-contributor`, { reasoning_effort_variants: [{ tier: 'high' }, { tier: 'max' }], default_reasoning_effort: 'max', output_limit: 32768 })]
+    : [row(id)] })
+  await f.session.refresh()
+  choices = modelChoices('meta', [...f.session.catalog().values()], profile)
+  const contributor = choices.find(choice => choice.id === choiceId)
+  assert.equal(contributor.enabled, true)
+  assert.equal(contributor.model.id, `${id}-contributor`)
+  assert.equal(contributor.model.maxTokens, 32768)
+  assert.equal(contributor.model[MUSE_DEFAULT_EFFORT], 'max')
+  assert.deepEqual(levels(contributor.model), ['high', 'max'])
+  assert.equal(choices.filter(choice => choice.contributor).length, 1)
+  const off = modelChoices('meta', [...f.session.catalog().values()], { enabledContributorModels: [] })
+  assert.equal(off.find(choice => choice.id === choiceId).enabled, false)
+  assert.equal(off.find(choice => choice.id === id).headers['x-tbh-contributor-mode'], '0')
+  f.session.dispose()
 })

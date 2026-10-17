@@ -21,7 +21,9 @@ import type {} from '@deepseek-ai/dsh-fs'
 import { deepEqualJson } from '@deepseek-ai/dsh-util-values'
 import { PiAiAdapter } from './adapter.ts'
 import { authContextFrom, connectionAuthFrom, credentialStoreFrom } from './auth.ts'
-import { catalogProviderIds } from './catalog.ts'
+import { catalogProvider, catalogProviderIds } from './catalog.ts'
+import { createModels } from './models.ts'
+import { hasChatGPTCredentialOverride } from '../openai-chatgpt-catalog.mjs'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
 import type { Connection, ResolvedPiAiProviderProfile } from './config.ts'
 import { resolveConnectionProfiles } from './connections.ts'
@@ -315,22 +317,36 @@ export function apply(ctx: Context, config: Config, live?: {
     if (profile === undefined) return undefined
     const model = profile.piProvider?.getModels()[0]
     const transport = (value: ResolvedPiAiProviderProfile): unknown => ({
-      connectionId: value.connectionId, serviceId: value.serviceId,
+      connectionId: value.connectionId, serviceId: value.serviceId, authMethod: value.authMethod,
       credentialRecordId: value.credentialRecordId, credentialGeneration: value.credentialGeneration,
       apiKeyEnv: value.apiKeyEnv, headerRefs: value.headerRefs, headers: value.headers,
       baseURL: value.baseURL ?? value.piProvider?.baseUrl ?? value.piProvider?.getModels()[0]?.baseUrl,
-      api: value.api ?? value.piProvider?.getModels()[0]?.api,
+      api: value.api ?? value.piProvider?.getModels()[0]?.api ?? (value.serviceId === 'openai' ? 'openai-responses' : undefined),
     })
     const identity = transport(profile)
     return {
-      baseURL: profile.baseURL ?? profile.piProvider?.baseUrl ?? model?.baseUrl,
-      api: profile.api ?? model?.api,
+      serviceId: profile.sdkServiceId ?? profile.serviceId ?? provider,
+      authMethod: hasChatGPTCredentialOverride(profile) ? 'api-key' : profile.authMethod,
+      baseURL: profile.baseURL ?? profile.piProvider?.baseUrl ?? model?.baseUrl ?? catalogProvider(profile.sdkServiceId ?? profile.serviceId ?? provider)?.baseUrl,
+      api: profile.api ?? model?.api ?? (profile.serviceId === 'openai' ? 'openai-responses' : undefined),
       isCurrent: () => {
         const current = profiles().get(provider)
         return current !== undefined && deepEqualJson(transport(current), identity)
       },
       headers: profile.headers,
-      resolveApiKey: () => resolveApiKey(provider, profile),
+      resolveApiKey: async () => {
+        const explicit = await resolveApiKey(provider, profile)
+        if (explicit !== undefined || hasChatGPTCredentialOverride(profile) || profile.authMethod !== 'oauth' || profile.serviceId !== 'openai') return explicit
+        const scoped = live?.authForProfile?.(profile) ?? (profile.connectionId === undefined ? auth : connectionAuthFrom(ctx, {
+          connectionId: profile.connectionId, serviceId: 'openai', credentialRecordId: profile.credentialRecordId!,
+          isCurrent: () => { const current = profiles().get(provider); return current !== undefined && deepEqualJson(transport(current), identity) },
+        }))
+        const models = createModels(scoped)
+        models.setProvider(catalogProvider('openai')!)
+        const resolved = await models.getAuth('openai')
+        if (!resolved?.auth.apiKey) throw new LlmError('Sign in with ChatGPT before loading account models.', 'INVALID_CREDENTIAL')
+        return resolved.auth.apiKey
+      },
     }
   }
   // Interrogating an endpoint is a configuration-time action over a draft, so

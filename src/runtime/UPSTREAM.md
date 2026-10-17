@@ -1,6 +1,6 @@
 # 元アダプターと変更点
 
-元ソースは[DeepSeek HarnessのPiアダプター](https://github.com/deepseek-ai/deepseek-harness/tree/d743267388641bc76f17c45ce8b4c231aed1d32c/packages/llm/llm-pi-ai/src)です。MIT、Copyright (c) 2026 DeepSeek。
+元ソースは[DeepSeek HarnessのPiアダプター](https://github.com/deepseek-ai/deepseek-harness/tree/687f282e8625c6b8d11ff58211a90524be2e4317/packages/llm/llm-pi-ai/src)です。MIT、Copyright (c) 2026 DeepSeek。
 
 会話変換、推論設定、ツール履歴、画像、ストリームの処理を引き継いでいます。変更点は次のとおりです。
 
@@ -19,3 +19,7 @@
 [Fastの実装と参照ソース](../../docs/fast.md)
 
 - モデル一覧の再取得は`ProviderCatalogs`にプロバイダーごとのセッションを登録し、画面・RPC・一覧の検証・ログイン後の破棄・実行時認証を共通経路で扱う。Museの契約確認、専用ヘッダーと説明文はMeta側の登録処理に置く。新モデルの選択判定には共通の`DISCOVERED_MODEL`タグを使用する。
+
+DSH `0.2.1-rc.2` を検証基準にしています。画像の送信と `imageRequestTarget()` は同じ予算・寸法計算を使い、明示した資格情報が欠ける接続はチャットの候補を公開しません。設定画面のモデル一覧は編集用として残します。
+
+Pi 1.3.0のストリーム性能修正と配布方式は [SDKパッチ](../../docs/pi-stream-patch.md) を参照してください。完成したツール引数の `argumentsError` はエラーとして終了し、有効な空引数へ変換しません。
