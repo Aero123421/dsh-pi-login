@@ -55,7 +55,7 @@ export function supportedProtocols(): readonly string[] {
   return Object.keys(PROTOCOLS)
 }
 
-const USAGE_SERVICES = new Set(['openai-codex', 'anthropic', 'github-copilot', 'opencode-go', 'meta'])
+const USAGE_SERVICES = new Set(['openai', 'openai-codex', 'anthropic', 'github-copilot', 'opencode-go', 'meta'])
 
 /**
  * Login-screen services for installed Pi providers.

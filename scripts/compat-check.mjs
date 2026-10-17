@@ -37,9 +37,10 @@ ctx.authorization.registerFlow({key,label:'ChatGPT',methods:[{id:'oauth',label:'
 const fiber=ctx.plugin({apply:host.applyLoginUI,inject:['authorization','credentials','connection','settings']})
 await fiber.await()
 const handler=ctx.connection.createSharedFetchHandler('/api')
+const owner=ctx.connection.browserPeer
 async function call(method,payload={}) {
  const endpoint=`dsh-pi-login/${method}`
- const response=await handler.fetch(new Request(`http://localhost/api/${endpoint}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'compat',method:endpoint,payload})}))
+ const response=await handler.fetch(new Request(`http://localhost/api/${endpoint}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({type:'client-request',rpcId:'compat',method:endpoint,payload})}),owner)
  const value=await response.json()
  assert.equal(value.result.ok,true,JSON.stringify(value))
  return value.result.value
@@ -55,7 +56,9 @@ try {
  assert.equal((await call('state',{ticket})).status,'authorized')
  assert.equal((await call('list'))[0].configured,true)
  assert.equal((await ctx.credentials.readRecord(key)).payload.token,'compat-secret')
+ const endpoint=new Request('http://localhost/api/dsh-pi-login/list',{method:'POST'})
+ assert.equal((await handler.fetch(endpoint,{principal:{kind:'api'}})).status,403)
  await fiber.dispose()
- assert.equal((await handler.fetch(new Request('http://localhost/api/dsh-pi-login/list',{method:'POST'}))).status,404)
+ assert.equal((await handler.fetch(endpoint,owner)).status,404)
  console.log('Official Cordis / Authorization / Credentials / Connection: login, persistence, and unload passed')
 } finally {await ctx.fiber.dispose()}

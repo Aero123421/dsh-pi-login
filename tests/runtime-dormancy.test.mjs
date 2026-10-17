@@ -18,9 +18,11 @@ await writeFile('.cache/runtime-dormancy-entry.ts', `
 export { Context } from './upstream/vendor/cordis/src/index.ts';
 export { LlmRuntime } from './official-dormancy-llm.ts';
 export { Config, apply } from '../src/runtime/index.ts';
+export { catalogModels } from '../src/runtime/catalog.ts';
+export { OpenAIChatGPTCatalogSession } from '../src/openai-chatgpt-catalog.mjs';
 `)
 await compileOfficial('.cache/runtime-dormancy-entry.ts', '.cache/runtime-dormancy-test.mjs')
-const { Context, LlmRuntime, Config, apply } = await import('../.cache/runtime-dormancy-test.mjs')
+const { Context, LlmRuntime, Config, apply, catalogModels, OpenAIChatGPTCatalogSession } = await import('../.cache/runtime-dormancy-test.mjs')
 
 const connection = id => ({ integrationId: 'pi', serviceId: 'openai', routeId: `pi-${id}`, displayName: id,
   authMethod: 'api-key', credentialRecordId: id, credentialGeneration: 0, enabled: true, profile: {} })
@@ -89,4 +91,31 @@ test('actual Host rejects empty initial registrations but permits atomic empty r
     handle()
     assert.deepEqual(ctx.llm.listConfigurableProviders(), [])
   } finally { await ctx.fiber.dispose() }
+})
+
+
+test('actual Host starts a saved SIWC connection with overrides and publishes its automatically restored account catalog', async () => {
+  const ctx = new Context()
+  await ctx.plugin(context => { new LlmRuntime(context) })
+  const saved = { ...connection('saved-siwc'), authMethod: 'oauth', profile: { modelOverrides: { 'gpt-6.1-sol': { contextWindow: 272000 } } } }
+  const config = Config({ connectionMigrationVersion: 1, connections: { saved } })
+  const session = new OpenAIChatGPTCatalogSession({
+    credentials: { read: async () => ({ type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: Date.now() + 3600000 }) },
+    profile: () => saved.profile, baseline: catalogModels,
+    fetch: async () => Response.json({ models: [{ slug: 'gpt-6.1-sol', display_name: 'Account Sol', visibility: 'list' }] }),
+    onChange: () => ctx.emit('dsh-pi-login/catalog-updated'),
+  })
+  const fiber = ctx.plugin({ inject: ['llm'], apply: context => { apply(context, config, {
+    catalog: service => session.catalog(service), revision: () => session.version,
+    authorizeModel: async () => undefined, onLogin: () => {},
+  }) } })
+  try {
+    await fiber.await()
+    if (session.autoPending) await session.autoPending
+    assert.deepEqual(ctx.llm.listProviders().map(provider => provider.id), ['pi-saved-siwc'])
+    const restored = await ctx.llm.listModels('pi-saved-siwc')
+    assert.deepEqual(restored.map(model => model.id), ['gpt-6.1-sol'])
+    assert.equal(restored[0].name, 'Account Sol')
+    assert.equal(config.connections.get().saved.profile.modelOverrides['gpt-6.1-sol'].contextWindow, 272000)
+  } finally { session.dispose(); await ctx.fiber.dispose() }
 })

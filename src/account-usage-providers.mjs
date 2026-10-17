@@ -202,6 +202,12 @@ export function createPiUsageProviders({ fetch: request = (...args) => globalThi
       return { source: 'internal-http', sourceObservedAt: iso(observedAt), windows: definition.parser(body, observedAt) }
     },
   }]))
+  // SIWC tokens target the public API. Its documented contract has no account
+  // quota endpoint; never send these tokens to legacy Codex's wham endpoint.
+  providers.openai = { source: 'internal-http', requiresCredentials: false,
+    validate() { throw new ProviderReadError('unsupported') },
+    read() { throw new ProviderReadError('unsupported') },
+  }
   if (metaSession) providers.meta = {
     source: 'internal-http',
     validate: connection => standardProfile(connection, ['https://api.meta.ai/v1']),

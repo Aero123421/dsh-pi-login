@@ -4,7 +4,11 @@ import assert from 'node:assert/strict'
 async function effortNames(page, modelName, shot) {
   const trigger = () => page.getByRole('button', { name: /Select model/ })
   await trigger().click()
-  await page.getByRole('menuitem', { name: /^Model\b/ }).click()
+  await page.getByRole('menu', { name: 'Model and reasoning effort' })
+    .or(page.getByRole('group', { name: 'Model and reasoning effort' })).waitFor()
+  // rc.2 opens the model list directly until the first selection is saved.
+  const modelPane = page.getByRole('menuitem', { name: /^Model\b/ })
+  if (await modelPane.count()) await modelPane.click()
   const search = page.getByRole('searchbox', { name: 'Search models…' })
   if (await search.count()) await search.fill(modelName)
   const option = page.getByRole('menuitemradio', { name: modelName, exact: true })

@@ -13,6 +13,7 @@ import { MuseCodeCatalogSession, museCatalogProvider } from './muse-code-catalog
 import { MetaCatalogSession } from './meta-catalog.mjs'
 import { metaCatalogProvider } from './meta-catalog-provider.mjs'
 import { ProviderCatalogs } from './provider-catalogs.mjs'
+import { OpenAIChatGPTCatalogSession, openAIChatGPTCatalogProvider, isChatGPTProfile, hasChatGPTCredentialOverride } from './openai-chatgpt-catalog.mjs'
 import { DISCOVERED_MODEL } from './catalog-metadata.mjs'
 import { DEFAULT_INPUT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './runtime/config.ts'
 import { modelChoices } from './runtime/fast.ts'
@@ -61,7 +62,7 @@ export function apply(ctx, config, options = {}) {
   registry.register(external.descriptor)
   // Optional bundle-local integrations explicitly opt in; never inspect their config or credentials.
   ctx.on('dsh-pi-login/register-integration', (owner, ownRegistration) => registry.register(owner, ownRegistration))
-  const sessionIdentity = connection => JSON.stringify([connection.serviceId, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api])
+  const sessionIdentity = connection => JSON.stringify([connection.serviceId, connection.authMethod, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api, hasChatGPTCredentialOverride({ ...connection.profile, credentialRef: connection.credentialRef, headerRefs: connection.headerRefs })])
   // Credentials address the SDK provider; currency still checks the stored connection.
   const authFor = connection => {
     const binding = manager.binding(connection)
@@ -92,6 +93,18 @@ export function apply(ctx, config, options = {}) {
       })
       const catalogs = new ProviderCatalogs({ [connection.serviceId]: museCatalogProvider(museSession) })
       sessions.set(id, { identity, catalogs, muse: museSession })
+      return catalogs
+    }
+    if (connection.integrationId === 'pi' && connection.serviceId === 'openai' && connection.authMethod === 'oauth'
+      && !hasChatGPTCredentialOverride({ ...connection.profile, credentialRef: connection.credentialRef, headerRefs: connection.headerRefs })) {
+      const chatgpt = new OpenAIChatGPTCatalogSession({
+        credentials: authFor(connection).credentials,
+        profile: () => { const current = manager.lookup(id); return { ...current.profile, headerRefs: current.headerRefs, credentialRef: current.credentialRef } },
+        baseline: catalogModels, refreshAuth: signal => refreshAuth(manager.lookup(id), signal),
+        onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
+      })
+      const catalogs = new ProviderCatalogs({ openai: openAIChatGPTCatalogProvider(chatgpt) })
+      sessions.set(id, { identity, catalogs, chatgpt })
       return catalogs
     }
     const meta = connection.serviceId === 'meta' && connection.integrationId === 'pi' ? new MetaCatalogSession({
@@ -127,6 +140,9 @@ export function apply(ctx, config, options = {}) {
       usage.invalidate(id)
       if (!connection.enabled) await manager.update(id, { enabled: true }, manager.section()?.revision)
       // A new Muse Code sign-in loads that account's catalog right away.
+      if (connection.integrationId === 'pi' && connection.serviceId === 'openai' && connection.authMethod === 'oauth' && isChatGPTProfile({ ...connection.profile, credentialRef: connection.credentialRef, headerRefs: connection.headerRefs })) {
+        void catalogsFor(manager.lookup(id)).refresh('openai').catch(() => {})
+      }
       if (connection.integrationId === MUSE_CODE_INTEGRATION_ID) void catalogsFor(manager.lookup(id)).refresh(connection.serviceId).catch(() => {})
     },
     authorizeModel: (route, model, profile) => {

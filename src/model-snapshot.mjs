@@ -6,10 +6,21 @@
  */
 export function createModelEditor() {
   let generation = 0
+  let lifetime = 0
   let reloadSerial = 0
   let publishedRevision = -1
   const pending = new Map()
   const revisionOf = snapshot => typeof snapshot?.revision === 'number' ? snapshot.revision : undefined
+  function project(snapshot) {
+    if (!snapshot?.models || pending.size === 0) return snapshot
+    return {
+      ...snapshot,
+      models: snapshot.models.map(row => {
+        const desired = pending.get(row.id)
+        return desired ? { ...row, enabled: desired.enabled } : row
+      }),
+    }
+  }
   return {
     note(snapshot) {
       const revision = revisionOf(snapshot)
@@ -17,19 +28,11 @@ export function createModelEditor() {
     },
     invalidate() {
       generation += 1
+      lifetime += 1
       reloadSerial += 1
       pending.clear()
     },
-    project(snapshot) {
-      if (!snapshot?.models || pending.size === 0) return snapshot
-      return {
-        ...snapshot,
-        models: snapshot.models.map(row => {
-          const desired = pending.get(row.id)
-          return desired ? { ...row, enabled: desired.enabled } : row
-        }),
-      }
-    },
+    project,
     beginReload() {
       const token = generation
       const serial = ++reloadSerial
@@ -47,23 +50,19 @@ export function createModelEditor() {
     },
     beginToggle(model, enabled) {
       const token = ++generation
+      const owner = lifetime
       pending.set(model, { enabled, token })
       return {
-        overlay(snapshot) {
-          if (!snapshot?.models) return snapshot
-          return {
-            ...snapshot,
-            models: snapshot.models.map(row => {
-              const desired = pending.get(row.id)
-              return desired ? { ...row, enabled: desired.enabled } : row
-            }),
-          }
-        },
-        accept(snapshot) {
-          if (token !== generation) return false
+        overlay: project,
+        /** Reconcile a settled write, keeping newer pending choices on top. */
+        reconcile(snapshot) {
+          if (owner !== lifetime || !snapshot?.models) return undefined
           const revision = revisionOf(snapshot)
-          if (revision !== undefined && revision > publishedRevision) publishedRevision = revision
-          return true
+          if (revision !== undefined && revision < publishedRevision) return undefined
+          if (revision !== undefined) publishedRevision = revision
+          const desired = pending.get(model)
+          if (desired?.token === token) pending.delete(model)
+          return project(snapshot)
         },
         finish() {
           const desired = pending.get(model)

@@ -35,7 +35,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Install pinned DSH CLI and pnpm for real profile smoke
-        run: npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-alpha.2 pnpm@11.28.5
+        run: npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2 pnpm@11.28.5
       - name: Verify installed profile and live Release lookup
         run: PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install
       - name: Boot the same package on the current DSH alpha

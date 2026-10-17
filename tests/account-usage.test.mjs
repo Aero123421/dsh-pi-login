@@ -158,3 +158,15 @@ test('Usage total deadline bounds credential lookup and native unobserved values
   assert.equal(native.checkedAt, new Date(at).toISOString())
   assert.throws(() => normalizeUsageSnapshot({ ...snapshot(), sourceObservedAt: '2026-10-13T12:00:00' }), ProviderReadError)
 })
+
+test('new OpenAI SIWC and API-key usage explicitly report unsupported without reading tokens or calling legacy wham', async t => {
+  let reads = 0, calls = 0
+  const manager = new AccountUsageManager({ credentials: { read: async () => { reads++; return { type: 'oauth', access: 'fixture-siwc-token', refresh: 'fixture-refresh' } } },
+    providers: createPiUsageProviders({ fetch: async () => { calls++; throw Error('unexpected request') } }) })
+  t.after(() => manager.dispose())
+  for (const authMethod of ['oauth', 'api-key']) {
+    const result = await manager.get({ ...connection('siwc', 'openai'), authMethod })
+    assert.equal(result.status, 'unsupported'); assert.deepEqual(result.windows, [])
+  }
+  assert.equal(reads, 0); assert.equal(calls, 0)
+})

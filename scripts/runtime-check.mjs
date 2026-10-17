@@ -73,7 +73,7 @@ const handler = ctx.connection.createSharedFetchHandler('/api')
 let identity
 async function call(method, payload = {}) {
   const endpoint = `dsh-pi-login/${method}`
-  const response = await handler.fetch(new Request(`http://localhost/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'runtime-fixture', method: endpoint, payload: { ...identity, ...payload } }) }))
+  const response = await handler.fetch(new Request(`http://localhost/api/${endpoint}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ type: 'client-request', rpcId: 'runtime-fixture', method: endpoint, payload: { ...identity, ...payload } }) }), ctx.connection.browserPeer)
   const value = await response.json()
   assert.equal(value.result.ok, true, JSON.stringify(value))
   return value.result.value

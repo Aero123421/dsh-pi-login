@@ -1,9 +1,12 @@
 import { build } from 'esbuild'
+import { piStreamPatchPlugin, nodeBundleBanner } from './pi-stream-patch.mjs'
+import { writeBundleNotices } from './bundle-notices.mjs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 
 await mkdir('dist', { recursive: true })
 const manifest = JSON.parse(await readFile('package.json', 'utf8'))
-await build({ entryPoints: ['src/index.mjs'], outfile: 'dist/index.js', bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['@deepseek-ai/*', '@earendil-works/pi-ai', '@earendil-works/pi-ai/*'] })
+const host = await build({ metafile: true, entryPoints: ['src/index.mjs'], outfile: 'dist/index.js', bundle: true, platform: 'node', format: 'esm', target: 'node22', external: ['@deepseek-ai/*'], plugins: [piStreamPatchPlugin()], banner: { js: nodeBundleBanner } })
+await writeBundleNotices(host.metafile)
 const client = await build({
   entryPoints: ['src/client.jsx'],
   bundle: true,

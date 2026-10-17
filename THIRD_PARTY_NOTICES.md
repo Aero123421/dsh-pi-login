@@ -2,7 +2,7 @@
 
 ## clsx 2.1.1
 
-The web client bundles clsx from https://github.com/lukeed/clsx. React and React DOM are supplied by DSH and are not bundled. The Pi SDK remains a separately installed dependency.
+The web client bundles clsx from https://github.com/lukeed/clsx. React and React DOM are supplied by DSH and are not bundled. The Host bundles Pi AI SDK 1.3.0 and its dependencies. Their complete license and notice texts are generated from the bundle module graph in [dist/THIRD_PARTY_NOTICES.txt](dist/THIRD_PARTY_NOTICES.txt). Pi source modifications are documented in [docs/pi-stream-patch.md](docs/pi-stream-patch.md).
 
 MIT License
 
