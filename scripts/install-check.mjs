@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
@@ -154,6 +154,9 @@ export async function apply(ctx) {
 `)
   patches.push({ insert: [{ id: 'install-credential-fixture', name: fixtureModule }] })
   await writeFile(patchPath, stringify(patches))
+  // The first start already saved a live catalog file. A 0.8.0 upgrade has the
+  // settings string and no file; an existing file is left in place.
+  await rm(join(home, 'profiles', 'smoke', '.dsh-pi-login', `catalog-${crud.fixtureId}.json`), { force: true })
   startApp()
   page=await browser.newPage(); await page.goto(await appURL())
   const restarted = await page.evaluate(async () => {
