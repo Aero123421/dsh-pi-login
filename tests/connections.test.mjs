@@ -46,6 +46,39 @@ function fixture(value = {}, initialRecords = {}) {
   return { manager, registry, records, mutations, writes, deletes, settings, credentials, get value() { return current }, get revision() { return revision }, set failWrite(value) { failWrite = value } }
 }
 
+test('catalog persistence merges concurrent edits and survives restart, but rejects a changed account or endpoint', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'deepseek', authMethod: 'api-key', apiKey: 'fixture-original' }, f.revision)
+  const binding = f.manager.binding(f.manager.lookup(connectionId))
+  const mutate = f.settings.mutate
+  let conflict = true
+  f.settings.mutate = async (...args) => {
+    if (conflict) {
+      conflict = false
+      await f.manager.update(connectionId, { displayName: 'Concurrent rename' }, f.revision)
+    }
+    return mutate(...args)
+  }
+  const snapshot = JSON.stringify({ version: 1, models: [{ id: 'new:1017' }] })
+  await f.manager.saveModelCatalog(binding, snapshot)
+  assert.equal(f.value.connections[connectionId].displayName, 'Concurrent rename')
+  assert.equal(f.value.connections[connectionId].modelCatalog, snapshot)
+  const restarted = fixture(f.value, Object.fromEntries(f.records))
+  assert.equal(restarted.manager.lookup(connectionId).modelCatalog, snapshot)
+  assert.equal(restarted.records.size, 1)
+  const cloned = await f.manager.clone(connectionId, 'Clone', f.revision)
+  assert.equal(f.value.connections[cloned.connectionId].modelCatalog, undefined)
+  const cancelled = new AbortController(); cancelled.abort()
+  await assert.rejects(f.manager.saveModelCatalog(binding, 'cancelled', { signal: cancelled.signal }))
+  await assert.rejects(f.manager.saveModelCatalog({ ...binding, profile: { baseURL: 'https://other.example/v1' } }, 'wrong-endpoint'), error => error.code === 'connection-changed')
+  await f.manager.update(connectionId, { apiKey: 'fixture-rotated' }, f.revision)
+  await assert.rejects(f.manager.saveModelCatalog(binding, 'late-account-result'), error => error.code === 'connection-changed')
+  assert.notEqual(f.value.connections[connectionId].modelCatalog, 'late-account-result')
+  await f.manager.delete(connectionId, f.revision)
+  await assert.rejects(f.manager.saveModelCatalog(binding, 'late-deleted-result'))
+  assert.equal(f.value.connections[connectionId], undefined)
+})
+
 test('one-time migration atomically retains old OAuth identity, history route, model/Fast/Thinking settings without copying secrets', async () => {
   const profile = { enabled: true, disabledModels: ['hidden-model'], enabledFastModels: ['gpt-6.1-sol::fast'], reasoning: 'high', cacheRetention: 'long' }
   const record = { kind: 'grant', payload: { type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: 1234 } }

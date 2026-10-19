@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import assert from 'node:assert/strict'
 import { parse, stringify } from 'yaml'
 import { checkConnectionControls, checkContributorEffortMenu } from './connection-install-ui.mjs'
+import { catalogBinding } from '../src/live-catalog.mjs'
 const home = await mkdtemp(join(tmpdir(), 'pi-update-clean-'))
 const env = { ...process.env, DSH_HOME: home }
 const packageJson = JSON.parse(await readFile('package.json', 'utf8'))
@@ -104,6 +105,16 @@ try {
   const patches = parse(await readFile(patchPath, 'utf8'))
   const entry = patches.find(entry => entry.id === 'dsh-pi-login')
   assert.ok(entry?.config?.connections?.[crud.museId])
+  // New model catalogs survive the real Host schema and a process restart.
+  // A fresh local fixture prevents this check from depending on a public catalog.
+  const liveConnection = entry.config.connections[crud.fixtureId]
+  liveConnection.modelCatalog = JSON.stringify({ version: 1, binding: catalogBinding(liveConnection), checkedAt: Date.now(), models: [{
+    id: 'fixture-new:1017', name: 'Restart catalog fixture', provider: 'deepseek', api: 'openai-completions',
+    baseUrl: 'https://api.deepseek.com', contextWindow: 131072, maxTokens: 8192, input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, reasoning: true,
+    thinkingLevelMap: { off: 'none', minimal: null, low: 'low', medium: null, high: 'high', xhigh: null, max: 'max' },
+    control: { toggle: false }, verified: true,
+  }] })
   const nativePair = id => [
     { id: `${id}-contributor`, name: `${id}-contributor`, contextWindow: 1048576, maxTokens: 32768, input: ['text', 'image'], efforts: ['high'], contributor: false },
     { id, name: id, contextWindow: 1048576, maxTokens: 131072, input: ['text', 'image'], efforts: ['high'], contributor: true },
@@ -164,6 +175,15 @@ export async function apply(ctx) {
   assert.equal(restored.authMethod, 'api-key')
   assert.equal(restarted['connection-list'].profileKey, crud.profileKey)
   assert.notEqual(restarted['connection-list'].generation, crud.generation)
+  const liveRestored = await page.evaluate(async connectionId => {
+    const method = 'dsh-pi-login/models'
+    const envelope = await (await fetch('/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'restart-live-catalog', method, payload: { connectionId } }) })).json()
+    if (!envelope.result?.ok) throw new Error('Restored live catalog unavailable')
+    return envelope.result.value
+  }, crud.fixtureId)
+  assert.equal(liveRestored.models.find(model => model.id === 'fixture-new:1017')?.enabled, false)
+  console.log('Clean DSH profile: SDK-independent catalog restored through Host schema; newly discovered model stays off')
   const restoredModels = await page.evaluate(async museId => {
     const method = 'dsh-pi-login/models'
     const response = await fetch('/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' },

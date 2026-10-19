@@ -11,6 +11,7 @@
 
 import { builtinProviders, getAllBuiltinModels, getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
 import { supplementCatalog } from './catalog-additions.ts'
+import { gatewayProviders } from './gateway-providers.ts'
 import type { BuiltinProvider } from '@earendil-works/pi-ai/providers/all'
 import type {
   AnthropicMessagesCompat,
@@ -183,7 +184,7 @@ function servesChat(provider: Provider): boolean {
  * @returns the catalog provider index, in catalog order.
  */
 function catalogProviders(): Map<string, Provider> {
-  providerIndex ??= new Map(builtinProviders().filter(servesChat).map(provider => [provider.id, provider]))
+  providerIndex ??= new Map([...builtinProviders().filter(servesChat), ...gatewayProviders()].map(provider => [provider.id, provider]))
   return providerIndex
 }
 
@@ -214,7 +215,7 @@ export function catalogProviderIds(): readonly string[] {
  */
 export function catalogModels(provider: string): Map<string, Model<Api>> {
   if (!catalogProviders().has(provider)) return new Map()
-  const models = getBuiltinModels(provider as BuiltinProvider) as Model<Api>[]
+  const models = [...catalogProvider(provider)!.getModels()] as Model<Api>[]
   return supplementCatalog(provider, models)
 }
 
@@ -901,7 +902,7 @@ export function resolveRouteModels(
     ? configured
     : [...defaults.values()].map(model => ({ id: model.id, ...overrides[model.id] }))
   // An account-owned catalog may legitimately advertise no selectable models.
-  if (entries.length === 0 && installed !== undefined) {
+  if (entries.length === 0 && (installed !== undefined || provider === 'commandcode' || provider === 'ollama-cloud')) {
     return { models: [], configuredMaxTokens: new Map(), modelErrors }
   }
   if (entries.length === 0) {

@@ -51,7 +51,8 @@ import { idleWatchdog, timeoutOf } from '@deepseek-ai/dsh-timeout'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
 import { requestImageTarget, toPiContext } from './context.ts'
 import { conversationUpdates, createModels, getSupportedThinkingLevels } from './models.ts'
-import { MUSE_DEFAULT_EFFORT } from '../catalog-metadata.mjs'
+import { MUSE_DEFAULT_EFFORT, CATALOG_CONTROL } from '../catalog-metadata.mjs'
+import { modelForCatalogRequest } from '../catalog-controls.mjs'
 import { streamWithTier } from './fast.ts'
 import type { ModelChoice } from './fast.ts'
 import { toStreamChunks } from './stream.ts'
@@ -167,6 +168,9 @@ function resolveReasoningLevel(
   effort: ReasoningEffortIdType | ModelThinkingLevel | undefined,
 ): ModelThinkingLevel | undefined {
   if (effort === undefined) return undefined
+  const control = (model as unknown as Record<symbol, { toggle?: boolean }>)[CATALOG_CONTROL]
+  if (control?.toggle && effort === 'on') return 'high'
+  if (control?.toggle && effort !== 'off') throw new LlmError('This model supports thinking on/off only', 'UNSUPPORTED_REASONING_EFFORT')
   const supported = getSupportedThinkingLevels(model)
   if (supported.some(level => level === effort)) return effort as ModelThinkingLevel
   throw new LlmError(
@@ -197,13 +201,16 @@ function reasoningInfo(
 ): Pick<LlmResolvedModelInfo, 'reasoning'> | Record<string, never> {
   if (!model.reasoning) return {}
   const levels = getSupportedThinkingLevels(model)
+  const control = (model as unknown as Record<symbol, { toggle?: boolean, defaultEffort?: string }>)[CATALOG_CONTROL]
+  const offered = control?.toggle ? [...levels.includes('off') ? ['off'] : [], 'on'] : levels
+  const selectedDefault = defaultLevel ?? control?.defaultEffort
   return {
     reasoning: {
-      efforts: levels.map(level => ({
+      efforts: offered.map(level => ({
         id: ReasoningEffortId(level),
         name: `${level.charAt(0).toUpperCase()}${level.slice(1)}`,
       })),
-      ...defaultLevel === undefined ? {} : { defaultEffort: ReasoningEffortId(defaultLevel) },
+      ...selectedDefault === undefined || !offered.includes(selectedDefault) ? {} : { defaultEffort: ReasoningEffortId(selectedDefault) },
     },
   }
 }
@@ -500,9 +507,10 @@ export class PiAiAdapter extends LlmAdapter {
         // Harness-owned and therefore win collisions.
         headers: { ...requestHeaders({ ...profile.headers, ...storedHeaders }), ...choice.headers, ...accountAuthorization?.headers },
       }
+      const requestModel = modelForCatalogRequest(model, reasoning)
       const events = choice.serviceTier !== undefined
-        ? streamWithTier(models, model, context, streamOptions, choice.serviceTier)
-        : models.streamSimple(model, context, streamOptions)
+        ? streamWithTier(models, requestModel, context, streamOptions, choice.serviceTier)
+        : models.streamSimple(requestModel, context, streamOptions)
       const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model, replayScope, options.provider)[Symbol.asyncIterator]()
       let exhausted = false
       try {

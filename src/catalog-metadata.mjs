@@ -1,6 +1,8 @@
 // Shared discovery metadata; account credentials stay in provider-private tags.
 // Symbols survive model copies but never appear in JSON/RPC responses.
 export const DISCOVERED_MODEL = Symbol('dsh-pi-login/discovered-model')
+// Explicit remote control metadata; separates service default from thinking off.
+export const CATALOG_CONTROL = Symbol('dsh-pi-login/catalog-control')
 // Muse Code catalog entries that also offer a Contributor-mode choice.
 export const MUSE_CONTRIBUTOR = Symbol('dsh-pi-login/muse-contributor')
 // An actual Contributor model ID returned by Muse, distinct from a base
