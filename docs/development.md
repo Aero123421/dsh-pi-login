@@ -39,7 +39,7 @@ npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2
 PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install
 ```
 
-CLI依存の導入と配布tgzの追加ではbuild scriptsを許可しません。CLIやpnpmが見つからない場合は、段階・終了コード・安全なエラー分類を表示し、rawの設定出力は公開しません。
+CLI依存の導入ではbuild scriptsを許可しません。配布パッケージ自体は実行時の依存を持たないため、`dsh plugin --profile web add -w` に追加のオプションは要りません。CLIやpnpmが見つからない場合は、段階・終了コード・安全なエラー分類を表示し、rawの設定出力は公開しません。
 
 runtimeテストの設定保存先とLLM登録先はテスト用サービスです。ブラウザテストは日本語を登録したテスト画面で行い、日本語プラグインやフォントは読み込みません。実アカウントは使用しません。
 

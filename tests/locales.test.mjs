@@ -8,6 +8,11 @@ test('login UI dictionaries agree in keys and placeholders', () => {
   assert.deepEqual(Object.keys(ja).sort(), Object.keys(en).sort())
   for (const key of Object.keys(en)) assert.deepEqual(placeholders(ja[key]), placeholders(en[key]))
 })
+test('the published package has no runtime dependency that installs build scripts', async () => {
+  const manifest = JSON.parse(await readFile('package.json', 'utf8'))
+  assert.equal(manifest.dependencies, undefined)
+  assert.equal(manifest.devDependencies['@earendil-works/pi-ai'], '1.3.0')
+})
 test('the standalone bundle registers its installed package ID', async () => {
   const manifest = JSON.parse(await readFile('package.json', 'utf8'))
   const client = await readFile('dist/client.js', 'utf8')

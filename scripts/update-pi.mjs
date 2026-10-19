@@ -10,11 +10,11 @@ const info = spawnSync(npm, ['view', `@earendil-works/pi-ai@${requested}`, 'vers
 if (info.status !== 0) throw new Error('Could not read the Pi SDK version from npm')
 const version = JSON.parse(info.stdout)
 if (typeof version !== 'string') throw new Error('Expected one exact Pi SDK version')
-if (manifest.dependencies['@earendil-works/pi-ai'] === version) {
+if (manifest.devDependencies['@earendil-works/pi-ai'] === version && manifest.dependencies?.['@earendil-works/pi-ai'] === undefined) {
   console.log(`Pi SDK ${version} is already pinned`)
   process.exit(0)
 }
-const result = spawnSync(npm, ['install', '--save-exact', `@earendil-works/pi-ai@${version}`, '--ignore-scripts'], { stdio: 'inherit', shell: process.platform === 'win32' })
+const result = spawnSync(npm, ['install', '--save-dev', '--save-exact', `@earendil-works/pi-ai@${version}`, '--ignore-scripts'], { stdio: 'inherit', shell: process.platform === 'win32' })
 if (result.status !== 0) process.exit(result.status ?? 1)
 const updated = JSON.parse(await readFile(manifestPath, 'utf8'))
 const [major, minor, patch] = updated.version.split('.').map(Number)

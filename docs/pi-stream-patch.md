@@ -1,6 +1,6 @@
 # Pi 1.3.0 tool argument streaming
 
-The Host build includes Pi AI SDK 1.3.0 and its dependencies, with a narrowly scoped streaming patch applied by `scripts/pi-stream-patch.mjs`. The published `dist/index.js` contains the patched implementation. It does not require installation scripts, changes to the consumer's `node_modules`, or a DSH-owned Pi patch. The package keeps its exact Pi dependency for source tooling and compatibility metadata.
+The Host build includes Pi AI SDK 1.3.0 and its dependencies, with a narrowly scoped streaming patch applied by `scripts/pi-stream-patch.mjs`. The published `dist/index.js` contains the patched implementation. It does not require installation scripts, changes to the consumer's `node_modules`, or a DSH-owned Pi patch. The exact Pi version stays in `devDependencies` for the build and tests. The published package has no runtime dependencies, so installing it does not fetch `@google/genai` or `protobufjs` and does not run their build scripts.
 
 ## Completed argument errors
 
