@@ -129795,9 +129795,6 @@ var package_default = {
       ]
     }
   },
-  dependencies: {
-    "@earendil-works/pi-ai": "1.3.0"
-  },
   engines: {
     node: ">=22.19.0"
   },
@@ -129858,6 +129855,7 @@ var package_default = {
     "test:boot": "node scripts/host-boot-check.mjs"
   },
   devDependencies: {
+    "@earendil-works/pi-ai": "1.3.0",
     clsx: "^2.1.1",
     esbuild: "0.28.2",
     immer: "^10.2.0",
