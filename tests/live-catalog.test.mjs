@@ -66,10 +66,24 @@ test('ETag revalidation persists freshness, failed updates keep the last catalog
 })
 
 test('an initial catalog failure does not claim a previous successful catalog exists', async t => {
-  const f = fixture(t, { connection: connection('commandcode'), baseline: new Map(), fetch: async () => new Response(null, { status: 503 }) })
+  const f = fixture(t, { connection: connection('commandcode'), baseline: new Map(), now: () => 5000, fetch: async () => new Response(null, { status: 503 }) })
   await assert.rejects(f.session.refresh())
   assert.equal(f.session.catalog('commandcode').size, 0)
+  assert.equal(f.session.retryAt, 65000)
   assert.equal(liveCatalogProvider(f.session).presentation().status.message, 'catalogInitialLoadFailed')
+})
+
+test('a catalog save failure does not use the fetch error or the 60 second block', async t => {
+  const f = fixture(t, { now: () => 5000, persist: async () => { throw new Error('disk full') } })
+  await assert.rejects(f.session.refresh())
+  assert.equal(f.session.retryAt, 0)
+  assert.equal(f.session.cache.error, undefined)
+  assert.equal(f.writes.length, 0)
+  assert.equal(liveCatalogProvider(f.session).presentation().status.message, 'catalogSaveFailed')
+  f.session.persist = async () => {}
+  await f.session.refresh({ force: true })
+  assert.equal(f.session.persistFailed, false)
+  assert.equal(liveCatalogProvider(f.session).presentation().status.message, 'catalogUpdated')
 })
 
 test('late responses cannot persist after disconnect or disposal, and rate limits prevent repeated fetches', async t => {

@@ -5,6 +5,7 @@ import { UpdateController } from './update-controller.mjs'
 import { createModelEditor } from './model-snapshot.mjs'
 import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
 import { en, ja } from './locales.mjs'
+import { claimSubmit } from './submit-lock.mjs'
 import { SERVICE_GROUPS, serviceGroup } from './service-groups.mjs'
 import css from './styles.css'
 
@@ -46,11 +47,12 @@ function Choice({ label, value, options, onChange, disabled }) {
 }
 
 function Prompt({ prompt, ticket, controller, t, onFailure }) {
-  const [value, setValue] = useState('')
+  const [value, setValue] = useState(() => prompt.kind === 'select' ? prompt.options?.[0]?.id ?? '' : '')
   const [busy, setBusy] = useState(false)
   const [visible, setVisible] = useState(false)
   const [pasteError, setPasteError] = useState(false)
   const id = useId()
+  const group = useId()
   async function submit(event) {
     event.preventDefault()
     const answer = value
@@ -60,7 +62,13 @@ function Prompt({ prompt, ticket, controller, t, onFailure }) {
   }
   return <form onSubmit={submit} className="dsh-pi-prompt">
     {prompt.kind === 'select'
-      ? <Choice label={prompt.message || t('selection')} value={value} options={prompt.options} onChange={setValue} disabled={busy} />
+      ? <fieldset className="dsh-pi-radio-list" disabled={busy}>
+          <legend className="dsh-pi-caption">{prompt.message || t('selection')}</legend>
+          {(prompt.options ?? []).map(option => <label key={option.id} className="dsh-pi-radio-row">
+            <input type="radio" name={group} value={option.id} checked={value === option.id} onChange={() => setValue(option.id)} />
+            <span>{option.label}</span>
+          </label>)}
+        </fieldset>
       : <><label htmlFor={id}>{prompt.message || t(prompt.kind === 'secret' ? 'secret' : 'answer')}</label>
         <Input id={id} data-modal-autofocus {...(prompt.kind === 'secret' ? secretProps(!visible) : noAutofill)}
           value={value} placeholder={prompt.placeholder} onChange={event => setValue(event.target.value)} />
@@ -82,6 +90,7 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
   const [enableError, setEnableError] = useState(false)
   const [keyOverride, setKeyOverride] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [polled, setPolled] = useState(false)
   useEffect(() => {
     let alive = true
     void controller.start(entry.connectionId, method).then(value => {
@@ -100,6 +109,7 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
         const snapshot = await controller.call('state', { ticket }, abort.signal)
         if (!alive) return
         setState(snapshot)
+        setPolled(true)
         if (snapshot.status === 'running') timer = setTimeout(poll, 800)
         else {
           controller.tickets.delete(ticket)
@@ -134,7 +144,7 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
     </> : null}
     {state.status === 'cancelled' ? <p role={state.reason === 'timeout' ? 'alert' : 'status'}>{t(terminalCopy)}</p> : null}
     {!complete ? <>
-      <p role="status">{state.notice?.message || t(link ? 'waiting' : 'busy')}</p>
+      {polled && !state.prompt ? <p role="status">{state.notice?.message || t(link ? 'waiting' : 'busy')}</p> : null}
       {state.notice?.code ? <div className="dsh-pi-verification"><span className="dsh-pi-muted">{t('code')}</span>
         <div className="dsh-pi-verification-row"><code>{state.notice.code}</code>
           <Button size="sm" variant="outline" onClick={async () => { try { await navigator.clipboard.writeText(state.notice.code); setCopied(true) } catch { setCopied(false) } }}>{t(copied ? 'copied' : 'copy')}</Button></div></div> : null}
@@ -296,6 +306,7 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
 function connectionError(error) {
   const code = String(error.code ?? error.message).split('/').pop()
   if (code === 'endpoint-untrusted') return 'endpointUntrusted'
+  if (code === 'invalid-endpoint') return 'invalidEndpoint'
   if (code === 'credential-delete-failed') return 'deletionPending'
   if (code === 'credential-cleanup-failed') return 'credentialCleanupFailed'
   if (code === 'credential-save-failed') return 'credentialSaveFailed'
@@ -434,10 +445,12 @@ function AddDialog({ state, controller: sourceController, t, onClose, onLogin, o
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const submitLock = useRef(false)
   const fieldId = useId()
   const unavailable = service?.capabilities?.settings === false
   const name = displayName.trim() || serviceLabel(service ?? {}) || ''
   async function save() {
+    if (!claimSubmit(submitLock)) return
     setBusy(true); setError('')
     try {
       const fields = { displayName: name, authMethod: method, ...(apiKey ? { apiKey } : {}), ...(endpointUrl.trim() ? { endpointUrl: endpointUrl.trim() } : {}), ...(api ? { api } : {}) }
@@ -451,7 +464,7 @@ function AddDialog({ state, controller: sourceController, t, onClose, onLogin, o
     } catch (error) {
       setError(connectionError(error) === 'credentialSaveFailed' ? 'createdCredentialFailed' : connectionError(error))
       await controller.refresh().catch(() => {})
-    } finally { setBusy(false) }
+    } finally { submitLock.current = false; setBusy(false) }
   }
   return <Modal open title={t('addConnection')} closeLabel={t('close')} onClose={() => { if (!busy) onClose() }} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
     footer={<><Button variant="outline" onClick={onClose} disabled={busy}>{t('cancel')}</Button>

@@ -26240,11 +26240,11 @@ var require_dist_cjs11 = __commonJS({
         throw new TokenProviderError2(`Value not present for '${key}' in SSO Token${forRefresh ? ". Cannot refresh" : ""}. ${REFRESH_MESSAGE}`, false);
       }
     };
-    var { writeFile: writeFile3 } = promises;
+    var { writeFile: writeFile4 } = promises;
     var writeSSOTokenToFile = (id, ssoToken) => {
       const tokenFilepath = getSSOTokenFilepath2(id);
       const tokenString = JSON.stringify(ssoToken, null, 2);
-      return writeFile3(tokenFilepath, tokenString);
+      return writeFile4(tokenFilepath, tokenString);
     };
     var lastRefreshAttemptTimes = /* @__PURE__ */ new Map();
     var fromSso = (init = {}) => async ({ callerClientConfig } = {}) => {
@@ -29497,7 +29497,7 @@ var require_dist_cjs14 = __commonJS({
     var { createHash: createHash14, createPrivateKey, createPublicKey, sign: sign2 } = __require("node:crypto");
     var { promises } = __require("node:fs");
     var { homedir: homedir3 } = __require("node:os");
-    var { dirname: dirname2, join: join7 } = __require("node:path");
+    var { dirname: dirname2, join: join9 } = __require("node:path");
     var LoginCredentialsFetcher = class _LoginCredentialsFetcher {
       profileData;
       init;
@@ -29661,10 +29661,10 @@ var require_dist_cjs14 = __commonJS({
         await promises.writeFile(tokenFilePath, JSON.stringify(token2, null, 2), "utf8");
       }
       getTokenFilePath() {
-        const directory = process.env.AWS_LOGIN_CACHE_DIRECTORY ?? join7(homedir3(), ".aws", "login", "cache");
+        const directory = process.env.AWS_LOGIN_CACHE_DIRECTORY ?? join9(homedir3(), ".aws", "login", "cache");
         const loginSessionBytes = Buffer.from(this.loginSession, "utf8");
         const loginSessionSha256 = createHash14("sha256").update(loginSessionBytes).digest("hex");
-        return join7(directory, `${loginSessionSha256}.json`);
+        return join9(directory, `${loginSessionSha256}.json`);
       }
       derToRawSignature(derSignature) {
         let offset = 2;
@@ -29852,7 +29852,7 @@ var require_dist_cjs16 = __commonJS({
   "node_modules/@aws-sdk/credential-provider-web-identity/dist-cjs/index.js"(exports) {
     var { setCredentialFeature: setCredentialFeature2 } = (init_client3(), __toCommonJS(client_exports2));
     var { CredentialsProviderError: CredentialsProviderError2, externalDataInterceptor: externalDataInterceptor2 } = (init_config2(), __toCommonJS(config_exports));
-    var { readFileSync } = __require("node:fs");
+    var { readFileSync: readFileSync2 } = __require("node:fs");
     var fromWebToken = (init) => async (awsIdentityProperties) => {
       init.logger?.debug("@aws-sdk/credential-provider-web-identity - fromWebToken");
       const { roleArn, roleSessionName, webIdentityToken, providerId, policyArns, policy, durationSeconds } = init;
@@ -29893,7 +29893,7 @@ var require_dist_cjs16 = __commonJS({
       }
       const credentials = await fromWebToken({
         ...init,
-        webIdentityToken: externalDataInterceptor2?.getTokenRecord?.()[webIdentityTokenFile] ?? readFileSync(webIdentityTokenFile, { encoding: "ascii" }),
+        webIdentityToken: externalDataInterceptor2?.getTokenRecord?.()[webIdentityTokenFile] ?? readFileSync2(webIdentityTokenFile, { encoding: "ascii" }),
         roleArn,
         roleSessionName
       })(awsIdentityProperties);
@@ -30432,11 +30432,11 @@ var require_dist_cjs20 = __commonJS({
         throw new TokenProviderError2(`Value not present for '${key}' in SSO Token${forRefresh ? ". Cannot refresh" : ""}. ${REFRESH_MESSAGE}`, false);
       }
     };
-    var { writeFile: writeFile3 } = promises;
+    var { writeFile: writeFile4 } = promises;
     var writeSSOTokenToFile = (id, ssoToken) => {
       const tokenFilepath = getSSOTokenFilepath2(id);
       const tokenString = JSON.stringify(ssoToken, null, 2);
-      return writeFile3(tokenFilepath, tokenString);
+      return writeFile4(tokenFilepath, tokenString);
     };
     var lastRefreshAttemptTimes = /* @__PURE__ */ new Map();
     var fromSso = (init = {}) => async ({ callerClientConfig } = {}) => {
@@ -35968,8 +35968,8 @@ function getBunSandboxEnvValue(name2) {
   if (procEnvCache === null) {
     procEnvCache = /* @__PURE__ */ new Map();
     try {
-      const { readFileSync } = __require("node:fs");
-      const data = readFileSync("/proc/self/environ", "utf-8");
+      const { readFileSync: readFileSync2 } = __require("node:fs");
+      const data = readFileSync2("/proc/self/environ", "utf-8");
       for (const entry of data.split("\0")) {
         const idx = entry.indexOf("=");
         if (idx > 0) {
@@ -90254,7 +90254,7 @@ var require_bignumber = __commonJS({
             return arr.reverse();
           }
           return function(str, baseIn, baseOut, sign2, callerIsToString) {
-            var alphabet, d5, e6, k5, r6, x2, xc, y, i6 = str.indexOf("."), dp = DECIMAL_PLACES, rm = ROUNDING_MODE;
+            var alphabet, d5, e6, k5, r6, x2, xc, y, i6 = str.indexOf("."), dp = DECIMAL_PLACES, rm2 = ROUNDING_MODE;
             if (i6 >= 0) {
               k5 = POW_PRECISION;
               POW_PRECISION = 0;
@@ -90280,7 +90280,7 @@ var require_bignumber = __commonJS({
               x2.c = xc;
               x2.e = e6;
               x2.s = sign2;
-              x2 = div(x2, y, dp, rm, baseOut);
+              x2 = div(x2, y, dp, rm2, baseOut);
               xc = x2.c;
               r6 = x2.r;
               e6 = x2.e;
@@ -90289,7 +90289,7 @@ var require_bignumber = __commonJS({
             i6 = xc[d5];
             k5 = baseOut / 2;
             r6 = r6 || d5 < 0 || xc[d5 + 1] != null;
-            r6 = rm < 4 ? (i6 != null || r6) && (rm == 0 || rm == (x2.s < 0 ? 3 : 2)) : i6 > k5 || i6 == k5 && (rm == 4 || r6 || rm == 6 && xc[d5 - 1] & 1 || rm == (x2.s < 0 ? 8 : 7));
+            r6 = rm2 < 4 ? (i6 != null || r6) && (rm2 == 0 || rm2 == (x2.s < 0 ? 3 : 2)) : i6 > k5 || i6 == k5 && (rm2 == 4 || r6 || rm2 == 6 && xc[d5 - 1] & 1 || rm2 == (x2.s < 0 ? 8 : 7));
             if (d5 < 1 || !xc[0]) {
               str = r6 ? toFixedPoint(alphabet.charAt(1), -dp, alphabet.charAt(0)) : alphabet.charAt(0);
             } else {
@@ -90347,7 +90347,7 @@ var require_bignumber = __commonJS({
             }
             for (; !a5[0] && a5.length > 1; a5.splice(0, 1)) ;
           }
-          return function(x2, y, dp, rm, base) {
+          return function(x2, y, dp, rm2, base) {
             var cmp, e6, i6, more, n3, prod, prodL, q3, qc, rem, remL, rem0, xi, xL, yc0, yL, yz, s3 = x2.s == y.s ? 1 : -1, xc = x2.c, yc = y.c;
             if (!xc || !xc[0] || !yc || !yc[0]) {
               return new BigNumber2(
@@ -90444,7 +90444,7 @@ var require_bignumber = __commonJS({
             }
             if (base == BASE2) {
               for (i6 = 1, s3 = qc[0]; s3 >= 10; s3 /= 10, i6++) ;
-              round(q3, dp + (q3.e = i6 + e6 * LOG_BASE - 1) + 1, rm, more);
+              round(q3, dp + (q3.e = i6 + e6 * LOG_BASE - 1) + 1, rm2, more);
             } else {
               q3.e = e6;
               q3.r = +more;
@@ -90452,10 +90452,10 @@ var require_bignumber = __commonJS({
             return q3;
           };
         })();
-        function format2(n3, i6, rm, id) {
+        function format2(n3, i6, rm2, id) {
           var c0, e6, ne, len, str;
-          if (rm == null) rm = ROUNDING_MODE;
-          else intCheck(rm, 0, 8);
+          if (rm2 == null) rm2 = ROUNDING_MODE;
+          else intCheck(rm2, 0, 8);
           if (!n3.c) return n3.toString();
           c0 = n3.c[0];
           ne = n3.e;
@@ -90463,7 +90463,7 @@ var require_bignumber = __commonJS({
             str = coeffToString(n3.c);
             str = id == 1 || id == 2 && (ne <= TO_EXP_NEG || ne >= TO_EXP_POS) ? toExponential(str, ne) : toFixedPoint(str, ne, "0");
           } else {
-            n3 = round(new BigNumber2(n3), i6, rm);
+            n3 = round(new BigNumber2(n3), i6, rm2);
             e6 = n3.e;
             str = coeffToString(n3.c);
             len = str.length;
@@ -90536,7 +90536,7 @@ var require_bignumber = __commonJS({
             x2.c = x2.e = null;
           };
         })();
-        function round(x2, sd, rm, r6) {
+        function round(x2, sd, rm2, r6) {
           var d5, i6, j5, k5, n3, ni, rd, xc = x2.c, pows10 = POWS_TEN;
           if (xc) {
             out: {
@@ -90571,8 +90571,8 @@ var require_bignumber = __commonJS({
               // The expression  n % pows10[d - j - 1]  returns all digits of n to the right
               // of the digit at j, e.g. if n is 908714 and j is 2, the expression gives 714.
               xc[ni + 1] != null || (j5 < 0 ? n3 : n3 % pows10[d5 - j5 - 1]);
-              r6 = rm < 4 ? (rd || r6) && (rm == 0 || rm == (x2.s < 0 ? 3 : 2)) : rd > 5 || rd == 5 && (rm == 4 || r6 || rm == 6 && // Check whether the digit to the left of the rounding digit is odd.
-              (i6 > 0 ? j5 > 0 ? n3 / pows10[d5 - j5] : 0 : xc[ni - 1]) % 10 & 1 || rm == (x2.s < 0 ? 8 : 7));
+              r6 = rm2 < 4 ? (rd || r6) && (rm2 == 0 || rm2 == (x2.s < 0 ? 3 : 2)) : rd > 5 || rd == 5 && (rm2 == 4 || r6 || rm2 == 6 && // Check whether the digit to the left of the rounding digit is odd.
+              (i6 > 0 ? j5 > 0 ? n3 / pows10[d5 - j5] : 0 : xc[ni - 1]) % 10 & 1 || rm2 == (x2.s < 0 ? 8 : 7));
               if (sd < 1 || !xc[0]) {
                 xc.length = 0;
                 if (r6) {
@@ -90637,13 +90637,13 @@ var require_bignumber = __commonJS({
         P.comparedTo = function(y, b5) {
           return compare(this, new BigNumber2(y, b5));
         };
-        P.decimalPlaces = P.dp = function(dp, rm) {
+        P.decimalPlaces = P.dp = function(dp, rm2) {
           var c5, n3, v, x2 = this;
           if (dp != null) {
             intCheck(dp, 0, MAX);
-            if (rm == null) rm = ROUNDING_MODE;
-            else intCheck(rm, 0, 8);
-            return round(new BigNumber2(x2), dp + x2.e + 1, rm);
+            if (rm2 == null) rm2 = ROUNDING_MODE;
+            else intCheck(rm2, 0, 8);
+            return round(new BigNumber2(x2), dp + x2.e + 1, rm2);
           }
           if (!(c5 = x2.c)) return null;
           n3 = ((v = c5.length - 1) - bitFloor(this.e / LOG_BASE)) * LOG_BASE;
@@ -90726,11 +90726,11 @@ var require_bignumber = __commonJS({
           if (nIsNeg) y = ONE.div(y);
           return m4 ? y.mod(m4) : k5 ? round(y, POW_PRECISION, ROUNDING_MODE, more) : y;
         };
-        P.integerValue = function(rm) {
+        P.integerValue = function(rm2) {
           var n3 = new BigNumber2(this);
-          if (rm == null) rm = ROUNDING_MODE;
-          else intCheck(rm, 0, 8);
-          return round(n3, n3.e + 1, rm);
+          if (rm2 == null) rm2 = ROUNDING_MODE;
+          else intCheck(rm2, 0, 8);
+          return round(n3, n3.e + 1, rm2);
         };
         P.isEqualTo = P.eq = function(y, b5) {
           return compare(this, new BigNumber2(y, b5)) === 0;
@@ -90957,13 +90957,13 @@ var require_bignumber = __commonJS({
           }
           return normalise(y, xc, ye);
         };
-        P.precision = P.sd = function(sd, rm) {
+        P.precision = P.sd = function(sd, rm2) {
           var c5, n3, v, x2 = this;
           if (sd != null && sd !== !!sd) {
             intCheck(sd, 1, MAX);
-            if (rm == null) rm = ROUNDING_MODE;
-            else intCheck(rm, 0, 8);
-            return round(new BigNumber2(x2), sd, rm);
+            if (rm2 == null) rm2 = ROUNDING_MODE;
+            else intCheck(rm2, 0, 8);
+            return round(new BigNumber2(x2), sd, rm2);
           }
           if (!(c5 = x2.c)) return null;
           v = c5.length - 1;
@@ -91033,36 +91033,36 @@ var require_bignumber = __commonJS({
           }
           return round(r6, r6.e + DECIMAL_PLACES + 1, ROUNDING_MODE, m4);
         };
-        P.toExponential = function(dp, rm) {
+        P.toExponential = function(dp, rm2) {
           if (dp != null) {
             intCheck(dp, 0, MAX);
             dp++;
           }
-          return format2(this, dp, rm, 1);
+          return format2(this, dp, rm2, 1);
         };
-        P.toFixed = function(dp, rm) {
+        P.toFixed = function(dp, rm2) {
           if (dp != null) {
             intCheck(dp, 0, MAX);
             dp = dp + this.e + 1;
           }
-          return format2(this, dp, rm);
+          return format2(this, dp, rm2);
         };
-        P.toFormat = function(dp, rm, format3) {
+        P.toFormat = function(dp, rm2, format3) {
           var str, x2 = this;
           if (format3 == null) {
-            if (dp != null && rm && typeof rm == "object") {
-              format3 = rm;
-              rm = null;
+            if (dp != null && rm2 && typeof rm2 == "object") {
+              format3 = rm2;
+              rm2 = null;
             } else if (dp && typeof dp == "object") {
               format3 = dp;
-              dp = rm = null;
+              dp = rm2 = null;
             } else {
               format3 = FORMAT;
             }
           } else if (typeof format3 != "object") {
             throw Error(bignumberError + "Argument not an object: " + format3);
           }
-          str = x2.toFixed(dp, rm);
+          str = x2.toFixed(dp, rm2);
           if (x2.c) {
             var i6, arr = str.split("."), g1 = +format3.groupSize, g22 = +format3.secondaryGroupSize, groupSeparator = format3.groupSeparator || "", intPart = arr[0], fractionPart = arr[1], isNeg = x2.s < 0, intDigits = isNeg ? intPart.slice(1) : intPart, len = intDigits.length;
             if (g22) {
@@ -91130,9 +91130,9 @@ var require_bignumber = __commonJS({
         P.toNumber = function() {
           return +valueOf(this);
         };
-        P.toPrecision = function(sd, rm) {
+        P.toPrecision = function(sd, rm2) {
           if (sd != null) intCheck(sd, 1, MAX);
-          return format2(this, sd, rm, 2);
+          return format2(this, sd, rm2, 2);
         };
         P.toString = function(b5) {
           var str, n3 = this, s3 = n3.s, e6 = n3.e;
@@ -94933,7 +94933,7 @@ var require_getCredentials = __commonJS({
     var fs7 = __require("fs");
     var util_1 = __require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile5 = fs7.readFile ? (0, util_1.promisify)(fs7.readFile) : async () => {
+    var readFile6 = fs7.readFile ? (0, util_1.promisify)(fs7.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -94955,7 +94955,7 @@ var require_getCredentials = __commonJS({
        * @returns A promise that resolves with the credentials.
        */
       async getCredentials() {
-        const key = await readFile5(this.keyFilePath, "utf8");
+        const key = await readFile6(this.keyFilePath, "utf8");
         let body;
         try {
           body = JSON.parse(key);
@@ -94981,7 +94981,7 @@ var require_getCredentials = __commonJS({
        * @returns A promise that resolves with the private key.
        */
       async getCredentials() {
-        const privateKey = await readFile5(this.keyFilePath, "utf8");
+        const privateKey = await readFile6(this.keyFilePath, "utf8");
         return { privateKey };
       }
     };
@@ -96611,7 +96611,7 @@ var require_filesubjecttokensupplier = __commonJS({
     exports.FileSubjectTokenSupplier = void 0;
     var util_1 = __require("util");
     var fs7 = __require("fs");
-    var readFile5 = (0, util_1.promisify)(fs7.readFile ?? (() => {
+    var readFile6 = (0, util_1.promisify)(fs7.readFile ?? (() => {
     }));
     var realpath2 = (0, util_1.promisify)(fs7.realpath ?? (() => {
     }));
@@ -96651,7 +96651,7 @@ var require_filesubjecttokensupplier = __commonJS({
           throw err;
         }
         let subjectToken;
-        const rawText = await readFile5(parsedFilePath, { encoding: "utf8" });
+        const rawText = await readFile6(parsedFilePath, { encoding: "utf8" });
         if (this.formatType === "text") {
           subjectToken = rawText;
         } else if (this.formatType === "json" && this.subjectTokenFieldName) {
@@ -101808,7 +101808,7 @@ var require_websocket = __commonJS({
     var http4 = __require("http");
     var net4 = __require("net");
     var tls3 = __require("tls");
-    var { randomBytes: randomBytes2, createHash: createHash14 } = __require("crypto");
+    var { randomBytes: randomBytes3, createHash: createHash14 } = __require("crypto");
     var { Duplex, Readable: Readable8 } = __require("stream");
     var { URL: URL4 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -102359,7 +102359,7 @@ var require_websocket = __commonJS({
         }
       }
       const defaultPort = isSecure ? 443 : 80;
-      const key = randomBytes2(16).toString("base64");
+      const key = randomBytes3(16).toString("base64");
       const request = isSecure ? https2.request : http4.request;
       const protocolSet = /* @__PURE__ */ new Set();
       let perMessageDeflate;
@@ -129752,7 +129752,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.8.0",
+  version: "0.8.1",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -131350,6 +131350,7 @@ var LiveCatalogSession = class {
     this.version = 0;
     this.closed = false;
     this.retryAt = 0;
+    this.persistFailed = false;
     this.cache = new ProviderCache({ ttl, maxStale: Infinity, timeout, now });
     this.restore();
   }
@@ -131468,13 +131469,28 @@ var LiveCatalogSession = class {
         const result = await this.load(signal2);
         if (signal2.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
         const value = { ...result, version: 1, binding: this.binding, checkedAt: this.now() };
-        await this.persist(JSON.stringify(value), { signal: signal2 });
+        try {
+          await this.persist(JSON.stringify(value), { signal: signal2 });
+        } catch (error2) {
+          if (signal2.aborted || error2 instanceof ProviderReadError && error2.code === "aborted") throw new ProviderReadError("aborted");
+          const failed = new ProviderReadError("aborted");
+          failed.persistFailed = true;
+          throw failed;
+        }
         if (signal2.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
         return value;
       }, { force, signal });
       this.retryAt = 0;
+      this.persistFailed = false;
     } catch (error2) {
-      this.retryAt = this.cache.retryAt ?? this.now() + 6e4;
+      const network = error2 instanceof ProviderReadError && ["error", "rate-limited", "auth-required"].includes(error2.code);
+      if (error2?.persistFailed) {
+        this.persistFailed = true;
+        this.retryAt = 0;
+      } else if (network) {
+        this.persistFailed = false;
+        this.retryAt = this.cache.retryAt ?? this.now() + 6e4;
+      } else this.retryAt = 0;
       throw error2;
     } finally {
       if (!this.closed && this.isCurrent()) {
@@ -131512,7 +131528,7 @@ function liveCatalogProvider(session) {
     presentation() {
       const state3 = session.state();
       return { status: {
-        message: state3.error ? state3.checkedAt ? "catalogCachedAfterFailure" : "catalogInitialLoadFailed" : state3.skipped ? "catalogPartiallyUpdated" : state3.checkedAt ? "catalogUpdated" : "catalogUpdating",
+        message: session.persistFailed ? "catalogSaveFailed" : state3.error ? state3.checkedAt ? "catalogCachedAfterFailure" : "catalogInitialLoadFailed" : state3.skipped ? "catalogPartiallyUpdated" : state3.checkedAt ? "catalogUpdated" : "catalogUpdating",
         ...state3.checkedAt ? { detail: new Date(state3.checkedAt).toISOString() } : {}
       }, notes: ["catalogAutoUpdateHint"] };
     },
@@ -131566,8 +131582,8 @@ function validateHeaderRefs(value) {
 var ConnectionManager = class {
   constructor({ settings, credentials, registry: registry2, connectionSnapshot, validateProfile = () => {
   }, onChange = () => {
-  }, legacyProviders = () => ({}), extraConnections = async () => [] }) {
-    Object.assign(this, { settings, credentials, registry: registry2, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections });
+  }, legacyProviders = () => ({}), extraConnections = async () => [], catalogFiles }) {
+    Object.assign(this, { settings, credentials, registry: registry2, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections, catalogFiles });
     this.closed = false;
     this.pendingLogins = /* @__PURE__ */ new Set();
     this.pendingDeletes = /* @__PURE__ */ new Set();
@@ -131812,6 +131828,7 @@ var ConnectionManager = class {
     const token2 = this.registry.token();
     const section = this.writable(revision);
     const connection = this.lookup(connectionId2);
+    const previousBinding = catalogBinding(connection);
     if (this.pendingCredentialWrites.has(connectionId2) || this.pendingDeletes.has(connectionId2)) throw new ConnectionError("busy");
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new ConnectionError("invalid-request");
     const allowed = /* @__PURE__ */ new Set(["displayName", "enabled", "apiKey", "endpointUrl", "api", "headerRefs", "profile", "authMethod"]);
@@ -131896,6 +131913,8 @@ var ConnectionManager = class {
       await this.write({ ...this.raw(), [connectionId2]: connection }, staged ? this.section()?.revision : revision, [], token2);
     } finally {
       this.pendingCredentialWrites.delete(connectionId2);
+      const saved = this.raw()[connectionId2];
+      if (saved && catalogBinding(saved) !== previousBinding) await this.forgetCatalog(connectionId2);
     }
     if (connection.credentialCleanupIds?.length) await this.cleanupCredentials(connectionId2, this.section()?.revision);
     return { saved: true };
@@ -131977,6 +131996,7 @@ var ConnectionManager = class {
         connection.credentialGeneration++;
         delete connection.connectionId;
         await this.write({ ...this.raw(), [connectionId2]: connection }, revision, [], token2);
+        await this.forgetCatalog(connectionId2);
       }
       const current = () => {
         if (this.closed || !this.registry.isCurrent(token2)) throw new ConnectionError("profile-changed");
@@ -132001,6 +132021,7 @@ var ConnectionManager = class {
       const next = { ...this.raw() };
       delete next[connectionId2];
       await this.write(next, this.section()?.revision, [], token2);
+      await this.forgetCatalog(connectionId2);
       return { deleted: true };
     } finally {
       this.pendingDeletes.delete(connectionId2);
@@ -132017,21 +132038,76 @@ var ConnectionManager = class {
     delete connection.connectionId;
     await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token2);
   }
-  /** Compare the connection and endpoint again before the revision-checked write. */
+  /** Publish the catalog only while this connection and endpoint are still current. */
   async saveModelCatalog(binding, value, { signal } = {}) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      signal?.throwIfAborted();
-      if (!this.isCurrent(binding) || catalogBinding(binding) !== catalogBinding(this.lookup(binding.connectionId))) throw new ConnectionError("connection-changed");
-      const token2 = this.registry.token(), connection = this.lookup(binding.connectionId);
-      connection.modelCatalog = value;
-      delete connection.connectionId;
+    signal?.throwIfAborted();
+    if (!this.catalogFiles) throw new ConnectionError("invalid-request");
+    const current = () => {
       try {
-        await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token2);
-        return;
-      } catch (error2) {
-        if (error2.code !== "settings-changed" || attempt === 2) throw error2;
+        return this.isCurrent(binding) && catalogBinding(binding) === catalogBinding(this.lookup(binding.connectionId));
+      } catch {
+        return false;
+      }
+    };
+    if (!current()) throw new ConnectionError("connection-changed");
+    try {
+      await this.catalogFiles.write(binding.connectionId, value, { signal, commit: current });
+    } catch (error2) {
+      if (error2?.code === "connection-changed") throw new ConnectionError("connection-changed");
+      throw error2;
+    }
+    if (signal?.aborted || !current()) throw new ConnectionError("connection-changed");
+  }
+  async forgetCatalog(connectionId2) {
+    if (!this.catalogFiles) return;
+    await this.catalogFiles.remove(connectionId2).catch(() => {
+    });
+  }
+  /** Copy 0.8.0 settings catalogs to files. Safe inside an HMR transaction. */
+  copyLegacyCatalogs() {
+    if (!this.catalogFiles) return;
+    for (const [id, connection] of Object.entries(this.raw())) {
+      if (typeof connection.modelCatalog !== "string" || connection.modelCatalog.length > 8 * 1024 * 1024) continue;
+      try {
+        if (this.catalogFiles.readSync(id) === void 0) this.catalogFiles.writeSync(id, connection.modelCatalog);
+      } catch {
       }
     }
+  }
+  /** Remove 0.8.0 modelCatalog strings after the file copy. Call outside an HMR transaction. */
+  migrateModelCatalogs() {
+    if (this.closed || !this.catalogFiles) return Promise.resolve(false);
+    if (this.catalogMigration) return this.catalogMigration;
+    if (!Object.values(this.raw()).some((connection) => typeof connection.modelCatalog === "string")) return Promise.resolve(false);
+    this.catalogMigration = this.migrateModelCatalogsNow().finally(() => {
+      this.catalogMigration = void 0;
+    });
+    return this.catalogMigration;
+  }
+  async migrateModelCatalogsNow() {
+    for (const [id, connection] of Object.entries(this.raw())) {
+      if (typeof connection.modelCatalog !== "string" || connection.modelCatalog.length > 8 * 1024 * 1024) continue;
+      if (this.catalogFiles.readSync(id) === void 0) await this.catalogFiles.write(id, connection.modelCatalog);
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (this.closed) return false;
+      const section = this.section();
+      if (!section || section.writable === false) return false;
+      const current = this.raw();
+      if (!Object.values(current).some((connection) => connection.modelCatalog !== void 0)) return true;
+      const next = Object.fromEntries(Object.entries(current).map(([id, connection]) => {
+        const copy = { ...connection };
+        delete copy.modelCatalog;
+        return [id, copy];
+      }));
+      try {
+        await this.write(next, section.revision, [], this.registry.token());
+        return true;
+      } catch (error2) {
+        if (error2?.code !== "settings-changed" || attempt === 2) throw error2;
+      }
+    }
+    return false;
   }
   async beginLogin(connectionId2) {
     const token2 = this.registry.token();
@@ -132044,9 +132120,11 @@ var ConnectionManager = class {
       delete connection.museCatalog;
       delete connection.museCode;
     }
+    delete connection.modelCatalog;
     delete connection.connectionId;
     try {
       await this.write({ ...this.raw(), [connectionId2]: connection }, section?.revision, [], token2);
+      await this.forgetCatalog(connectionId2);
     } catch (error2) {
       this.pendingLogins.delete(connectionId2);
       throw error2;
@@ -132161,6 +132239,7 @@ function applyLoginUI(ctx, options = {}) {
           if (envelope?.type !== "client-request" || typeof envelope.rpcId !== "string" || envelope.rpcId.length > 100 || envelope.method !== endpoint) return new Response("invalid request", { status: 400 });
           rpcId = envelope.rpcId;
           request.signal.throwIfAborted();
+          if (options.connections?.migrateModelCatalogs) await options.connections.migrateModelCatalogs();
           let value;
           if (method.startsWith("update-")) {
             const payload2 = envelope.payload;
@@ -138176,6 +138255,83 @@ function metaCatalogProvider(session) {
   };
 }
 
+// src/catalog-files.mjs
+import { randomBytes as randomBytes2 } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdir as mkdir3, readFile as readFile5, rename as rename2, rm, unlink, writeFile as writeFile3 } from "node:fs/promises";
+import { join as join7 } from "node:path";
+var NAME3 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+var MAX_CATALOG_LENGTH = 8 * 1024 * 1024;
+var CatalogFiles = class {
+  constructor(dir) {
+    this.dir = dir;
+  }
+  file(id) {
+    if (typeof id !== "string" || !NAME3.test(id)) throw Object.assign(new Error("invalid-catalog"), { code: "invalid-catalog" });
+    return join7(this.dir, `catalog-${id}.json`);
+  }
+  readSync(id) {
+    try {
+      return readFileSync(this.file(id), "utf8");
+    } catch (error2) {
+      if (error2?.code === "ENOENT") return void 0;
+      throw error2;
+    }
+  }
+  async read(id) {
+    try {
+      return await readFile5(this.file(id), "utf8");
+    } catch (error2) {
+      if (error2?.code === "ENOENT") return void 0;
+      throw error2;
+    }
+  }
+  writeSync(id, value) {
+    const target = this.file(id);
+    assertCatalog(value);
+    mkdirSync(this.dir, { recursive: true, mode: 448 });
+    const temp = join7(this.dir, `.${id}.${randomBytes2(8).toString("hex")}.tmp`);
+    try {
+      writeFileSync(temp, value, { mode: 384, flag: "wx" });
+      renameSync(temp, target);
+    } catch (error2) {
+      try {
+        unlinkSync(temp);
+      } catch {
+      }
+      throw error2;
+    }
+  }
+  async write(id, value, { signal, commit } = {}) {
+    signal?.throwIfAborted();
+    const target = this.file(id);
+    assertCatalog(value);
+    await mkdir3(this.dir, { recursive: true, mode: 448 });
+    const temp = join7(this.dir, `.${id}.${randomBytes2(8).toString("hex")}.tmp`);
+    try {
+      await writeFile3(temp, value, { mode: 384, flag: "wx" });
+      signal?.throwIfAborted();
+      if (commit && !commit()) throw Object.assign(new Error("connection-changed"), { code: "connection-changed" });
+      await rename2(temp, target);
+    } catch (error2) {
+      await unlink(temp).catch(() => {
+      });
+      throw error2;
+    }
+  }
+  async remove(id) {
+    await rm(this.file(id), { force: true });
+  }
+};
+function assertCatalog(value) {
+  if (typeof value !== "string" || value.length > MAX_CATALOG_LENGTH) throw Object.assign(new Error("invalid-catalog"), { code: "invalid-catalog" });
+}
+
+// src/index.mjs
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join8 } from "node:path";
+
 // src/gateway-usage.mjs
 var finite = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
 var reset = (value) => {
@@ -138275,11 +138431,15 @@ function apply2(ctx, config, options = {}) {
       ctx.emit("dsh-pi-login/catalog-updated");
     }
   })) });
+  const profileDir = ctx.get("profileContext")?.dir;
+  const catalogDir = options.catalogDir ?? (profileDir ? join8(profileDir, ".dsh-pi-login") : mkdtempSync(join8(tmpdir(), "dsh-pi-login-catalog-")));
+  const catalogFiles = new CatalogFiles(catalogDir);
   const manager = new ConnectionManager({
     settings: ctx.settings,
     credentials: ctx.credentials,
     registry: registry2,
     legacyProviders,
+    catalogFiles,
     connectionSnapshot: () => config.connections.get(),
     validateProfile: (connection) => resolveConnectionProfiles({ check: connection }),
     onChange: (connectionId2) => {
@@ -138388,7 +138548,13 @@ function apply2(ctx, config, options = {}) {
       connection,
       baseline,
       credentials: authFor(connection).credentials,
-      snapshot: () => manager.lookup(id).modelCatalog,
+      snapshot: () => {
+        try {
+          return catalogFiles.readSync(id);
+        } catch {
+          return void 0;
+        }
+      },
       persist: (value, options2) => manager.saveModelCatalog(binding, value, options2),
       isCurrent: () => manager.isCurrent(binding) && catalogBinding(manager.lookup(id)) === catalogBinding(binding),
       onChange: () => {
@@ -138467,7 +138633,12 @@ function apply2(ctx, config, options = {}) {
       return modelChoices(provider, models, profile2, discovered).map((choice) => ({ ...choice, capabilityUnverified: choice.discovered && !choice.model[DISCOVERED_MODEL]?.verified }));
     }
   });
+  manager.copyLegacyCatalogs();
+  scheduleCatalogMigration(ctx, manager);
   let alive = true;
+  if (!profileDir && !options.catalogDir) ctx.effect(() => () => {
+    rmSync(catalogDir, { recursive: true, force: true });
+  }, "AI connections: temporary catalog files");
   ctx.effect(() => () => {
     alive = false;
     manager.dispose();
@@ -138485,6 +138656,17 @@ function apply2(ctx, config, options = {}) {
   }).catch(() => {
     if (alive) ctx.logger.warn("AI connections: migration did not complete; original settings and credentials remain available");
   });
+}
+function scheduleCatalogMigration(ctx, manager) {
+  const run = () => manager.migrateModelCatalogs().catch(() => {
+    ctx.logger?.warn("AI connections: model catalogs were copied to profile files, but the settings copy could not be removed");
+  });
+  const executing = ctx.get("hmr")?.executing;
+  if (executing?.getStore()) executing.exit(() => {
+    const timer = setTimeout(run, 0);
+    timer.unref?.();
+  });
+  else queueMicrotask(run);
 }
 export {
   Config,

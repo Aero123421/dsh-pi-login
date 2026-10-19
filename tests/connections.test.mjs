@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ConnectionManager, validateEndpoint } from '../src/connections.mjs'
+import { CatalogFiles } from '../src/catalog-files.mjs'
 import { IntegrationRegistry } from '../src/registry.mjs'
 import { createMuseCodeOwner } from '../src/muse-code-owner.mjs'
 
-function fixture(value = {}, initialRecords = {}) {
+function fixture(value = {}, initialRecords = {}, catalogFiles = new CatalogFiles(mkdtempSync(join(tmpdir(), 'dsh-pi-catalog-')))) {
   let revision = 0, current = { connections: {}, providers: {}, connectionMigrationVersion: 0, trustedEndpointOrigins: [], ...structuredClone(value) }
   const records = new Map(Object.entries(initialRecords).map(([key, record]) => [key, structuredClone(record)]))
   const mutations = [], writes = [], deletes = []
@@ -42,41 +46,68 @@ function fixture(value = {}, initialRecords = {}) {
       capabilities: { auth: true, models: true, usage: false, settings: true },
     })), listConnections: () => [],
   })
-  const manager = new ConnectionManager({ settings, credentials, registry })
-  return { manager, registry, records, mutations, writes, deletes, settings, credentials, get value() { return current }, get revision() { return revision }, set failWrite(value) { failWrite = value } }
+  const manager = new ConnectionManager({ settings, credentials, registry, catalogFiles })
+  return { manager, registry, records, mutations, writes, deletes, settings, credentials, catalogFiles, get value() { return current }, get revision() { return revision }, set failWrite(value) { failWrite = value } }
 }
 
-test('catalog persistence merges concurrent edits and survives restart, but rejects a changed account or endpoint', async () => {
+test('catalog persistence keeps a concurrent rename, survives restart, and rejects a changed account or endpoint', async () => {
   const f = fixture()
   const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'deepseek', authMethod: 'api-key', apiKey: 'fixture-original' }, f.revision)
   const binding = f.manager.binding(f.manager.lookup(connectionId))
-  const mutate = f.settings.mutate
-  let conflict = true
-  f.settings.mutate = async (...args) => {
-    if (conflict) {
-      conflict = false
-      await f.manager.update(connectionId, { displayName: 'Concurrent rename' }, f.revision)
-    }
-    return mutate(...args)
-  }
+  await f.manager.update(connectionId, { displayName: 'Concurrent rename' }, f.revision)
+  const writesBefore = f.mutations.length
   const snapshot = JSON.stringify({ version: 1, models: [{ id: 'new:1017' }] })
   await f.manager.saveModelCatalog(binding, snapshot)
+  assert.equal(f.mutations.length, writesBefore)
   assert.equal(f.value.connections[connectionId].displayName, 'Concurrent rename')
-  assert.equal(f.value.connections[connectionId].modelCatalog, snapshot)
-  const restarted = fixture(f.value, Object.fromEntries(f.records))
-  assert.equal(restarted.manager.lookup(connectionId).modelCatalog, snapshot)
+  assert.equal(f.value.connections[connectionId].modelCatalog, undefined)
+  assert.equal(f.catalogFiles.readSync(connectionId), snapshot)
+  const restarted = fixture(f.value, Object.fromEntries(f.records), f.catalogFiles)
+  assert.equal(restarted.catalogFiles.readSync(connectionId), snapshot)
+  assert.equal(restarted.manager.lookup(connectionId).modelCatalog, undefined)
   assert.equal(restarted.records.size, 1)
   const cloned = await f.manager.clone(connectionId, 'Clone', f.revision)
+  assert.equal(f.catalogFiles.readSync(cloned.connectionId), undefined)
   assert.equal(f.value.connections[cloned.connectionId].modelCatalog, undefined)
   const cancelled = new AbortController(); cancelled.abort()
   await assert.rejects(f.manager.saveModelCatalog(binding, 'cancelled', { signal: cancelled.signal }))
+  assert.equal(f.catalogFiles.readSync(connectionId), snapshot)
   await assert.rejects(f.manager.saveModelCatalog({ ...binding, profile: { baseURL: 'https://other.example/v1' } }, 'wrong-endpoint'), error => error.code === 'connection-changed')
   await f.manager.update(connectionId, { apiKey: 'fixture-rotated' }, f.revision)
+  assert.equal(f.catalogFiles.readSync(connectionId), undefined)
   await assert.rejects(f.manager.saveModelCatalog(binding, 'late-account-result'), error => error.code === 'connection-changed')
-  assert.notEqual(f.value.connections[connectionId].modelCatalog, 'late-account-result')
   await f.manager.delete(connectionId, f.revision)
   await assert.rejects(f.manager.saveModelCatalog(binding, 'late-deleted-result'))
   assert.equal(f.value.connections[connectionId], undefined)
+  assert.equal(f.catalogFiles.readSync(connectionId), undefined)
+})
+
+test('re-login removes the previous account catalog file', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'oauth', displayName: 'Login catalog' }, f.revision)
+  const binding = f.manager.binding(f.manager.lookup(connectionId))
+  const snapshot = JSON.stringify({ version: 1, models: [{ id: 'old-account' }] })
+  await f.manager.saveModelCatalog(binding, snapshot)
+  await f.manager.beginLogin(connectionId)
+  assert.equal(f.catalogFiles.readSync(connectionId), undefined)
+  assert.equal(f.value.connections[connectionId].modelCatalog, undefined)
+  assert.equal(f.value.connections[connectionId].credentialGeneration, 1)
+})
+
+test('an existing modelCatalog string is copied once and then removed from settings', async () => {
+  const snapshot = JSON.stringify({ version: 1, models: [{ id: 'from-0.8.0' }] })
+  const f = fixture({ connections: { 'c-legacy': {
+    integrationId: 'pi', serviceId: 'deepseek', routeId: 'c-legacy', displayName: 'Legacy', authMethod: 'api-key',
+    credentialRecordId: 'c-legacy', credentialGeneration: 0, enabled: true, profile: {}, modelCatalog: snapshot,
+  } } })
+  f.manager.copyLegacyCatalogs()
+  assert.equal(f.catalogFiles.readSync('c-legacy'), snapshot)
+  assert.equal(f.value.connections['c-legacy'].modelCatalog, snapshot)
+  assert.equal(await f.manager.migrateModelCatalogs(), true)
+  assert.equal(f.value.connections['c-legacy'].modelCatalog, undefined)
+  assert.equal(f.catalogFiles.readSync('c-legacy'), snapshot)
+  assert.equal(f.value.connections['c-legacy'].displayName, 'Legacy')
+  assert.equal(await f.manager.migrateModelCatalogs(), false)
 })
 
 test('one-time migration atomically retains old OAuth identity, history route, model/Fast/Thinking settings without copying secrets', async () => {

@@ -31,7 +31,7 @@ export class LiveCatalogSession {
     onChange = () => {}, fetch: request = (...args) => globalThis.fetch(...args), now = Date.now, ttl = HOUR, timeout = 30000, poll = true }) {
     Object.assign(this, { connection, baseline, credentials, snapshot, persist, isCurrent, onChange, fetch: request, now, ttl, poll })
     this.provider = connection.serviceId; this.binding = catalogBinding(connection)
-    this.version = 0; this.closed = false; this.retryAt = 0
+    this.version = 0; this.closed = false; this.retryAt = 0; this.persistFailed = false
     this.cache = new ProviderCache({ ttl, maxStale: Infinity, timeout, now })
     this.restore()
   }
@@ -136,13 +136,27 @@ export class LiveCatalogSession {
         const result = await this.load(signal)
         if (signal.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError('aborted')
         const value = { ...result, version: 1, binding: this.binding, checkedAt: this.now() }
-        await this.persist(JSON.stringify(value), { signal })
+        try { await this.persist(JSON.stringify(value), { signal }) }
+        catch (error) {
+          if (signal.aborted || error instanceof ProviderReadError && error.code === 'aborted') throw new ProviderReadError('aborted')
+          const failed = new ProviderReadError('aborted')
+          failed.persistFailed = true
+          throw failed
+        }
         if (signal.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError('aborted')
         return value
       }, { force, signal })
       this.retryAt = 0
+      this.persistFailed = false
     } catch (error) {
-      this.retryAt = this.cache.retryAt ?? this.now() + 60000
+      const network = error instanceof ProviderReadError && ['error', 'rate-limited', 'auth-required'].includes(error.code)
+      if (error?.persistFailed) {
+        this.persistFailed = true
+        this.retryAt = 0
+      } else if (network) {
+        this.persistFailed = false
+        this.retryAt = this.cache.retryAt ?? this.now() + 60000
+      } else this.retryAt = 0
       throw error
     } finally {
       if (!this.closed && this.isCurrent()) { this.version++; this.onChange() }
@@ -161,7 +175,7 @@ export function liveCatalogProvider(session) {
   return { session,
     presentation() {
       const state = session.state()
-      return { status: { message: state.error ? state.checkedAt ? 'catalogCachedAfterFailure' : 'catalogInitialLoadFailed' : state.skipped ? 'catalogPartiallyUpdated'
+      return { status: { message: session.persistFailed ? 'catalogSaveFailed' : state.error ? state.checkedAt ? 'catalogCachedAfterFailure' : 'catalogInitialLoadFailed' : state.skipped ? 'catalogPartiallyUpdated'
         : state.checkedAt ? 'catalogUpdated' : 'catalogUpdating',
       ...state.checkedAt ? { detail: new Date(state.checkedAt).toISOString() } : {} }, notes: ['catalogAutoUpdateHint'] }
     },

@@ -40,8 +40,8 @@ export function validateHeaderRefs(value) {
 
 /** Connection metadata and credential ownership; all public values are allowlisted. */
 export class ConnectionManager {
-  constructor({ settings, credentials, registry, connectionSnapshot, validateProfile = () => {}, onChange = () => {}, legacyProviders = () => ({}), extraConnections = async () => [] }) {
-    Object.assign(this, { settings, credentials, registry, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections })
+  constructor({ settings, credentials, registry, connectionSnapshot, validateProfile = () => {}, onChange = () => {}, legacyProviders = () => ({}), extraConnections = async () => [], catalogFiles }) {
+    Object.assign(this, { settings, credentials, registry, connectionSnapshot, validateProfile, onChange, legacyProviders, extraConnections, catalogFiles })
     this.closed = false
     this.pendingLogins = new Set()
     this.pendingDeletes = new Set()
@@ -243,6 +243,7 @@ export class ConnectionManager {
     const token = this.registry.token()
     const section = this.writable(revision)
     const connection = this.lookup(connectionId)
+    const previousBinding = catalogBinding(connection)
     if (this.pendingCredentialWrites.has(connectionId) || this.pendingDeletes.has(connectionId)) throw new ConnectionError('busy')
     if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new ConnectionError('invalid-request')
     const allowed = new Set(['displayName', 'enabled', 'apiKey', 'endpointUrl', 'api', 'headerRefs', 'profile', 'authMethod'])
@@ -315,6 +316,8 @@ export class ConnectionManager {
       await this.write({ ...this.raw(), [connectionId]: connection }, staged ? this.section()?.revision : revision, [], token)
     } finally {
       this.pendingCredentialWrites.delete(connectionId)
+      const saved = this.raw()[connectionId]
+      if (saved && catalogBinding(saved) !== previousBinding) await this.forgetCatalog(connectionId)
     }
     if (connection.credentialCleanupIds?.length) await this.cleanupCredentials(connectionId, this.section()?.revision)
     return { saved: true }
@@ -377,6 +380,7 @@ export class ConnectionManager {
         connection.credentialGeneration++
         delete connection.connectionId
         await this.write({ ...this.raw(), [connectionId]: connection }, revision, [], token)
+        await this.forgetCatalog(connectionId)
       }
       const current = () => {
         if (this.closed || !this.registry.isCurrent(token)) throw new ConnectionError('profile-changed')
@@ -405,6 +409,7 @@ export class ConnectionManager {
       // checks the revision atomically if another writer wins from here.
       const next = { ...this.raw() }; delete next[connectionId]
       await this.write(next, this.section()?.revision, [], token)
+      await this.forgetCatalog(connectionId)
       return { deleted: true }
     } finally {
       this.pendingDeletes.delete(connectionId)
@@ -421,17 +426,64 @@ export class ConnectionManager {
     delete connection.connectionId
     await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token)
   }
-  /** Compare the connection and endpoint again before the revision-checked write. */
+  /** Publish the catalog only while this connection and endpoint are still current. */
   async saveModelCatalog(binding, value, { signal } = {}) {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      signal?.throwIfAborted()
-      if (!this.isCurrent(binding) || catalogBinding(binding) !== catalogBinding(this.lookup(binding.connectionId))) throw new ConnectionError('connection-changed')
-      const token = this.registry.token(), connection = this.lookup(binding.connectionId)
-      connection.modelCatalog = value
-      delete connection.connectionId
-      try { await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token); return }
-      catch (error) { if (error.code !== 'settings-changed' || attempt === 2) throw error }
+    signal?.throwIfAborted()
+    if (!this.catalogFiles) throw new ConnectionError('invalid-request')
+    const current = () => {
+      try { return this.isCurrent(binding) && catalogBinding(binding) === catalogBinding(this.lookup(binding.connectionId)) }
+      catch { return false }
     }
+    if (!current()) throw new ConnectionError('connection-changed')
+    try {
+      await this.catalogFiles.write(binding.connectionId, value, { signal, commit: current })
+    } catch (error) {
+      if (error?.code === 'connection-changed') throw new ConnectionError('connection-changed')
+      throw error
+    }
+    if (signal?.aborted || !current()) throw new ConnectionError('connection-changed')
+  }
+  async forgetCatalog(connectionId) {
+    if (!this.catalogFiles) return
+    await this.catalogFiles.remove(connectionId).catch(() => {})
+  }
+  /** Copy 0.8.0 settings catalogs to files. Safe inside an HMR transaction. */
+  copyLegacyCatalogs() {
+    if (!this.catalogFiles) return
+    for (const [id, connection] of Object.entries(this.raw())) {
+      if (typeof connection.modelCatalog !== 'string' || connection.modelCatalog.length > 8 * 1024 * 1024) continue
+      try { if (this.catalogFiles.readSync(id) === undefined) this.catalogFiles.writeSync(id, connection.modelCatalog) }
+      catch { /* The settings copy remains until migration can write the file. */ }
+    }
+  }
+  /** Remove 0.8.0 modelCatalog strings after the file copy. Call outside an HMR transaction. */
+  migrateModelCatalogs() {
+    if (this.closed || !this.catalogFiles) return Promise.resolve(false)
+    if (this.catalogMigration) return this.catalogMigration
+    if (!Object.values(this.raw()).some(connection => typeof connection.modelCatalog === 'string')) return Promise.resolve(false)
+    this.catalogMigration = this.migrateModelCatalogsNow().finally(() => { this.catalogMigration = undefined })
+    return this.catalogMigration
+  }
+  async migrateModelCatalogsNow() {
+    for (const [id, connection] of Object.entries(this.raw())) {
+      if (typeof connection.modelCatalog !== 'string' || connection.modelCatalog.length > 8 * 1024 * 1024) continue
+      if (this.catalogFiles.readSync(id) === undefined) await this.catalogFiles.write(id, connection.modelCatalog)
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (this.closed) return false
+      const section = this.section()
+      if (!section || section.writable === false) return false
+      const current = this.raw()
+      if (!Object.values(current).some(connection => connection.modelCatalog !== undefined)) return true
+      const next = Object.fromEntries(Object.entries(current).map(([id, connection]) => {
+        const copy = { ...connection }
+        delete copy.modelCatalog
+        return [id, copy]
+      }))
+      try { await this.write(next, section.revision, [], this.registry.token()); return true }
+      catch (error) { if (error?.code !== 'settings-changed' || attempt === 2) throw error }
+    }
+    return false
   }
   async beginLogin(connectionId) {
     const token = this.registry.token()
@@ -447,8 +499,13 @@ export class ConnectionManager {
       delete connection.museCatalog
       delete connection.museCode
     }
+    // The settings string and the profile file both describe the previous account.
+    delete connection.modelCatalog
     delete connection.connectionId
-    try { await this.write({ ...this.raw(), [connectionId]: connection }, section?.revision, [], token) }
+    try {
+      await this.write({ ...this.raw(), [connectionId]: connection }, section?.revision, [], token)
+      await this.forgetCatalog(connectionId)
+    }
     catch (error) { this.pendingLogins.delete(connectionId); throw error }
     return this.lookup(connectionId)
   }
