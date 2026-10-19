@@ -17,6 +17,8 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: git diff --exit-code --stat -- dist
+      - name: Fail when published source or dist calls addLanguage
+        run: '! rg -n "addLanguage" src dist'
       - run: npm test
       - run: npm run test:peers
       - run: npm run test:compat
