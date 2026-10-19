@@ -148,6 +148,10 @@ export function apply(ctx, config, options = {}) {
       refresh: (connection, _record, signal) => refreshAuth(connection, signal),
     },
   })
+  // profiles() inside applyRuntime opens live catalog sessions immediately.
+  // Copy 0.8.0 settings catalogs to files first. A session opened against a
+  // missing file starts a network refresh and replaces the migrated catalog.
+  manager.copyLegacyCatalogs()
   const runtime = applyRuntime(ctx, config, {
     connections: () => config.connections.get(), authForProfile: profile => authFor(profile),
     catalog: (provider, id) => id ? catalogsFor(manager.lookup(id)).catalog(provider) : legacyCatalogs.catalog(provider), revision: () => revision,
@@ -186,7 +190,6 @@ export function apply(ctx, config, options = {}) {
       return modelChoices(provider, models, profile, discovered).map(choice => ({ ...choice, capabilityUnverified: choice.discovered && !choice.model[DISCOVERED_MODEL]?.verified }))
     },
   })
-  manager.copyLegacyCatalogs()
   scheduleCatalogMigration(ctx, manager)
   let alive = true
   if (!profileDir && !options.catalogDir) ctx.effect(() => () => { rmSync(catalogDir, { recursive: true, force: true }) }, 'AI connections: temporary catalog files')

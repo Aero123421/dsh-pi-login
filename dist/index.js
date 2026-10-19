@@ -138586,6 +138586,7 @@ function apply2(ctx, config, options = {}) {
       refresh: (connection, _record, signal) => refreshAuth(connection, signal)
     }
   });
+  manager.copyLegacyCatalogs();
   const runtime = apply(ctx, config, {
     connections: () => config.connections.get(),
     authForProfile: (profile2) => authFor(profile2),
@@ -138633,7 +138634,6 @@ function apply2(ctx, config, options = {}) {
       return modelChoices(provider, models, profile2, discovered).map((choice) => ({ ...choice, capabilityUnverified: choice.discovered && !choice.model[DISCOVERED_MODEL]?.verified }));
     }
   });
-  manager.copyLegacyCatalogs();
   scheduleCatalogMigration(ctx, manager);
   let alive = true;
   if (!profileDir && !options.catalogDir) ctx.effect(() => () => {
