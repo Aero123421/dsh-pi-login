@@ -26,6 +26,8 @@ const services = [
  { serviceId: 'openai-codex', label: 'OpenAI Codex', methods: [{ id: 'oauth', label: 'OAuth' }, { id: 'api-key', label: 'API key' }], capabilities },
  { serviceId: 'meta', label: 'Meta Model API（Pi経由）', methods: [{ id: 'oauth', label: 'OAuth' }], capabilities },
  { serviceId: 'example', label: 'Example API', apis: ['openai-completions', 'openai-responses'], methods: [{ id: 'api-key', label: 'API key' }], capabilities },
+ ...[['commandcode', 'CommandCode'], ['ollama-cloud', 'Ollama Cloud'], ['opencode', 'OpenCode Zen'], ['opencode-go', 'OpenCode Go']]
+   .map(([serviceId, label]) => ({ serviceId, label, methods: [{ id: 'api-key', label: 'API key' }], capabilities })),
 ]
 const registry = new IntegrationRegistry('browser-profile')
 registry.register({ integrationId: 'pi', label: 'Pi', source: 'internal', listServices: () => services, listConnections: () => [] })
@@ -90,6 +92,7 @@ ctx.authorization.registerFlow({ key: 'llm-pi-ai/openai-codex', label: 'OpenAI C
 const model = getBuiltinModels('openai-codex').find(model => model.id === 'gpt-6.1-sol')
 const fast = fastModelId(model.id)
 let metaRefreshed = false, metaRefreshFails = false, exampleRefreshed = false, museLoaded = false, usageCalls = 0, usageStatus = 'available', usageRetryAt = '2099-01-01T00:00:00.000Z'
+let exampleCatalogMessage
 const full = 'muse-wonder-full-1.0'
 const catalogs = new host.ProviderCatalogs({
  meta: {
@@ -97,7 +100,8 @@ const catalogs = new host.ProviderCatalogs({
   presentation: () => ({ ...(metaRefreshed ? { status: { message: 'metaSubscriptionActive', detail: 'Maximum Usage' } } : {}), notes: ['metaReloadHint'] }),
   errorCodes: { 'fixture-key-override': 'catalog-key-override' }, errors: { 'catalog-key-override': 'metaKeyOverride' },
  },
- example: { session: { refresh: async () => { exampleRefreshed = true } } },
+ example: { session: { refresh: async () => { exampleRefreshed = true } },
+  presentation: () => exampleCatalogMessage ? { status: { message: exampleCatalogMessage } } : {} },
  'muse-code': { session: { refresh: async () => { museLoaded = true } }, presentation: () => ({ notes: museLoaded ? [] : ['museCatalogEmpty'] }) },
 })
 const plugin = ctx.plugin({ inject: ['authorization', 'credentials', 'connection', 'settings'], apply: ctx => host.applyLoginUI(ctx, {
@@ -167,6 +171,17 @@ try {
  assert.ok(page.url().startsWith(base)); assert.equal(await page.title(), 'Pi login test fixture')
  await page.getByRole('heading', { name: 'AI接続', exact: true }).waitFor()
  await page.getByText('個人Pro', { exact: true }).waitFor()
+ for (const [category, labels] of [['CommandCode', ['CommandCode']], ['Ollama Cloud', ['Ollama Cloud']], ['OpenCode', ['OpenCode Zen', 'OpenCode Go']]]) {
+   await page.getByRole('button', { name: category, exact: true }).click()
+   assert.equal(await page.getByText('個人Pro', { exact: true }).count(), 0)
+   await page.getByText('このカテゴリには接続がありません。「接続を追加」から設定してください。', { exact: true }).waitFor()
+   await page.getByRole('button', { name: '接続を追加', exact: true }).click()
+   await page.getByRole('button', { name: 'サービス', exact: true }).click()
+   assert.deepEqual(await page.getByRole('menuitem').allTextContents(), labels)
+   await page.keyboard.press('Escape')
+   await page.getByRole('dialog').getByRole('button', { name: '閉じる', exact: true }).last().click()
+ }
+ await page.getByRole('button', { name: 'Pi', exact: true }).click()
  const connectionRow = name => page.locator('.dsh-pi-connection-row').filter({ has: page.getByRole('button', { name: `接続設定: ${name}`, exact: true }) })
  await connectionRow('会社API').getByText('APIキー · 保存済み・未確認', { exact: true }).waitFor()
  await page.screenshot({ path: artifact('saved-unverified.png') })
@@ -206,10 +221,43 @@ try {
    await page.screenshot({ path: artifact(`connections-${width}-${theme}.png`), fullPage: true })
   }
  }
+ // The real mobile Host leaves only about 106px beside its settings sidebar.
+ await page.locator('.dsh-pi-footer').evaluate(element => { element.style.width = '106px' })
+ const narrowRows = await page.locator('.dsh-pi-connection-row').evaluateAll(rows => rows.map(row => {
+  const bounds = row.getBoundingClientRect()
+  return {
+   direction: getComputedStyle(row).flexDirection,
+   mainWidth: row.querySelector('.dsh-pi-row-main').getBoundingClientRect().width,
+   actionsFit: [...row.querySelectorAll('.dsh-pi-row-actions button')].every(button => {
+    const action = button.getBoundingClientRect()
+    return action.left >= bounds.left && action.right <= bounds.right
+   }),
+  }
+ }))
+ assert.ok(narrowRows.length > 0)
+ assert.ok(narrowRows.every(row => row.direction === 'column' && row.mainWidth >= 70 && row.actionsFit), JSON.stringify(narrowRows))
+ await page.screenshot({ path: artifact('connections-narrow-slot.png'), fullPage: true })
+ await page.locator('.dsh-pi-footer').evaluate(element => { element.style.removeProperty('width') })
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
  await page.setViewportSize({ width: 1000, height: 900 })
  const settingsButton = name => page.getByRole('button', { name: `接続設定: ${name}`, exact: true })
  const modelsButton = name => page.getByRole('button', { name: `モデルを管理: ${name}`, exact: true })
+ // An automatic Host read can finish without forwarding an LLM topology event.
+ // The open dialog must observe both completion and failure without reopening.
+ exampleCatalogMessage = 'catalogUpdating'
+ await modelsButton('検証API').click()
+ await page.getByText('最新のモデル一覧を確認しています…', { exact: true }).waitFor()
+ exampleRefreshed = true; exampleCatalogMessage = 'catalogUpdated'
+ await page.getByRole('switch', { name: 'モデルを使う: Example New', exact: true }).waitFor()
+ await page.getByText('モデル一覧を更新しました', { exact: true }).waitFor()
+ await page.keyboard.press('Escape')
+ exampleRefreshed = false; exampleCatalogMessage = 'catalogUpdating'
+ await modelsButton('検証API').click()
+ await page.getByText('最新のモデル一覧を確認しています…', { exact: true }).waitFor()
+ exampleCatalogMessage = 'catalogInitialLoadFailed'
+ await page.getByText('最新のモデル一覧を取得できませんでした。「モデル一覧を更新」で再試行してください。', { exact: true }).waitFor()
+ await page.keyboard.press('Escape')
+ exampleCatalogMessage = undefined
  const row = name => page.locator('.dsh-pi-connection-row').filter({ has: settingsButton(name) })
  // A signed-out OAuth row offers sign-in directly; signing in turns the connection on.
  await row('個人Pro').getByRole('button', { name: 'ログイン', exact: true }).click()
@@ -307,6 +355,7 @@ try {
  assert.deepEqual(settingsValue.connections['c-personal'].profile, beforeResetModels)
  await page.unroute('**/api/dsh-pi-login/models', holdModelRead)
  // Refresh retains a prior catalog on a provider failure.
+ await page.getByRole('button', { name: 'Meta', exact: true }).click()
  await modelsButton('Muse個人').click()
  await page.getByRole('button', { name: 'モデル一覧を更新', exact: true }).click()
  await page.getByText('Muse契約は有効です · Maximum Usage', { exact: true }).waitFor()
@@ -322,6 +371,7 @@ try {
  assert.equal(await page.getByText('private-provider-detail', { exact: true }).count(), 0)
  await page.keyboard.press('Escape')
  // API credentials are write-only; create, rename, duplicate and confirm deletion.
+ await page.getByRole('button', { name: 'Pi', exact: true }).click()
  await page.getByRole('button', { name: '接続を追加', exact: true }).click()
  await page.getByRole('button', { name: 'サービス', exact: true }).click()
  await page.getByRole('menuitem', { name: 'Example API', exact: true }).click()
@@ -456,6 +506,7 @@ try {
  await page.getByText('この接続先はホストで許可されていません。ホストの許可リストに追加してから保存してください。', { exact: true }).waitFor()
  await page.keyboard.press('Escape')
  // Muse Code signs in with Meta's device code and lists its own catalog.
+ await page.getByRole('button', { name: 'Meta', exact: true }).click()
  assert.equal(await modelsButton('Muse Code個人').count(), 0)
  await row('Muse Code個人').getByRole('button', { name: 'ログイン', exact: true }).click()
  await page.getByRole('link', { name: 'ブラウザで続ける', exact: true }).waitFor()
@@ -517,6 +568,7 @@ try {
  await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
  await page.setViewportSize({ width: 1000, height: 900 })
  // A stale Delete confirmation must retain the account the user reviewed.
+ await page.getByRole('button', { name: 'Pi', exact: true }).click()
  // Reauthentication in another tab keeps the same profile and connection id.
  await settingsButton('個人Pro').click()
  await page.getByRole('button', { name: '接続を削除', exact: true }).click()

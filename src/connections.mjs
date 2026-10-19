@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import { RegistryError, newConnectionId, routeForConnection } from './registry.mjs'
 import { sdkServiceOf } from './sdk-service.mjs'
+import { catalogBinding } from './live-catalog.mjs'
 
 const NS = 'dsh-pi-login'
 const RECORD_SCOPE = 'llm-pi-ai'
@@ -326,7 +327,7 @@ export class ConnectionManager {
     const owner = this.registry.owner(original.integrationId)
     const copy = { ...original, routeId: original.integrationId === 'pi' ? routeForConnection(id) : owner.routeIdFor(id), credentialRecordId: id, credentialGeneration: 0,
       displayName: text(displayName ?? `${original.displayName} (copy)`), enabled: false }
-    delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute; delete copy.museCatalog; delete copy.credentialCleanupIds
+    delete copy.connectionId; delete copy.credentialRef; delete copy.headerRefs; delete copy.legacyRoute; delete copy.museCatalog; delete copy.modelCatalog; delete copy.credentialCleanupIds
     delete copy.profile.apiKeyEnv; delete copy.profile.headers
     await this.write({ ...this.raw(), [id]: copy }, revision, [], token)
     return { saved: true, connectionId: id }
@@ -419,6 +420,18 @@ export class ConnectionManager {
     delete connection.museCode
     delete connection.connectionId
     await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token)
+  }
+  /** Compare the connection and endpoint again before the revision-checked write. */
+  async saveModelCatalog(binding, value, { signal } = {}) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      signal?.throwIfAborted()
+      if (!this.isCurrent(binding) || catalogBinding(binding) !== catalogBinding(this.lookup(binding.connectionId))) throw new ConnectionError('connection-changed')
+      const token = this.registry.token(), connection = this.lookup(binding.connectionId)
+      connection.modelCatalog = value
+      delete connection.connectionId
+      try { await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token); return }
+      catch (error) { if (error.code !== 'settings-changed' || attempt === 2) throw error }
+    }
   }
   async beginLogin(connectionId) {
     const token = this.registry.token()

@@ -5,6 +5,7 @@ import { UpdateController } from './update-controller.mjs'
 import { createModelEditor } from './model-snapshot.mjs'
 import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
 import { en, ja } from './locales.mjs'
+import { SERVICE_GROUPS, serviceGroup } from './service-groups.mjs'
 import css from './styles.css'
 
 const NS = 'dsh.piLogin'
@@ -145,12 +146,14 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
 
 function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
   const [controller] = useState(() => sourceController.scoped(entry))
+  const connectionState = useSyncExternalStore(sourceController.subscribe, sourceController.getSnapshot)
   const editorRef = useRef()
   const [snapshot, setSnapshot] = useState()
   const [search, setSearch] = useState('')
   const [pending, setPending] = useState(() => new Set())
   const [reloading, setReloading] = useState(false)
   const [error, setError] = useState(false)
+  const [readError, setReadError] = useState(false)
   const [refreshError, setRefreshError] = useState('')
   const [uncertain, setUncertain] = useState(false)
   const refreshAbort = useRef()
@@ -159,27 +162,45 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
   useEffect(() => {
     const editor = createModelEditor()
     editorRef.current = editor
-    const abort = new AbortController()
-    const gate = editor.beginReload()
-    void controller.call('models', { connectionId: entry.connectionId }, abort.signal).then(value => {
-      if (abort.signal.aborted || !gate.accept(value)) return
-      setSnapshot(editor.project(value))
-    }, () => { if (!abort.signal.aborted) setError(true) })
     return () => {
       lifetime.current.abort()
       lifetime.current = new AbortController()
-      abort.abort()
       refreshAbort.current?.abort()
       editor.invalidate()
       setPending(new Set())
     }
   }, [entry.connectionId])
+  useEffect(() => {
+    if (reloading || pending.size > 0) return
+    const editor = editorRef.current
+    const abort = new AbortController()
+    let timer
+    // Host catalog failures need not change the LLM directory, so they do not
+    // always produce a forwarded event. Read cached state only while open.
+    async function read() {
+      if (abort.signal.aborted || refreshAbort.current) return
+      const gate = editor.beginReload()
+      let delay = 15000
+      try {
+        const value = await controller.call('models', { connectionId: entry.connectionId }, abort.signal)
+        if (abort.signal.aborted || !gate.accept(value)) return
+        setSnapshot(editor.project(value)); setReadError(false)
+        if (value.refresh?.status?.message === 'catalogUpdating') delay = 1000
+      } catch {
+        if (!abort.signal.aborted && gate.current()) setReadError(true)
+      } finally {
+        if (!abort.signal.aborted) timer = setTimeout(read, delay)
+      }
+    }
+    void read()
+    return () => { abort.abort(); clearTimeout(timer) }
+  }, [entry.connectionId, connectionState, reloading, pending.size])
   async function reload(refresh = true) {
     const editor = editorRef.current
     const gate = editor.beginReload()
     refreshAbort.current?.abort()
     const abort = new AbortController(); refreshAbort.current = abort
-    setReloading(true); setRefreshError(''); setError(false)
+    setReloading(true); setRefreshError(''); setError(false); setReadError(false)
     try {
       const next = await controller.call(refresh ? 'refresh-models' : 'models', { connectionId: entry.connectionId }, abort.signal)
       if (!abort.signal.aborted && gate.accept(next)) { setSnapshot(editor.project(next)); setUncertain(false) }
@@ -188,7 +209,10 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
         const code = String(error.code ?? error.message).split('/').pop()
         setRefreshError(snapshot?.refresh?.errors?.[code] ?? 'catalogRefreshFailed')
       }
-    } finally { if (!abort.signal.aborted && gate.current()) setReloading(false) }
+    } finally {
+      if (refreshAbort.current === abort) refreshAbort.current = undefined
+      if (!abort.signal.aborted && gate.current()) setReloading(false)
+    }
   }
   // Each switch saves on its own; writes are serialized so every one uses the latest revision.
   // A catalog response that started before the save, or that is older than the
@@ -244,12 +268,12 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
     className="dsh-pi-login dsh-pi-dialog dsh-pi-models-dialog" contentClassName="dsh-pi-modal-content" footer={<Button variant="outline" disabled={saving} onClick={close}>{t('close')}</Button>}>
     {snapshot && snapshot.models.length > 8 ? <Input icon={<IconSearchOutlineRegular size={16} />} aria-label={t('searchModels')} placeholder={t('searchModels')} data-modal-autofocus value={search} onChange={event => setSearch(event.target.value)} /> : null}
     <div className="dsh-pi-toolbar dsh-pi-models-toolbar">
-      {snapshot ? <span className="dsh-pi-muted">{t('modelsOn').replace('{count}', String(count))}</span> : <span role="status">{error ? '' : t('loading')}</span>}
+      {snapshot ? <span className="dsh-pi-muted">{t('modelsOn').replace('{count}', String(count))}</span> : <span role="status">{error || readError ? '' : t('loading')}</span>}
       {snapshot?.refresh?.canRefresh && snapshot.models.length ? <Button variant="ghost" size="sm" disabled={reloading || !entry.writable} onClick={() => { void reload() }}>{t(reloading ? 'loading' : 'reloadModels')}</Button> : null}
     </div>
     {snapshot?.refresh?.status ? <p role="status" className="dsh-pi-muted">{t(snapshot.refresh.status.message)}{snapshot.refresh.status.detail ? ` · ${snapshot.refresh.status.detail}` : ''}</p> : null}
     {refreshError ? <p role="alert">{t(refreshError)}</p> : null}
-    {error || uncertain ? <p role="alert">{t(uncertain ? 'modelsStateUnknown' : snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
+    {error || readError || uncertain ? <p role="alert">{t(uncertain ? 'modelsStateUnknown' : error && snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
     {uncertain ? <Button variant="outline" size="sm" disabled={reloading || saving} onClick={() => { void reload(false) }}>{t('modelsReconcile')}</Button> : null}
     {snapshot && !snapshot.models.length && snapshot.refresh?.canRefresh ? <div className="dsh-pi-empty-models">
       {(snapshot.refresh.notes ?? []).map(note => <p key={note} className="dsh-pi-muted">{t(note)}</p>)}
@@ -264,7 +288,7 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
           {model.capabilityUnverified ? <span className="dsh-pi-muted">{t('capabilitiesUnknown')}</span> : null}</div>
         <Switch label={`${t('modelEnabled')}: ${model.name}`} checked={model.enabled} disabled={uncertain || pending.has(model.id) || !entry.writable} onChange={enabled => toggle(model.id, enabled)} />
       </div>)}
-      {models?.length === 0 ? <p className="dsh-pi-muted">{t('noResults')}</p> : null}
+      {models?.length === 0 ? <p className="dsh-pi-muted">{t(snapshot.models.length ? 'noResults' : 'emptyModelCatalog')}</p> : null}
     </div>
   </Modal>
 }
@@ -311,6 +335,7 @@ export function UpdateUI({ controller, t }) {
 }
 
 function usageWindow(window, t) {
+  if (['included', 'purchased', 'balance'].includes(window.id)) return t(`usageBalance_${window.id}`)
   const seconds = window.windowSeconds
   if (seconds && seconds % 86400 === 0) return `${seconds / 86400} ${t('days')}`
   if (seconds && seconds % 3600 === 0) return `${seconds / 3600} ${t('hours')}`
@@ -578,12 +603,14 @@ export function ConnectionUI({ controller, updates, locale }) {
   const [search, setSearch] = useState('')
   const [opened, setOpened] = useState()
   const [notice, setNotice] = useState('')
+  const [category, setCategory] = useState('pi')
   const titleId = useId()
   useEffect(() => { const release = controller.retain(); void controller.load(); return release }, [controller])
   useEffect(() => { setOpened(undefined); setNotice('') }, [state.profileKey, state.generation])
   const needle = search.trim().toLocaleLowerCase()
   const groups = new Map()
   for (const entry of state.entries) {
+    if (serviceGroup(entry) !== category) continue
     if (!`${entry.displayName} ${entry.integrationLabel} ${entry.serviceLabel}`.toLocaleLowerCase().includes(needle)) continue
     const key = `${entry.integrationId}/${entry.serviceId}`
     if (!groups.has(key)) groups.set(key, { label: entry.serviceLabel ?? entry.integrationLabel, entries: [] })
@@ -593,9 +620,15 @@ export function ConnectionUI({ controller, updates, locale }) {
   function onLogin(entry) { setNotice(''); setOpened({ kind: 'login', entry, method: entry.authMethod }) }
   function onModels(entry) { setOpened({ kind: 'models', entry: controller.getSnapshot().entries.find(item => item.connectionId === entry.connectionId) ?? entry }) }
   function onSaved(action) { setOpened(undefined); setNotice(action === 'delete' ? 'deleted' : action === 'clone' ? 'cloned' : action && action !== 'cleanup' ? action : 'saved') }
+  const availableServices = state.services.filter(service => serviceGroup(service) === category)
+  const categories = [...SERVICE_GROUPS, ...state.entries.some(entry => serviceGroup(entry) === 'external') ? [{ id: 'external', label: t('externalGroup') }] : []]
   return <section className="dsh-pi-login dsh-pi-footer" aria-labelledby={titleId}>
     <div className="dsh-pi-toolbar"><h3 id={titleId}>{t('title')}</h3>
-      <Button variant="outline" size="sm" onClick={() => { setNotice(''); setOpened({ kind: 'add' }) }} disabled={state.status !== 'ready' || state.services.length === 0}>{t('addConnection')}</Button></div>
+      <Button variant="outline" size="sm" onClick={() => { setNotice(''); setOpened({ kind: 'add' }) }} disabled={state.status !== 'ready' || availableServices.length === 0}>{t('addConnection')}</Button></div>
+    <nav className="dsh-pi-categories" aria-label={t('serviceGroups')}>
+      {categories.map(item => <Button key={item.id} size="sm" variant={category === item.id ? 'primary' : 'outline'} aria-pressed={category === item.id}
+        onClick={() => { setCategory(item.id); setSearch(''); setNotice(''); setOpened(undefined) }}>{item.label}</Button>)}
+    </nav>
     {notice ? <p role={['saved', 'deleted', 'cloned'].includes(notice) ? 'status' : 'alert'} className={['saved', 'deleted', 'cloned'].includes(notice) ? 'dsh-pi-success' : undefined}>{t(notice)}</p> : null}
     {state.error ? <p role="alert">{t('loadFailed')} <Button size="sm" onClick={() => { void controller.refresh() }}>{t('retry')}</Button></p> : null}
     {state.status === 'loading' && state.entries.length === 0 ? <p role="status" className="dsh-pi-loading">{t('loading')}</p> : null}
@@ -605,11 +638,11 @@ export function ConnectionUI({ controller, updates, locale }) {
       <ul className="dsh-pi-connection-list">{group.entries.map(entry => <ConnectionRow key={entry.connectionId} entry={entry} controller={controller} t={t} writableRevision={state.revision}
         onOpen={entry => { setNotice(''); setOpened({ kind: 'settings', entry }) }} onLogin={onLogin} onModels={onModels} />)}</ul>
     </div>)}
-    {state.status === 'ready' && groups.size === 0 && !state.error ? <p className="dsh-pi-muted">{t(state.entries.length ? 'noResults' : 'emptyConnections')}</p> : null}
+    {state.status === 'ready' && groups.size === 0 && !state.error ? <p className="dsh-pi-muted">{t(needle ? 'noMatchingConnections' : 'emptyCategoryConnections')}</p> : null}
     {updates ? <UpdateUI controller={updates} t={t} /> : null}
     {opened?.kind === 'login' ? <LoginDialog {...opened} controller={controller} t={t} onClose={close} onModels={onModels} /> : null}
     {opened?.kind === 'models' ? <ModelsDialog key={opened.entry.connectionId} entry={opened.entry} controller={controller} t={t} onClose={close} /> : null}
-    {opened?.kind === 'add' ? <AddDialog state={state} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
+    {opened?.kind === 'add' ? <AddDialog state={{ ...state, services: availableServices }} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
     {opened?.kind === 'settings' ? <ConnectionDialog key={opened.entry.connectionId} entry={opened.entry} state={state} controller={controller} t={t} onClose={close} onLogin={onLogin} onSaved={onSaved} /> : null}
   </section>
 }

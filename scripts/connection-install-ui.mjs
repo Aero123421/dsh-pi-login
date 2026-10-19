@@ -116,6 +116,7 @@ export async function checkConnectionControls(page, { mode, artifacts }) {
     }
     await page.getByRole('button', { name: 'Models', exact: true }).click()
     await page.getByRole('heading', { name: 'AI connections', exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Meta', exact: true }).click()
     const name = 'Restart Muse fixture'
     const manage = page.getByRole('button', { name: `Manage connection: ${name}`, exact: true })
     await manage.waitFor()

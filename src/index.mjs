@@ -18,6 +18,8 @@ import { DISCOVERED_MODEL } from './catalog-metadata.mjs'
 import { DEFAULT_INPUT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './runtime/config.ts'
 import { modelChoices } from './runtime/fast.ts'
 import { listPiServices } from './runtime/provider.ts'
+import { LiveCatalogSession, liveCatalogProvider, canUseLiveCatalog, catalogBinding } from './live-catalog.mjs'
+import { gatewayUsageProviders } from './gateway-usage.mjs'
 export { Config, applyLoginUI }
 export { IntegrationRegistry, ConnectionManager, connectionAuthFrom, resolveConnectionProfiles }
 export { createMuseCodeOwner }
@@ -62,7 +64,7 @@ export function apply(ctx, config, options = {}) {
   registry.register(external.descriptor)
   // Optional bundle-local integrations explicitly opt in; never inspect their config or credentials.
   ctx.on('dsh-pi-login/register-integration', (owner, ownRegistration) => registry.register(owner, ownRegistration))
-  const sessionIdentity = connection => JSON.stringify([connection.serviceId, connection.authMethod, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api, hasChatGPTCredentialOverride({ ...connection.profile, credentialRef: connection.credentialRef, headerRefs: connection.headerRefs })])
+  const sessionIdentity = connection => JSON.stringify([catalogBinding(connection), connection.authMethod, connection.profile?.models])
   // Credentials address the SDK provider; currency still checks the stored connection.
   const authFor = connection => {
     const binding = manager.binding(connection)
@@ -114,13 +116,23 @@ export function apply(ctx, config, options = {}) {
       },
       baseline: catalogModels, onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
     }) : undefined
-    const catalogs = new ProviderCatalogs(meta ? { meta: metaCatalogProvider(meta) } : {})
-    sessions.set(id, { identity, catalogs, meta })
+    const baseline = catalogModels(connection.serviceId)
+    const binding = manager.binding(connection)
+    const live = !meta && canUseLiveCatalog(connection, baseline) ? new LiveCatalogSession({
+      connection, baseline, credentials: authFor(connection).credentials,
+      snapshot: () => manager.lookup(id).modelCatalog,
+      persist: (value, options) => manager.saveModelCatalog(binding, value, options),
+      isCurrent: () => manager.isCurrent(binding) && catalogBinding(manager.lookup(id)) === catalogBinding(binding),
+      onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
+    }) : undefined
+    const catalogs = new ProviderCatalogs(meta ? { meta: metaCatalogProvider(meta) } : live ? { [connection.serviceId]: liveCatalogProvider(live) } : {})
+    sessions.set(id, { identity, catalogs, meta, live })
     return catalogs
   }
   const usage = new AccountUsageManager({
     providers: {
       ...createPiUsageProviders({ metaSession: connection => { catalogsFor(connection); return sessions.get(connection.connectionId).meta } }),
+      ...gatewayUsageProviders(),
       [`${MUSE_CODE_INTEGRATION_ID}/muse-code`]: { source: 'internal-http',
         read: ({ connection, signal, force }) => { catalogsFor(connection); return sessions.get(connection.connectionId).muse.usage({ signal, force }) } },
     },

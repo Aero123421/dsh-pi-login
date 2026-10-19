@@ -282,6 +282,8 @@ export interface Connection {
   museCode?: { contributorMode?: boolean, modelId?: string }
   /** Last Muse Code account catalog, so its models survive a restart. */
   museCatalog?: MuseCatalogRow[]
+  /** Versioned, validated model metadata cache; contains no credentials. */
+  modelCatalog?: string
 }
 
 /** One persisted Muse Code catalog entry; no account data or credentials. */
@@ -453,6 +455,7 @@ export const Config = z.object({
     enabled: z.boolean().default(true), deletionPending: z.boolean(), legacyRoute: z.boolean(),
     integrationLabel: z.string(), serviceLabel: z.string(), profile,
     museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
+    modelCatalog: z.string(),
     museCatalog: z.array(z.object({
       id: z.string().required(), name: z.string().required(),
       contextWindow: z.natural().required(), maxTokens: z.natural().required(),

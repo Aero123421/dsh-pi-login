@@ -4055,8 +4055,8 @@ var init_isValidHostLabel = __esm({
         return VALID_HOST_LABEL_REGEX.test(value);
       }
       const labels = value.split(".");
-      for (const label4 of labels) {
-        if (!isValidHostLabel(label4)) {
+      for (const label5 of labels) {
+        if (!isValidHostLabel(label5)) {
           return false;
         }
       }
@@ -5323,11 +5323,11 @@ function schemaLogFilter(schema, data) {
       return SENSITIVE_STRING;
     }
   } else if (ns.isStructSchema() && typeof data === "object") {
-    const object2 = data;
+    const object3 = data;
     const newObject = {};
     for (const [member2, memberNs] of ns.structIterator()) {
-      if (object2[member2] != null) {
-        newObject[member2] = schemaLogFilter(memberNs, object2[member2]);
+      if (object3[member2] != null) {
+        newObject[member2] = schemaLogFilter(memberNs, object3[member2]);
       }
     }
     return newObject;
@@ -6704,13 +6704,13 @@ var init_lazy_json = __esm({
       });
       return str;
     };
-    LazyJsonString.from = (object2) => {
-      if (object2 && typeof object2 === "object" && (object2 instanceof LazyJsonString || "deserializeJSON" in object2)) {
-        return object2;
-      } else if (typeof object2 === "string" || Object.getPrototypeOf(object2) === String.prototype) {
-        return LazyJsonString(String(object2));
+    LazyJsonString.from = (object3) => {
+      if (object3 && typeof object3 === "object" && (object3 instanceof LazyJsonString || "deserializeJSON" in object3)) {
+        return object3;
+      } else if (typeof object3 === "string" || Object.getPrototypeOf(object3) === String.prototype) {
+        return LazyJsonString(String(object3));
       }
-      return LazyJsonString(JSON.stringify(object2));
+      return LazyJsonString(JSON.stringify(object3));
     };
     LazyJsonString.fromObject = LazyJsonString.from;
   }
@@ -6929,12 +6929,12 @@ var init_NumericValue = __esm({
       toString() {
         return this.string;
       }
-      static [Symbol.hasInstance](object2) {
-        if (!object2 || typeof object2 !== "object") {
+      static [Symbol.hasInstance](object3) {
+        if (!object3 || typeof object3 !== "object") {
           return false;
         }
-        const _nv = object2;
-        return _NumericValue.prototype.isPrototypeOf(object2) || _nv.type === "bigDecimal" && format.test(_nv.string);
+        const _nv = object3;
+        return _NumericValue.prototype.isPrototypeOf(object3) || _nv.type === "bigDecimal" && format.test(_nv.string);
       }
     };
   }
@@ -7338,14 +7338,14 @@ var init_getProfileName = __esm({
 });
 
 // node_modules/@smithy/core/dist-es/submodules/config/shared-ini-file-loader/getSSOTokenFilepath.js
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { join as join2 } from "node:path";
 var getSSOTokenFilepath;
 var init_getSSOTokenFilepath = __esm({
   "node_modules/@smithy/core/dist-es/submodules/config/shared-ini-file-loader/getSSOTokenFilepath.js"() {
     init_getHomeDir();
     getSSOTokenFilepath = (id) => {
-      const hasher = createHash3("sha1");
+      const hasher = createHash4("sha1");
       const cacheName = hasher.update(id).digest("hex");
       return join2(getHomeDir(), ".aws", "sso", "cache", `${cacheName}.json`);
     };
@@ -9543,7 +9543,7 @@ var init_serdePlugin = __esm({
 });
 
 // node_modules/@smithy/core/dist-es/submodules/serde/hash-node/hash-node.js
-import { createHash as createHash4, createHmac } from "node:crypto";
+import { createHash as createHash5, createHmac } from "node:crypto";
 function castSourceData(toCast, encoding) {
   if (Buffer.isBuffer(toCast)) {
     return toCast;
@@ -9577,7 +9577,7 @@ var init_hash_node = __esm({
         return Promise.resolve(this.hash.digest());
       }
       reset() {
-        this.hash = this.secret ? createHmac(this.algorithmIdentifier, castSourceData(this.secret)) : createHash4(this.algorithmIdentifier);
+        this.hash = this.secret ? createHmac(this.algorithmIdentifier, castSourceData(this.secret)) : createHash5(this.algorithmIdentifier);
       }
     };
   }
@@ -10796,11 +10796,11 @@ var init_Md5Js = __esm({
 });
 
 // node_modules/@smithy/core/dist-es/submodules/checksum/md5/Md5Node.js
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 function buildNativeClass() {
   return class Md5Node {
     digestLength = 16;
-    hash = createHash5("md5");
+    hash = createHash6("md5");
     update(data) {
       this.hash.update(toUint8Array(data));
     }
@@ -10809,7 +10809,7 @@ function buildNativeClass() {
       return new Uint8Array(buf2.buffer, buf2.byteOffset, buf2.byteLength);
     }
     reset() {
-      this.hash = createHash5("md5");
+      this.hash = createHash6("md5");
     }
   };
 }
@@ -10820,7 +10820,7 @@ var init_Md5Node = __esm({
     init_Md5Js();
     hasNativeCrypto = (() => {
       try {
-        createHash5("md5");
+        createHash6("md5");
         return true;
       } catch {
         return false;
@@ -11137,7 +11137,7 @@ var init_Sha256Js = __esm({
 });
 
 // node_modules/@smithy/core/dist-es/submodules/checksum/sha256/Sha256Node.js
-import { createHash as createHash6, createHmac as createHmac2 } from "node:crypto";
+import { createHash as createHash7, createHmac as createHmac2 } from "node:crypto";
 function buildNativeClass3() {
   return class Sha256Node {
     digestLength = 32;
@@ -11171,7 +11171,7 @@ function buildNativeClass3() {
       this.finished = false;
     }
     createHash() {
-      return this.secret ? createHmac2("sha256", toBuffer(this.secret)) : createHash6("sha256");
+      return this.secret ? createHmac2("sha256", toBuffer(this.secret)) : createHash7("sha256");
     }
   };
 }
@@ -11190,7 +11190,7 @@ var init_Sha256Node = __esm({
     init_Sha256Js();
     hasNativeCrypto2 = (() => {
       try {
-        createHash6("sha256");
+        createHash7("sha256");
         return true;
       } catch {
         return false;
@@ -16863,8 +16863,8 @@ var init_isVirtualHostableS3Bucket = __esm({
     init_isIpAddress2();
     isVirtualHostableS3Bucket = (value, allowSubDomains = false) => {
       if (allowSubDomains) {
-        for (const label4 of value.split(".")) {
-          if (!isVirtualHostableS3Bucket(label4)) {
+        for (const label5 of value.split(".")) {
+          if (!isVirtualHostableS3Bucket(label5)) {
             return false;
           }
         }
@@ -22296,7 +22296,7 @@ var init_parseJsonBody = __esm({
       value.message = value.message ?? value.Message;
       return value;
     };
-    findKey = (object2, key) => Object.keys(object2).find((k5) => k5.toLowerCase() === key.toLowerCase());
+    findKey = (object3, key) => Object.keys(object3).find((k5) => k5.toLowerCase() === key.toLowerCase());
     sanitizeErrorCode = (rawValue) => {
       let cleanValue = rawValue;
       if (typeof cleanValue === "number") {
@@ -29494,7 +29494,7 @@ var require_dist_cjs14 = __commonJS({
     var { setCredentialFeature: setCredentialFeature2 } = (init_client3(), __toCommonJS(client_exports2));
     var { CredentialsProviderError: CredentialsProviderError2, parseKnownFiles: parseKnownFiles2, getProfileName: getProfileName2 } = (init_config2(), __toCommonJS(config_exports));
     var { HttpRequest: HttpRequest2 } = (init_protocols(), __toCommonJS(protocols_exports));
-    var { createHash: createHash13, createPrivateKey, createPublicKey, sign: sign2 } = __require("node:crypto");
+    var { createHash: createHash14, createPrivateKey, createPublicKey, sign: sign2 } = __require("node:crypto");
     var { promises } = __require("node:fs");
     var { homedir: homedir3 } = __require("node:os");
     var { dirname: dirname2, join: join7 } = __require("node:path");
@@ -29663,7 +29663,7 @@ var require_dist_cjs14 = __commonJS({
       getTokenFilePath() {
         const directory = process.env.AWS_LOGIN_CACHE_DIRECTORY ?? join7(homedir3(), ".aws", "login", "cache");
         const loginSessionBytes = Buffer.from(this.loginSession, "utf8");
-        const loginSessionSha256 = createHash13("sha256").update(loginSessionBytes).digest("hex");
+        const loginSessionSha256 = createHash14("sha256").update(loginSessionBytes).digest("hex");
         return join7(directory, `${loginSessionSha256}.json`);
       }
       derToRawSignature(derSignature) {
@@ -39385,13 +39385,13 @@ var init_utils4 = __esm({
 function is_non_nullish_primitive(v) {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean" || typeof v === "symbol" || typeof v === "bigint";
 }
-function inner_stringify(object2, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder2, filter, sort, allowDots, serializeDate, format2, formatter, encodeValuesOnly, charset, sideChannel) {
-  let obj = object2;
+function inner_stringify(object3, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder2, filter, sort, allowDots, serializeDate, format2, formatter, encodeValuesOnly, charset, sideChannel) {
+  let obj = object3;
   let tmp_sc = sideChannel;
   let step = 0;
   let find_flag = false;
   while ((tmp_sc = tmp_sc.get(sentinel)) !== void 0 && !find_flag) {
-    const pos2 = tmp_sc.get(object2);
+    const pos2 = tmp_sc.get(object3);
     step += 1;
     if (pos2 !== void 0) {
       if (pos2 === step) {
@@ -39477,7 +39477,7 @@ function inner_stringify(object2, prefix, generateArrayPrefix, commaRoundTrip, a
     } else {
       key_prefix = adjusted_prefix + (allowDots ? "." + encoded_key : "[" + encoded_key + "]");
     }
-    sideChannel.set(object2, step);
+    sideChannel.set(object3, step);
     const valueSideChannel = new WeakMap([[sentinel, sideChannel]]);
     push_to_array(values, inner_stringify(
       value,
@@ -39570,8 +39570,8 @@ function normalize_stringify_options(opts = defaults) {
     strictNullHandling: typeof opts.strictNullHandling === "boolean" ? opts.strictNullHandling : defaults.strictNullHandling
   };
 }
-function stringify(object2, opts = {}) {
-  let obj = object2;
+function stringify(object3, opts = {}) {
+  let obj = object3;
   const options = normalize_stringify_options(opts);
   let obj_keys;
   let filter;
@@ -59778,13 +59778,13 @@ var init_utils6 = __esm({
 function is_non_nullish_primitive2(v) {
   return typeof v === "string" || typeof v === "number" || typeof v === "boolean" || typeof v === "symbol" || typeof v === "bigint";
 }
-function inner_stringify2(object2, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder2, filter, sort, allowDots, serializeDate, format2, formatter, encodeValuesOnly, charset, sideChannel) {
-  let obj = object2;
+function inner_stringify2(object3, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder2, filter, sort, allowDots, serializeDate, format2, formatter, encodeValuesOnly, charset, sideChannel) {
+  let obj = object3;
   let tmp_sc = sideChannel;
   let step = 0;
   let find_flag = false;
   while ((tmp_sc = tmp_sc.get(sentinel2)) !== void 0 && !find_flag) {
-    const pos2 = tmp_sc.get(object2);
+    const pos2 = tmp_sc.get(object3);
     step += 1;
     if (typeof pos2 !== "undefined") {
       if (pos2 === step) {
@@ -59860,7 +59860,7 @@ function inner_stringify2(object2, prefix, generateArrayPrefix, commaRoundTrip, 
     }
     const encoded_key = allowDots && encodeDotInKeys ? key.replace(/\./g, "%2E") : key;
     const key_prefix = isArray2(obj) ? typeof generateArrayPrefix === "function" ? generateArrayPrefix(adjusted_prefix, encoded_key) : adjusted_prefix : adjusted_prefix + (allowDots ? "." + encoded_key : "[" + encoded_key + "]");
-    sideChannel.set(object2, step);
+    sideChannel.set(object3, step);
     const valueSideChannel = /* @__PURE__ */ new WeakMap();
     valueSideChannel.set(sentinel2, sideChannel);
     push_to_array3(values, inner_stringify2(
@@ -59949,8 +59949,8 @@ function normalize_stringify_options2(opts = defaults2) {
     strictNullHandling: typeof opts.strictNullHandling === "boolean" ? opts.strictNullHandling : defaults2.strictNullHandling
   };
 }
-function stringify2(object2, opts = {}) {
-  let obj = object2;
+function stringify2(object3, opts = {}) {
+  let obj = object3;
   const options = normalize_stringify_options2(opts);
   let obj_keys;
   let filter;
@@ -79820,17 +79820,17 @@ function truncateHttpBody(body) {
   const trimmed = body.trim();
   return trimmed.length > 512 ? `${trimmed.slice(0, 512)}\u2026` : trimmed;
 }
-async function loadRadiusGatewayConfig(gateway, apiKey, signal) {
+async function loadRadiusGatewayConfig(gateway2, apiKey, signal) {
   const headers = { accept: "application/json" };
   if (apiKey)
     headers.authorization = `Bearer ${apiKey}`;
-  const response = await fetch(new URL("/v1/config", gateway), { headers, signal });
+  const response = await fetch(new URL("/v1/config", gateway2), { headers, signal });
   if (!response.ok) {
-    throw new Error(`Could not load Radius config from ${gateway}: ${response.status}: ${truncateHttpBody(await response.text())}`);
+    throw new Error(`Could not load Radius config from ${gateway2}: ${response.status}: ${truncateHttpBody(await response.text())}`);
   }
   const config = sanitizeRadiusGatewayConfig(await response.json());
   if (!config)
-    throw new Error(`Invalid Radius config from ${gateway}`);
+    throw new Error(`Invalid Radius config from ${gateway2}`);
   return config;
 }
 var DEFAULT_RADIUS_GATEWAY;
@@ -79845,17 +79845,17 @@ var radius_exports = {};
 __export(radius_exports, {
   createRadiusOAuth: () => createRadiusOAuth
 });
-async function loadRadiusOAuthDiscovery(gateway, signal) {
-  const response = await fetch(new URL("/v1/oauth", gateway), {
+async function loadRadiusOAuthDiscovery(gateway2, signal) {
+  const response = await fetch(new URL("/v1/oauth", gateway2), {
     headers: { accept: "application/json" },
     signal
   });
   if (!response.ok) {
-    throw new Error(`Could not load Radius OAuth config from ${gateway}: ${response.status} ${await response.text()}`);
+    throw new Error(`Could not load Radius OAuth config from ${gateway2}: ${response.status} ${await response.text()}`);
   }
   const discovery = await response.json();
   if (typeof discovery.authorizationEndpoint !== "string") {
-    throw new Error(`Invalid Radius OAuth config from ${gateway}`);
+    throw new Error(`Invalid Radius OAuth config from ${gateway2}`);
   }
   return { authorizationEndpoint: discovery.authorizationEndpoint };
 }
@@ -79874,10 +79874,10 @@ async function readOAuthResponseError(response, message) {
   }
   return new OAuthResponseError(response.status, oauthError, description, message);
 }
-async function requestOAuthToken(gateway, body, signal) {
+async function requestOAuthToken(gateway2, body, signal) {
   let response;
   try {
-    response = await fetch(new URL("/v1/oauth/token", gateway), {
+    response = await fetch(new URL("/v1/oauth/token", gateway2), {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
       body,
@@ -79901,7 +79901,7 @@ async function requestOAuthToken(gateway, body, signal) {
     scope: data.scope
   };
 }
-async function loginWithBrowser(gateway, authorizationEndpoint, interaction) {
+async function loginWithBrowser(gateway2, authorizationEndpoint, interaction) {
   const { verifier, challenge } = await generatePKCE();
   const state3 = crypto.randomUUID();
   const authorizeUrl = new URL(authorizationEndpoint);
@@ -79921,7 +79921,7 @@ async function loginWithBrowser(gateway, authorizationEndpoint, interaction) {
     port: CALLBACK_PORT3,
     path: CALLBACK_PATH3,
     state: state3,
-    complete: (code) => requestOAuthToken(gateway, new URLSearchParams({
+    complete: (code) => requestOAuthToken(gateway2, new URLSearchParams({
       grant_type: "authorization_code",
       client_id: OAUTH_CLIENT_ID,
       redirect_uri: REDIRECT_URI4,
@@ -79945,10 +79945,10 @@ async function loginWithBrowser(gateway, authorizationEndpoint, interaction) {
     callback.close();
   }
 }
-async function requestDeviceAuthorization(gateway, signal) {
+async function requestDeviceAuthorization(gateway2, signal) {
   let response;
   try {
-    response = await fetch(new URL("/v1/oauth/device", gateway), {
+    response = await fetch(new URL("/v1/oauth/device", gateway2), {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ client_id: OAUTH_CLIENT_ID, scope: OAUTH_SCOPE }),
@@ -79975,8 +79975,8 @@ async function requestDeviceAuthorization(gateway, signal) {
     interval: data.interval
   };
 }
-async function loginWithDeviceCode(gateway, interaction) {
-  const device = await requestDeviceAuthorization(gateway, interaction.signal);
+async function loginWithDeviceCode(gateway2, interaction) {
+  const device = await requestDeviceAuthorization(gateway2, interaction.signal);
   interaction.notify({
     type: "device_code",
     userCode: device.user_code,
@@ -79990,7 +79990,7 @@ async function loginWithDeviceCode(gateway, interaction) {
     signal: interaction.signal,
     poll: async () => {
       try {
-        const credentials = await requestOAuthToken(gateway, new URLSearchParams({
+        const credentials = await requestOAuthToken(gateway2, new URLSearchParams({
           grant_type: OAUTH_DEVICE_CODE_GRANT_TYPE,
           client_id: OAUTH_CLIENT_ID,
           device_code: device.device_code
@@ -80017,7 +80017,7 @@ async function loginWithDeviceCode(gateway, interaction) {
   });
 }
 function createRadiusOAuth(options) {
-  const gateway = normalizeRadiusGatewayUrl(options.gateway);
+  const gateway2 = normalizeRadiusGatewayUrl(options.gateway);
   return {
     name: options.name,
     async login(interaction) {
@@ -80033,16 +80033,16 @@ function createRadiusOAuth(options) {
         ]
       });
       if (loginMethod === LOGIN_METHOD_DEVICE_CODE) {
-        return loginWithDeviceCode(gateway, interaction);
+        return loginWithDeviceCode(gateway2, interaction);
       }
       if (loginMethod === LOGIN_METHOD_BROWSER) {
-        const discovery = await loadRadiusOAuthDiscovery(gateway, interaction.signal);
-        return loginWithBrowser(gateway, discovery.authorizationEndpoint, interaction);
+        const discovery = await loadRadiusOAuthDiscovery(gateway2, interaction.signal);
+        return loginWithBrowser(gateway2, discovery.authorizationEndpoint, interaction);
       }
       throw new Error(`Unknown ${options.name} sign-in method: ${loginMethod}`);
     },
     async refresh(credential, signal) {
-      const refreshed = await requestOAuthToken(gateway, new URLSearchParams({
+      const refreshed = await requestOAuthToken(gateway2, new URLSearchParams({
         grant_type: "refresh_token",
         client_id: OAUTH_CLIENT_ID,
         refresh_token: credential.refresh
@@ -81306,8 +81306,8 @@ Check your ChatGPT usage: ${CHATGPT_USAGE_URL}` : errorMessage2;
 });
 
 // node_modules/@earendil-works/pi-ai/dist/api/classifier-shared.js
-function httpError(label4, response, body) {
-  const error2 = new Error(`${label4} returned ${response.status}`);
+function httpError(label5, response, body) {
+  const error2 = new Error(`${label5} returned ${response.status}`);
   error2.status = response.status;
   error2.headers = response.headers;
   error2.body = body;
@@ -81324,16 +81324,16 @@ function timeoutError(timeoutMs) {
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function requiredNumber(label4, value, field) {
+function requiredNumber(label5, value, field) {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${label4} returned an invalid ${field}`);
+    throw new Error(`${label5} returned an invalid ${field}`);
   }
   return value;
 }
 function requestHeaders(model, apiKey, optionsHeaders) {
   return providerHeadersToRecord({ authorization: `Bearer ${apiKey}`, "content-type": "application/json" }, model.headers, optionsHeaders) ?? {};
 }
-async function postClassifierRequest(label4, url, model, body, options, noRetryStatuses) {
+async function postClassifierRequest(label5, url, model, body, options, noRetryStatuses) {
   if (!options?.apiKey)
     throw new Error(`No API key for provider: ${model.provider}`);
   const apiKey = options.apiKey;
@@ -81353,7 +81353,7 @@ async function postClassifierRequest(label4, url, model, body, options, noRetryS
         signal
       });
       if (!next.ok)
-        throw httpError(label4, next, await next.text());
+        throw httpError(label5, next, await next.text());
       return { response: next, json: await next.json() };
     } catch (error2) {
       if (timeoutSignal?.aborted && !options.signal?.aborted)
@@ -81397,54 +81397,54 @@ var init_classifier_shared = __esm({
 });
 
 // node_modules/@earendil-works/pi-ai/dist/api/system-one-shared.js
-function probabilities(label4, value, id) {
+function probabilities(label5, value, id) {
   if (!isRecord(value))
-    throw new Error(`${label4} returned invalid probabilities for ${id}`);
+    throw new Error(`${label5} returned invalid probabilities for ${id}`);
   return Object.fromEntries(Object.entries(value).map(([key, probability]) => [
     key,
-    requiredNumber(label4, probability, `probability for ${id}.${key}`)
+    requiredNumber(label5, probability, `probability for ${id}.${key}`)
   ]));
 }
-function parseAnswers(label4, value, context) {
+function parseAnswers(label5, value, context) {
   if (!isRecord(value))
-    throw new Error(`${label4} returned an unexpected response`);
+    throw new Error(`${label5} returned an unexpected response`);
   const answers = [];
   for (const [id, question] of Object.entries(context.questions)) {
     const answer = value[id];
     if (!isRecord(answer))
-      throw new Error(`${label4} did not return an answer for ${id}`);
+      throw new Error(`${label5} did not return an answer for ${id}`);
     if (question.type === "choice") {
       if (answer.type !== "choice" || typeof answer.choice !== "string") {
-        throw new Error(`${label4} did not return a choice answer for ${id}`);
+        throw new Error(`${label5} did not return a choice answer for ${id}`);
       }
       answers.push([
         id,
         {
           type: "choice",
           choice: answer.choice,
-          probabilities: probabilities(label4, answer.probabilities, id),
-          confidence: requiredNumber(label4, answer.confidence, `confidence for ${id}`)
+          probabilities: probabilities(label5, answer.probabilities, id),
+          confidence: requiredNumber(label5, answer.confidence, `confidence for ${id}`)
         }
       ]);
     } else if (question.type === "score") {
       if (answer.type !== "score")
-        throw new Error(`${label4} did not return a score answer for ${id}`);
+        throw new Error(`${label5} did not return a score answer for ${id}`);
       answers.push([
         id,
         {
           type: "score",
-          score: requiredNumber(label4, answer.score, `score for ${id}`),
-          confidence: requiredNumber(label4, answer.confidence, `confidence for ${id}`)
+          score: requiredNumber(label5, answer.score, `score for ${id}`),
+          confidence: requiredNumber(label5, answer.confidence, `confidence for ${id}`)
         }
       ]);
     } else {
       if (answer.type !== "noul")
-        throw new Error(`${label4} did not return a bool answer for ${id}`);
+        throw new Error(`${label5} did not return a bool answer for ${id}`);
       answers.push([
         id,
         {
           type: "bool",
-          probability: requiredNumber(label4, answer.noul, `probability for ${id}`)
+          probability: requiredNumber(label5, answer.noul, `probability for ${id}`)
         }
       ]);
     }
@@ -87444,8 +87444,8 @@ var init_fetch_blob = __esm({
       get [Symbol.toStringTag]() {
         return "Blob";
       }
-      static [Symbol.hasInstance](object2) {
-        return object2 && typeof object2 === "object" && typeof object2.constructor === "function" && (typeof object2.stream === "function" || typeof object2.arrayBuffer === "function") && /^(Blob|File)$/.test(object2[Symbol.toStringTag]);
+      static [Symbol.hasInstance](object3) {
+        return object3 && typeof object3 === "object" && typeof object3.constructor === "function" && (typeof object3.stream === "function" || typeof object3.arrayBuffer === "function") && /^(Blob|File)$/.test(object3[Symbol.toStringTag]);
       }
     };
     Object.defineProperties(_Blob.prototype, {
@@ -87493,8 +87493,8 @@ var init_file = __esm({
       get [Symbol.toStringTag]() {
         return "File";
       }
-      static [Symbol.hasInstance](object2) {
-        return !!object2 && object2 instanceof fetch_blob_default && /^(File)$/.test(object2[Symbol.toStringTag]);
+      static [Symbol.hasInstance](object3) {
+        return !!object3 && object3 instanceof fetch_blob_default && /^(File)$/.test(object3[Symbol.toStringTag]);
       }
     };
     File3 = _File;
@@ -87646,14 +87646,14 @@ var NAME2, isURLSearchParameters, isBlob3, isAbortSignal, isDomainOrSubdomain, i
 var init_is = __esm({
   "node_modules/node-fetch/src/utils/is.js"() {
     NAME2 = Symbol.toStringTag;
-    isURLSearchParameters = (object2) => {
-      return typeof object2 === "object" && typeof object2.append === "function" && typeof object2.delete === "function" && typeof object2.get === "function" && typeof object2.getAll === "function" && typeof object2.has === "function" && typeof object2.set === "function" && typeof object2.sort === "function" && object2[NAME2] === "URLSearchParams";
+    isURLSearchParameters = (object3) => {
+      return typeof object3 === "object" && typeof object3.append === "function" && typeof object3.delete === "function" && typeof object3.get === "function" && typeof object3.getAll === "function" && typeof object3.has === "function" && typeof object3.set === "function" && typeof object3.sort === "function" && object3[NAME2] === "URLSearchParams";
     };
-    isBlob3 = (object2) => {
-      return object2 && typeof object2 === "object" && typeof object2.arrayBuffer === "function" && typeof object2.type === "string" && typeof object2.stream === "function" && typeof object2.constructor === "function" && /^(Blob|File)$/.test(object2[NAME2]);
+    isBlob3 = (object3) => {
+      return object3 && typeof object3 === "object" && typeof object3.arrayBuffer === "function" && typeof object3.type === "string" && typeof object3.stream === "function" && typeof object3.constructor === "function" && /^(Blob|File)$/.test(object3[NAME2]);
     };
-    isAbortSignal = (object2) => {
-      return typeof object2 === "object" && (object2[NAME2] === "AbortSignal" || object2[NAME2] === "EventTarget");
+    isAbortSignal = (object3) => {
+      return typeof object3 === "object" && (object3[NAME2] === "AbortSignal" || object3[NAME2] === "EventTarget");
     };
     isDomainOrSubdomain = (destination, original) => {
       const orig = new URL(original).hostname;
@@ -88867,8 +88867,8 @@ var init_request = __esm({
     init_get_search();
     init_referrer();
     INTERNALS3 = /* @__PURE__ */ Symbol("Request internals");
-    isRequest = (object2) => {
-      return typeof object2 === "object" && typeof object2[INTERNALS3] === "object";
+    isRequest = (object3) => {
+      return typeof object3 === "object" && typeof object3[INTERNALS3] === "object";
     };
     doBadDataWarn = deprecate2(
       () => {
@@ -91542,20 +91542,20 @@ var require_parse2 = __commonJS({
           }
         }
         error2("Bad array");
-      }, object2 = function() {
-        var key, object3 = /* @__PURE__ */ Object.create(null);
+      }, object3 = function() {
+        var key, object4 = /* @__PURE__ */ Object.create(null);
         if (ch === "{") {
           next("{");
           white();
           if (ch === "}") {
             next("}");
-            return object3;
+            return object4;
           }
           while (ch) {
             key = string();
             white();
             next(":");
-            if (_options.strict === true && Object.hasOwnProperty.call(object3, key)) {
+            if (_options.strict === true && Object.hasOwnProperty.call(object4, key)) {
               error2('Duplicate key "' + key + '"');
             }
             if (suspectProtoRx.test(key) === true) {
@@ -91564,7 +91564,7 @@ var require_parse2 = __commonJS({
               } else if (_options.protoAction === "ignore") {
                 value();
               } else {
-                object3[key] = value();
+                object4[key] = value();
               }
             } else if (suspectConstructorRx.test(key) === true) {
               if (_options.constructorAction === "error") {
@@ -91572,15 +91572,15 @@ var require_parse2 = __commonJS({
               } else if (_options.constructorAction === "ignore") {
                 value();
               } else {
-                object3[key] = value();
+                object4[key] = value();
               }
             } else {
-              object3[key] = value();
+              object4[key] = value();
             }
             white();
             if (ch === "}") {
               next("}");
-              return object3;
+              return object4;
             }
             next(",");
             white();
@@ -91592,7 +91592,7 @@ var require_parse2 = __commonJS({
         white();
         switch (ch) {
           case "{":
-            return object2();
+            return object3();
           case "[":
             return array();
           case '"':
@@ -92965,13 +92965,13 @@ var require_util2 = __commonJS({
       }
     };
     exports.LRUCache = LRUCache;
-    function removeUndefinedValuesInObject(object2) {
-      Object.entries(object2).forEach(([key, value]) => {
+    function removeUndefinedValuesInObject(object3) {
+      Object.entries(object3).forEach(([key, value]) => {
         if (value === void 0 || value === "undefined") {
-          delete object2[key];
+          delete object3[key];
         }
       });
-      return object2;
+      return object3;
     }
     async function isValidFile(filePath) {
       try {
@@ -101808,7 +101808,7 @@ var require_websocket = __commonJS({
     var http4 = __require("http");
     var net4 = __require("net");
     var tls3 = __require("tls");
-    var { randomBytes: randomBytes2, createHash: createHash13 } = __require("crypto");
+    var { randomBytes: randomBytes2, createHash: createHash14 } = __require("crypto");
     var { Duplex, Readable: Readable8 } = __require("stream");
     var { URL: URL4 } = __require("url");
     var PerMessageDeflate2 = require_permessage_deflate();
@@ -102489,7 +102489,7 @@ var require_websocket = __commonJS({
           abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
-        const digest2 = createHash13("sha1").update(key + GUID).digest("base64");
+        const digest2 = createHash14("sha1").update(key + GUID).digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest2) {
           abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
           return;
@@ -102858,7 +102858,7 @@ var require_websocket_server = __commonJS({
     var EventEmitter = __require("events");
     var http4 = __require("http");
     var { Duplex } = __require("stream");
-    var { createHash: createHash13 } = __require("crypto");
+    var { createHash: createHash14 } = __require("crypto");
     var extension2 = require_extension();
     var PerMessageDeflate2 = require_permessage_deflate();
     var subprotocol2 = require_subprotocol();
@@ -103165,7 +103165,7 @@ var require_websocket_server = __commonJS({
           );
         }
         if (this._state > RUNNING) return abortHandshake(socket, 503);
-        const digest2 = createHash13("sha1").update(key + GUID).digest("base64");
+        const digest2 = createHash14("sha1").update(key + GUID).digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
           "Upgrade: websocket",
@@ -112102,8 +112102,8 @@ function setMcpUsageHeader(headers) {
   const existingHeader = (_a8 = headers[GOOGLE_API_CLIENT_HEADER]) !== null && _a8 !== void 0 ? _a8 : "";
   headers[GOOGLE_API_CLIENT_HEADER] = (existingHeader + ` ${MCP_LABEL}`).trimStart();
 }
-function isMcpCallableTool(object2) {
-  return object2 !== null && typeof object2 === "object" && object2 instanceof McpCallableTool;
+function isMcpCallableTool(object3) {
+  return object3 !== null && typeof object3 === "object" && object3 instanceof McpCallableTool;
 }
 function listAllTools(mcpClient_1) {
   return __asyncGenerator(this, arguments, function* listAllTools_1(mcpClient, maxTools = 100) {
@@ -127292,7 +127292,7 @@ function wireQuestion(name2, question) {
       type: "score",
       name: name2,
       instructions: question.instructions,
-      levels: question.criteria.map((label4) => ({ label: label4 }))
+      levels: question.criteria.map((label5) => ({ label: label5 }))
     };
   }
   return { type: "predicate", name: name2, instructions: predicateInstructions(question) };
@@ -129752,7 +129752,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.7.6",
+  version: "0.8.0",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -130623,7 +130623,7 @@ var PluginUpdates = class {
 };
 
 // src/connections.mjs
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 
 // src/registry.mjs
@@ -130691,7 +130691,7 @@ var IntegrationRegistry = class {
       integrationId: owner.integrationId,
       serviceId: service.serviceId,
       label: String(service.label ?? service.serviceId),
-      methods: (service.methods ?? []).map(({ id, label: label4 }) => ({ id, label: label4 })),
+      methods: (service.methods ?? []).map(({ id, label: label5 }) => ({ id, label: label5 })),
       ...Array.isArray(service.apis) ? { apis: service.apis.filter((api) => typeof api === "string") } : {},
       capabilities: Object.fromEntries(["auth", "models", "usage", "settings"].map((key) => [key, service.capabilities?.[key] === true])),
       ...service.unavailableReason ? { unavailableReason: service.unavailableReason } : {},
@@ -130751,6 +130751,776 @@ function sdkServiceOf(connection) {
   return void 0;
 }
 
+// src/provider-cache.mjs
+var ProviderReadError = class extends Error {
+  constructor(code = "error", retryAfterMs) {
+    super(["auth-required", "unsupported", "rate-limited", "error", "aborted", "account-changed"].includes(code) ? code : "error");
+    this.code = this.message;
+    if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) this.retryAfterMs = retryAfterMs;
+  }
+};
+function retryAfterMilliseconds(value, now = Date.now()) {
+  if (typeof value !== "string" || !value.trim()) return void 0;
+  if (/^\d+(?:\.\d+)?$/.test(value.trim())) return Number(value) * 1e3;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? Math.max(0, parsed - now) : void 0;
+}
+var ProviderCache = class {
+  constructor({ ttl = 3e5, maxStale = 36e5, timeout = 2e4, now = Date.now } = {}) {
+    this.ttl = ttl;
+    this.maxStale = maxStale;
+    this.timeout = timeout;
+    this.now = now;
+    this.epoch = 0;
+    this.failures = 0;
+    this.closed = false;
+  }
+  peek() {
+    const age = this.value === void 0 ? Infinity : this.now() - this.observedAt;
+    return {
+      value: age <= this.maxStale ? this.value : void 0,
+      fresh: age < this.ttl,
+      stale: age >= this.ttl,
+      observedAt: this.observedAt,
+      checkedAt: this.checkedAt,
+      retryAt: this.retryAt > this.now() ? this.retryAt : void 0,
+      error: this.error
+    };
+  }
+  get(load, { force = false, signal } = {}) {
+    if (this.closed || signal?.aborted) return Promise.reject(new ProviderReadError("aborted"));
+    if (this.pending) return this.consume(this.pending, signal);
+    if (this.retryAt > this.now()) return Promise.reject(new ProviderReadError("rate-limited", this.retryAt - this.now()));
+    const cached = this.peek();
+    if (!force && cached.fresh && cached.value !== void 0) return Promise.resolve(cached.value);
+    const controller = new AbortController(), epoch2 = this.epoch;
+    const operation2 = { controller, consumers: /* @__PURE__ */ new Set() };
+    operation2.promise = Promise.resolve().then(async () => {
+      const deadline = AbortSignal.timeout(this.timeout);
+      const requestSignal3 = AbortSignal.any([controller.signal, deadline]);
+      let onAbort;
+      const cancelled = new Promise((_, reject) => {
+        onAbort = () => reject(new ProviderReadError(controller.signal.aborted ? "aborted" : "error"));
+        requestSignal3.addEventListener("abort", onAbort, { once: true });
+      });
+      try {
+        const value = await Promise.race([Promise.resolve().then(() => load(requestSignal3)), cancelled]);
+        if (requestSignal3.aborted || this.epoch !== epoch2 || this.closed) throw new ProviderReadError("aborted");
+        this.value = value;
+        this.observedAt = this.now();
+        this.checkedAt = this.observedAt;
+        this.error = void 0;
+        this.retryAt = void 0;
+        this.failures = 0;
+        return value;
+      } catch (error2) {
+        const safe = error2 instanceof ProviderReadError ? error2 : new ProviderReadError("error");
+        if (this.epoch === epoch2 && !this.closed && safe.code !== "aborted") {
+          this.checkedAt = this.now();
+          this.error = safe.code;
+          if (safe.code === "rate-limited") {
+            this.failures++;
+            this.retryAt = this.now() + (safe.retryAfterMs ?? Math.min(6e4 * 2 ** (this.failures - 1), 36e5));
+          }
+          if (safe.code === "auth-required" || safe.code === "account-changed") this.value = void 0;
+        }
+        throw safe;
+      } finally {
+        requestSignal3.removeEventListener("abort", onAbort);
+      }
+    }).finally(() => {
+      if (this.pending === operation2) this.pending = void 0;
+    });
+    this.pending = operation2;
+    return this.consume(operation2, signal);
+  }
+  consume(operation2, signal) {
+    const consumer = {};
+    operation2.consumers.add(consumer);
+    if (!signal) {
+      operation2.promise.then(() => operation2.consumers.delete(consumer), () => operation2.consumers.delete(consumer));
+      return operation2.promise;
+    }
+    return new Promise((resolve3, reject) => {
+      const finish = () => {
+        signal.removeEventListener("abort", abort);
+        operation2.consumers.delete(consumer);
+      };
+      const abort = () => {
+        finish();
+        reject(new ProviderReadError("aborted"));
+        if (operation2.consumers.size === 0) operation2.controller.abort();
+      };
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) return abort();
+      operation2.promise.then((value) => {
+        finish();
+        resolve3(value);
+      }, (error2) => {
+        finish();
+        reject(error2);
+      });
+    });
+  }
+  invalidate() {
+    this.epoch++;
+    this.pending?.controller.abort();
+    this.pending = void 0;
+    this.value = void 0;
+    this.observedAt = void 0;
+    this.checkedAt = void 0;
+    this.error = void 0;
+    this.retryAt = void 0;
+    this.failures = 0;
+  }
+  dispose() {
+    this.closed = true;
+    this.invalidate();
+  }
+};
+
+// src/account-usage-providers.mjs
+var USAGE_ENDPOINTS = Object.freeze({
+  anthropic: "https://api.anthropic.com/api/oauth/usage",
+  "openai-codex": "https://chatgpt.com/backend-api/wham/usage",
+  "github-copilot": "https://api.github.com/copilot_internal/user",
+  "opencode-go": "https://opencode.ai/inference/go/v1/usage",
+  meta: "https://api.meta.ai/muse-code/key"
+});
+var invalid = () => {
+  throw new ProviderReadError("error");
+};
+var object = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : invalid();
+var count = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : invalid();
+var optionalBoolean = (value) => value == null ? void 0 : typeof value === "boolean" ? value : invalid();
+var iso = (ms) => Number.isFinite(ms) && Number.isFinite(new Date(ms).getTime()) ? new Date(ms).toISOString() : invalid();
+function calendar(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || iso(Date.parse(`${value}T00:00:00Z`)).slice(0, 10) !== value) invalid();
+  return value;
+}
+function timestamp(value) {
+  if (value == null) return null;
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) invalid();
+  calendar(value.slice(0, 10));
+  if (Number(value.slice(11, 13)) > 23 || Number(value.slice(14, 16)) > 59 || Number(value.slice(17, 19)) > 59) invalid();
+  return iso(Date.parse(value));
+}
+function epoch(value, unknownNonpositive = false) {
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value)) invalid();
+  if (unknownNonpositive && (value <= 0 || !Number.isFinite(new Date(value * 1e3).getTime()))) return null;
+  return iso(count(value) * 1e3);
+}
+var window2 = (id, scope2, usedPercent, resetsAt, windowSeconds) => ({ id, scope: scope2, usedPercent: count(usedPercent), resetsAt, windowSeconds });
+function parseClaudeUsage(payload2) {
+  const data = object(payload2);
+  const buckets = [["five_hour", "account", 18e3], ["seven_day", "account", 604800], ["seven_day_sonnet", "sonnet", 604800], ["seven_day_opus", "opus", 604800]];
+  if (!buckets.some(([id]) => Object.hasOwn(data, id))) invalid();
+  return buckets.filter(([id]) => data[id] != null).map(([id, scope2, seconds]) => {
+    const bucket = object(data[id]);
+    return window2(id, scope2, bucket.utilization, timestamp(bucket.resets_at), seconds);
+  });
+}
+function parseCodexUsage(payload2, observedAt = Date.now()) {
+  const data = object(payload2);
+  if (!Object.hasOwn(data, "rate_limit")) invalid();
+  if (data.rate_limit === null) return [];
+  const limits = object(data.rate_limit);
+  if (!["primary_window", "secondary_window"].some((id) => Object.hasOwn(limits, id))) invalid();
+  return ["primary_window", "secondary_window"].filter((id) => limits[id] != null).map((id) => {
+    const bucket = object(limits[id]);
+    const seconds = bucket.limit_window_seconds == null ? null : count(bucket.limit_window_seconds);
+    if (seconds === 0) invalid();
+    const reset2 = bucket.reset_at != null ? epoch(bucket.reset_at) : bucket.reset_after_seconds != null ? iso(observedAt + count(bucket.reset_after_seconds) * 1e3) : null;
+    return window2(id, "account", bucket.used_percent, reset2, seconds);
+  });
+}
+function parseOpenCodeUsage(payload2) {
+  const usage = object(object(payload2).usage);
+  return [["rolling", 18e3], ["weekly", 604800], ["monthly", null]].map(([id, seconds]) => {
+    const bucket = object(usage[id]), percent = count(bucket.percent);
+    if (!["ok", "rate-limited"].includes(bucket.status) || percent > 100 || bucket.status === "rate-limited" !== (percent === 100)) invalid();
+    const reset2 = timestamp(bucket.resetsAt);
+    if (reset2 === null) invalid();
+    return window2(id, "account", percent, reset2, seconds);
+  });
+}
+function parseMuseUsage(payload2) {
+  const data = object(payload2);
+  if (optionalBoolean(data.require_payment) === true || optionalBoolean(data.is_subs_active) !== true) throw new ProviderReadError("auth-required");
+  if (data.subs_usage == null) return [];
+  const usage = object(data.subs_usage), primary = object(usage.window), weekly = object(usage.weekly);
+  const seconds = count(primary.window_duration_mins) * 60;
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) invalid();
+  return [window2("window", "account", primary.used_percent, epoch(primary.resets_at, true), seconds), window2("weekly", "account", weekly.used_percent, epoch(weekly.resets_at, true), 604800)];
+}
+function copilotReset(data, bucket) {
+  if (bucket.quota_reset_at != null && bucket.quota_reset_at !== 0) return { resetsAt: epoch(bucket.quota_reset_at, true) };
+  const value = data.quota_reset_date_utc ?? data.quota_reset_date ?? data.limited_user_reset_date;
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? { resetsAt: null, resetsOn: calendar(value) } : { resetsAt: timestamp(value) };
+}
+function parseCopilotUsage(payload2) {
+  const data = object(payload2), credits = optionalBoolean(data.token_based_billing) === true;
+  if (!Object.hasOwn(data, "quota_snapshots")) invalid();
+  if (data.quota_snapshots === null) return [];
+  const buckets = object(data.quota_snapshots);
+  const ids = data.copilot_plan === "free" || data.access_type_sku === "free_limited_copilot" ? ["chat"] : ["premium_interactions", "chat"];
+  for (const id of ids) {
+    if (buckets[id] == null) continue;
+    const bucket = object(buckets[id]), unlimited = optionalBoolean(bucket.unlimited);
+    if (unlimited === void 0) invalid();
+    let total = bucket.entitlement;
+    if (total == null || unlimited && (total === -1 || total === "-1")) total = null;
+    else {
+      if (typeof total === "string") {
+        if (!/^\d+(?:\.\d+)?$/.test(total)) invalid();
+        total = Number(total);
+      }
+      total = count(total);
+      if (total > Number.MAX_SAFE_INTEGER) invalid();
+    }
+    if (!unlimited && total === 0) continue;
+    const result = { id, scope: "account", usedPercent: null, ...copilotReset(data, bucket), windowSeconds: null };
+    const unit = credits ? "credits" : "requests";
+    if (unlimited) {
+      result.quotaState = optionalBoolean(bucket.has_quota) === false && optionalBoolean(bucket.overage_permitted) !== true ? "unavailable" : "unlimited";
+      if (credits && bucket.credits_used != null) result.quota = { used: count(bucket.credits_used), total: null, remaining: null, unit, estimated: false };
+    } else {
+      const remainingPercent = count(bucket.percent_remaining);
+      if (remainingPercent > 100) invalid();
+      result.usedPercent = 100 - remainingPercent;
+      const remaining = bucket.quota_remaining == null ? null : count(bucket.quota_remaining);
+      if (total !== null) result.quota = { used: remaining === null ? total * result.usedPercent / 100 : Math.max(0, total - remaining), total, remaining, unit, estimated: remaining === null };
+    }
+    return [result];
+  }
+  return [];
+}
+function codexAccountId(access3) {
+  try {
+    const parts = access3.split(".");
+    if (parts.length !== 3 || !/^[\w-]+$/.test(parts[1])) throw 0;
+    const auth = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"))["https://api.openai.com/auth"];
+    if (typeof auth?.chatgpt_account_id !== "string" || !/^[\x21-\x7e]{1,512}$/.test(auth.chatgpt_account_id)) throw 0;
+    return auth.chatgpt_account_id;
+  } catch {
+    throw new ProviderReadError("auth-required");
+  }
+}
+async function readProviderJson(response, { now = Date.now(), maxBytes = 262144, allowArray = false } = {}) {
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {
+    });
+    throw new ProviderReadError(response.status === 401 || response.status === 403 ? "auth-required" : response.status === 429 ? "rate-limited" : "error", response.status === 429 ? retryAfterMilliseconds(response.headers.get("retry-after"), now) : void 0);
+  }
+  if (Number(response.headers.get("content-length")) > maxBytes) {
+    await response.body?.cancel().catch(() => {
+    });
+    invalid();
+  }
+  const reader = response.body?.getReader();
+  if (!reader) invalid();
+  const chunks = [];
+  let length = 0;
+  try {
+    for (; ; ) {
+      const next = await reader.read();
+      if (next.done) break;
+      length += next.value.byteLength;
+      if (length > maxBytes) invalid();
+      chunks.push(next.value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const value = JSON.parse(new TextDecoder().decode(bytes));
+    return allowArray && Array.isArray(value) ? value : object(value);
+  } catch (error2) {
+    throw error2 instanceof ProviderReadError ? error2 : new ProviderReadError("error");
+  } finally {
+    await reader.cancel().catch(() => {
+    });
+  }
+}
+function standardProfile(connection, allowedBases) {
+  const profile2 = connection.profile ?? {};
+  if (connection.credentialRef || profile2.apiKeyEnv || [...Object.keys(profile2.headers ?? {}), ...Object.keys(connection.headerRefs ?? {})].some((key) => key.toLowerCase() === "authorization")) throw new ProviderReadError("unsupported");
+  if (profile2.baseURL !== void 0 && !allowedBases.includes(profile2.baseURL.replace(/\/+$/, ""))) throw new ProviderReadError("unsupported");
+}
+var token = (value) => typeof value === "string" && /^[\x21-\x7e]+$/.test(value) && !value.startsWith("!") ? value : (() => {
+  throw new ProviderReadError("auth-required");
+})();
+function createPiUsageProviders({ fetch: request = (...args) => globalThis.fetch(...args), now = Date.now, metaSession } = {}) {
+  const definitions = {
+    anthropic: { bases: ["https://api.anthropic.com"], parser: parseClaudeUsage, refreshAccess: true },
+    "openai-codex": { bases: ["https://chatgpt.com/backend-api"], parser: parseCodexUsage, refreshAccess: true },
+    "github-copilot": { bases: ["https://api.individual.githubcopilot.com", "https://api.business.githubcopilot.com", "https://api.enterprise.githubcopilot.com"], parser: parseCopilotUsage },
+    "opencode-go": { bases: ["https://opencode.ai/inference/go", "https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"], parser: parseOpenCodeUsage, apiKey: true }
+  };
+  const providers = Object.fromEntries(Object.entries(definitions).map(([id, definition]) => [id, {
+    source: "internal-http",
+    refreshAccess: definition.refreshAccess === true,
+    validate: (connection) => standardProfile(connection, definition.bases),
+    async read({ connection, credential, signal }) {
+      standardProfile(connection, definition.bases);
+      let headers = { accept: "application/json" };
+      if (definition.apiKey) {
+        if (credential?.type !== "api_key" || credential.env || connection.authMethod !== "api-key") throw new ProviderReadError("unsupported");
+        headers.authorization = `Bearer ${token(credential.key)}`;
+      } else {
+        if (credential?.type !== "oauth" || connection.authMethod !== "oauth") throw new ProviderReadError(credential ? "unsupported" : "auth-required");
+        if (id === "github-copilot") {
+          if (credential.enterpriseUrl !== void 0 && credential.enterpriseUrl !== null && credential.enterpriseUrl !== "") throw new ProviderReadError("unsupported");
+          headers.authorization = `token ${token(credential.refresh)}`;
+          headers["x-github-api-version"] = "2025-04-01";
+        } else {
+          headers.authorization = `Bearer ${token(credential.access)}`;
+          if (id === "anthropic") headers["anthropic-beta"] = "oauth-2025-04-20";
+          else headers["chatgpt-account-id"] = codexAccountId(credential.access);
+        }
+      }
+      const body = await readProviderJson(await request(USAGE_ENDPOINTS[id], { method: "GET", redirect: "error", signal, headers }), { now: now() });
+      const observedAt = now();
+      return { source: "internal-http", sourceObservedAt: iso(observedAt), windows: definition.parser(body, observedAt) };
+    }
+  }]));
+  providers.openai = {
+    source: "internal-http",
+    requiresCredentials: false,
+    validate() {
+      throw new ProviderReadError("unsupported");
+    },
+    read() {
+      throw new ProviderReadError("unsupported");
+    }
+  };
+  if (metaSession) providers.meta = {
+    source: "internal-http",
+    validate: (connection) => standardProfile(connection, ["https://api.meta.ai/v1"]),
+    read: ({ connection, signal, force }) => metaSession(connection).usage({ signal, force })
+  };
+  return providers;
+}
+
+// src/catalog-metadata.mjs
+var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
+var CATALOG_CONTROL = /* @__PURE__ */ Symbol("dsh-pi-login/catalog-control");
+var MUSE_CONTRIBUTOR = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor");
+var MUSE_CONTRIBUTOR_ONLY = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-only");
+var MUSE_CONTRIBUTOR_CAPS = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-caps");
+var MUSE_EFFORTS_UNVERIFIED = /* @__PURE__ */ Symbol("dsh-pi-login/muse-efforts-unverified");
+var MUSE_DEFAULT_EFFORT = /* @__PURE__ */ Symbol("dsh-pi-login/muse-default-effort");
+var MUSE_CONTRIBUTOR_HEADER = "x-tbh-contributor-mode";
+
+// src/catalog-controls.mjs
+var EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+function thinkingControls(values, defaultValue) {
+  if (!Array.isArray(values)) return { reasoning: false };
+  const toggle = values.includes(true) && !values.some((value) => typeof value === "string" && value !== "none");
+  const map3 = Object.fromEntries(EFFORT_LEVELS.map((level) => [level, null]));
+  for (const level of EFFORT_LEVELS.slice(1)) if (values.includes(level)) map3[level] = level;
+  if (values.includes(false) || values.includes("none")) map3.off = "none";
+  if (toggle) map3.high = "high";
+  const reasoning = Object.values(map3).some((value) => value !== null);
+  const offeredDefault = values.includes(defaultValue) ? defaultValue === false || defaultValue === "none" ? "off" : defaultValue === true ? "on" : defaultValue : void 0;
+  return {
+    reasoning,
+    ...reasoning ? { thinkingLevelMap: map3 } : {},
+    control: {
+      toggle,
+      ...offeredDefault && (EFFORT_LEVELS.includes(offeredDefault) || offeredDefault === "on") ? { defaultEffort: offeredDefault } : {},
+      // Keep the original vocabulary for future bridge versions; do not mislabel unknown levels.
+      values: values.filter((value) => typeof value === "boolean" || typeof value === "string").slice(0, 32)
+    }
+  };
+}
+function modelForCatalogRequest(model, effort) {
+  if (!model[CATALOG_CONTROL] || effort !== void 0) return model;
+  return { ...model, thinkingLevelMap: { ...model.thinkingLevelMap, off: null } };
+}
+
+// src/catalog-parsers.mjs
+var ID2 = /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/;
+var COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+var positive = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
+var label = (value, fallback2) => typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 200) : fallback2;
+var object2 = (value) => value && typeof value === "object" && !Array.isArray(value);
+var compatBooleans = /* @__PURE__ */ new Set([
+  "supportsStore",
+  "supportsDeveloperRole",
+  "supportsReasoningEffort",
+  "supportsUsageInStreaming",
+  "requiresToolResultName",
+  "requiresAssistantAfterToolResult",
+  "requiresThinkingAsText",
+  "requiresAssistantReasoningContent",
+  "requiresMistralToolIds",
+  "supportsStrictMode",
+  "forceAdaptiveThinking",
+  "supportsLongCacheRetention",
+  "supportsInterleavedThinking",
+  "supportsToolChoice",
+  "supportsTemperature",
+  "supportsTopP",
+  "supportsMidConvoSystemMessages"
+]);
+var compatStrings = {
+  maxTokensField: /* @__PURE__ */ new Set(["max_tokens", "max_completion_tokens"]),
+  thinkingFormat: /* @__PURE__ */ new Set(["openai", "zai", "qwen", "qwen-chat-template", "chat-template", "baseten", "deepseek", "openrouter", "ant-ling", "together", "string-thinking"])
+};
+function catalogRows(body) {
+  const rows = Array.isArray(body) ? body : Array.isArray(body?.models) ? body.models : Array.isArray(body?.data) ? body.data : object2(body) && !("models" in body) && !("data" in body) && Object.values(body).every((row) => object2(row) && typeof row.id === "string") ? Object.values(body) : void 0;
+  if (!rows || rows.length > 1e4) throw new ProviderReadError("error");
+  return rows;
+}
+function safeCompat(value) {
+  if (!object2(value)) return {};
+  return Object.fromEntries(Object.entries(value).filter(([key, entry]) => compatBooleans.has(key) && typeof entry === "boolean" || compatStrings[key]?.has(entry)));
+}
+function parsePiCatalog(provider, body, baseline) {
+  const models = [], apis = new Set([...baseline.values()].map((model) => model.api));
+  const origins = new Set([...baseline.values()].flatMap((model) => {
+    try {
+      return [new URL(model.baseUrl).origin];
+    } catch {
+      return [];
+    }
+  }));
+  let skipped = 0;
+  for (const row of catalogRows(body)) {
+    if (!object2(row) || row.type && row.type !== "chat") continue;
+    const base = baseline.get(row.id);
+    let url;
+    try {
+      url = new URL(row.baseUrl ?? base?.baseUrl);
+    } catch {
+      skipped++;
+      continue;
+    }
+    if (!ID2.test(row.id ?? "") || !apis.has(row.api ?? base?.api) || !origins.has(url.origin) || url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+      skipped++;
+      continue;
+    }
+    const contextWindow = positive(row.contextWindow) ?? base?.contextWindow;
+    const maxTokens = positive(row.maxTokens) ?? base?.maxTokens;
+    if (!contextWindow || !maxTokens) {
+      skipped++;
+      continue;
+    }
+    const map3 = row.thinkingLevelMap ?? base?.thinkingLevelMap;
+    const reasoning = row.reasoning ?? base?.reasoning ?? false;
+    const thinkingLevelMap = object2(map3) ? Object.fromEntries(EFFORT_LEVELS.filter((level) => Object.hasOwn(map3, level)).map((level) => [
+      level,
+      typeof map3[level] === "string" && map3[level].length > 0 && map3[level].length <= 64 ? map3[level] : null
+    ])) : void 0;
+    const costs = Object.fromEntries(Object.keys(COST).map((key) => [
+      key,
+      Number.isFinite(row.cost?.[key]) && row.cost[key] >= 0 ? row.cost[key] : base?.cost?.[key] ?? 0
+    ]));
+    const input = (Array.isArray(row.input) ? row.input : base?.input ?? ["text"]).filter((value) => value === "text" || value === "image");
+    models.push({
+      id: row.id,
+      name: label(row.name, row.id),
+      provider,
+      api: row.api ?? base.api,
+      baseUrl: url.href.replace(/\/$/, ""),
+      contextWindow,
+      maxTokens,
+      input: input.length ? input : ["text"],
+      cost: costs,
+      // Unknown models with only a reasoning boolean have no verified effort control.
+      reasoning: reasoning === true && (thinkingLevelMap !== void 0 || base?.reasoning === true),
+      ...thinkingLevelMap ? { thinkingLevelMap } : {},
+      compat: { ...base?.compat, ...safeCompat(row.compat) },
+      control: { toggle: false },
+      verified: true
+    });
+  }
+  return { models, skipped };
+}
+function parseCommandCatalog(body, references = {}) {
+  if (!Array.isArray(body?.data) || body.data.length > 1e4) throw new ProviderReadError("error");
+  let skipped = 0;
+  const models = [];
+  for (const row of body.data) {
+    if (!object2(row) || !ID2.test(row.id ?? "")) {
+      skipped++;
+      continue;
+    }
+    const endpoints2 = row.supported_endpoints;
+    const has3 = (endpoint) => Array.isArray(endpoints2) && (endpoints2.includes(endpoint) || endpoints2.includes(`/v1${endpoint}`));
+    const api = has3("/messages") ? "anthropic-messages" : has3("/responses") && row.id.startsWith("gpt-") ? "openai-responses" : has3("/chat/completions") ? "openai-completions" : has3("/responses") ? "openai-responses" : void 0;
+    if (!api) {
+      skipped++;
+      continue;
+    }
+    const reference = references[row.id];
+    const effort = Array.isArray(row.reasoning_efforts) ? row.reasoning_efforts : reference?.reasoning_options?.find((option) => option.type === "effort")?.values;
+    const controls = thinkingControls(effort, row.default_reasoning_effort);
+    const input = row.modalities?.input ?? reference?.modalities?.input;
+    models.push({
+      id: row.id,
+      name: label(row.name, reference?.name ?? row.id),
+      provider: "commandcode",
+      api,
+      baseUrl: `https://api.commandcode.ai/provider${api === "anthropic-messages" ? "" : "/v1"}`,
+      contextWindow: positive(row.context_length) ?? positive(reference?.limit?.context) ?? 131072,
+      maxTokens: positive(row.max_output_tokens) ?? positive(reference?.limit?.output) ?? 32768,
+      input: Array.isArray(input) && input.includes("image") ? ["text", "image"] : ["text"],
+      cost: COST,
+      ...controls,
+      compat: api === "anthropic-messages" ? { forceAdaptiveThinking: controls.reasoning && /(?:opus[-.](?:4[-.][6-9]|5)|sonnet[-.](?:4[-.]6|5)|fable[-.]5|mythos[-.]5)/.test(row.id) } : { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: controls.reasoning, maxTokensField: "max_tokens" },
+      verified: !!effort && Array.isArray(input)
+    });
+  }
+  return { models, skipped };
+}
+function parseOllamaModel(row, show, previous) {
+  if (!object2(row)) return void 0;
+  const id = row.model ?? row.name;
+  if (!ID2.test(id ?? "")) return void 0;
+  const capabilities = Array.isArray(show?.capabilities) ? show.capabilities : void 0;
+  if (capabilities && !capabilities.includes("completion")) return void 0;
+  const contextWindow = positive(Object.entries(show?.model_info ?? {}).find(([key]) => key.endsWith(".context_length"))?.[1]) ?? previous?.contextWindow ?? 131072;
+  const controls = thinkingControls(show?.thinking?.values, show?.thinking?.default);
+  return {
+    id,
+    name: label(row.name, id),
+    provider: "ollama-cloud",
+    api: "openai-completions",
+    baseUrl: "https://ollama.com/v1",
+    contextWindow,
+    maxTokens: positive(show?.max_output_tokens) ?? previous?.maxTokens ?? Math.min(contextWindow, 8192),
+    input: capabilities ? capabilities.includes("vision") ? ["text", "image"] : ["text"] : previous?.input ?? ["text"],
+    cost: COST,
+    // A missing show response may reuse this exact account/model's metadata. An explicit
+    // show response without thinking metadata must not invent a ladder.
+    ...show === void 0 && previous ? { reasoning: previous.reasoning, thinkingLevelMap: previous.thinkingLevelMap, control: previous.control } : controls,
+    compat: { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: true, maxTokensField: "max_tokens" },
+    verified: !!capabilities && !!show?.model_info
+  };
+}
+
+// src/live-catalog.mjs
+import { createHash as createHash2 } from "node:crypto";
+var HOUR = 36e5;
+var gateways = /* @__PURE__ */ new Set(["commandcode", "ollama-cloud"]);
+var bases = { commandcode: "https://api.commandcode.ai/provider/v1", "ollama-cloud": "https://ollama.com/v1" };
+var catalogBinding = (connection) => createHash2("sha256").update(JSON.stringify([
+  connection.serviceId,
+  connection.credentialRecordId,
+  connection.credentialGeneration ?? 0,
+  connection.profile?.baseURL,
+  connection.profile?.api,
+  connection.profile?.apiKeyEnv,
+  connection.credentialRef,
+  connection.headerRefs ?? {},
+  connection.profile?.headers ?? {}
+])).digest("hex");
+function canUseLiveCatalog(connection, baseline) {
+  if (connection.integrationId !== "pi") return false;
+  const profile2 = connection.profile ?? {};
+  if (profile2.models?.length || profile2.api || profile2.baseURL && ![...baseline.values()].some((model) => model.baseUrl.replace(/\/+$/, "") === profile2.baseURL.replace(/\/+$/, "")) && profile2.baseURL.replace(/\/+$/, "") !== bases[connection.serviceId]) return false;
+  if (gateways.has(connection.serviceId) && (profile2.apiKeyEnv || connection.credentialRef || Object.keys(connection.headerRefs ?? {}).length || Object.keys(profile2.headers ?? {}).length)) return false;
+  return gateways.has(connection.serviceId) || baseline.size > 0;
+}
+var LiveCatalogSession = class {
+  constructor({
+    connection,
+    baseline,
+    credentials,
+    snapshot = () => void 0,
+    persist = async () => {
+    },
+    isCurrent = () => true,
+    onChange = () => {
+    },
+    fetch: request = (...args) => globalThis.fetch(...args),
+    now = Date.now,
+    ttl = HOUR,
+    timeout = 3e4,
+    poll = true
+  }) {
+    Object.assign(this, { connection, baseline, credentials, snapshot, persist, isCurrent, onChange, fetch: request, now, ttl, poll });
+    this.provider = connection.serviceId;
+    this.binding = catalogBinding(connection);
+    this.version = 0;
+    this.closed = false;
+    this.retryAt = 0;
+    this.cache = new ProviderCache({ ttl, maxStale: Infinity, timeout, now });
+    this.restore();
+  }
+  restore() {
+    try {
+      const text2 = this.snapshot();
+      if (typeof text2 !== "string" || text2.length > 8 * 1024 * 1024) return;
+      const data = JSON.parse(text2);
+      if (data.version !== 1 || data.binding !== this.binding || !Number.isFinite(data.checkedAt) || !Array.isArray(data.models) || data.models.length > 1e4) return;
+      if (!data.models.every((model) => model.provider === this.provider && typeof model.id === "string" && typeof model.baseUrl === "string" && typeof model.api === "string" && Array.isArray(model.input) && Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0 && Number.isSafeInteger(model.maxTokens) && model.maxTokens > 0)) return;
+      const allowedApis = this.provider === "commandcode" ? ["anthropic-messages", "openai-responses", "openai-completions"] : this.provider === "ollama-cloud" ? ["openai-completions"] : [...new Set([...this.baseline.values()].map((model) => model.api))];
+      const allowedOrigins = gateways.has(this.provider) ? [new URL(bases[this.provider]).origin] : [...new Set([...this.baseline.values()].map((model) => new URL(model.baseUrl).origin))];
+      if (!data.models.every((model) => {
+        const url = new URL(model.baseUrl);
+        return allowedApis.includes(model.api) && allowedOrigins.includes(url.origin) && url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash;
+      })) return;
+      data.models = data.models.map(({ headers, ...model }) => model);
+      this.cache.value = data;
+      this.cache.observedAt = data.checkedAt;
+    } catch {
+    }
+  }
+  catalog(provider) {
+    if (provider !== this.provider || this.closed) return void 0;
+    if (!this.isCurrent()) return void 0;
+    if (!this.timer && this.poll) {
+      this.timer = setInterval(() => this.schedule(), Math.min(this.ttl, 6e4));
+      this.timer.unref?.();
+    }
+    this.schedule();
+    const value = this.cache.value;
+    const models = gateways.has(provider) && value ? /* @__PURE__ */ new Map() : new Map(this.baseline);
+    for (const row of value?.models ?? []) {
+      const { control, verified, ...model } = row;
+      const base = this.baseline.get(row.id);
+      models.set(row.id, {
+        ...base,
+        ...model,
+        [CATALOG_CONTROL]: control ?? {},
+        ...base ? {} : { [DISCOVERED_MODEL]: { verified: verified === true } }
+      });
+    }
+    return models;
+  }
+  schedule() {
+    if (this.closed || !this.isCurrent() || this.autoPending || this.cache.pending || this.cache.peek().fresh || this.now() < this.retryAt) return;
+    this.autoPending = Promise.resolve().then(() => this.refresh()).catch(() => {
+    }).finally(() => {
+      this.autoPending = void 0;
+    });
+  }
+  async json(url, signal, headers = {}, body, maxBytes = 8 * 1024 * 1024) {
+    return readProviderJson(await this.fetch(url, {
+      method: body === void 0 ? "GET" : "POST",
+      redirect: "error",
+      signal,
+      headers: { accept: "application/json", ...body === void 0 ? {} : { "content-type": "application/json" }, ...headers },
+      ...body === void 0 ? {} : { body: JSON.stringify(body) }
+    }), { now: this.now(), maxBytes, allowArray: true });
+  }
+  async load(signal) {
+    if (this.provider === "commandcode") {
+      const body2 = await this.json("https://api.commandcode.ai/provider/v1/models", signal);
+      let references = {};
+      try {
+        const data = await this.json("https://models.dev/api.json", AbortSignal.any([signal, AbortSignal.timeout(1e4)]), {}, void 0, 32 * 1024 * 1024);
+        references = data.commandcode?.models ?? {};
+      } catch {
+      }
+      return parseCommandCatalog(body2, references);
+    }
+    if (this.provider === "ollama-cloud") {
+      const credential = await this.credentials.read(this.provider);
+      if (credential?.type !== "api_key" || credential.env || typeof credential.key !== "string" || !/^[\x21-\x7e]+$/.test(credential.key)) throw new ProviderReadError("auth-required");
+      const headers = { authorization: `Bearer ${credential.key}` };
+      const body2 = await this.json("https://ollama.com/api/tags", signal, headers);
+      if (!Array.isArray(body2.models) || body2.models.length > 1e3) throw new ProviderReadError("error");
+      const previous2 = new Map((this.cache.value?.models ?? []).map((model) => [model.id, model]));
+      const models = [];
+      let next = 0, incomplete = 0;
+      await Promise.all(Array.from({ length: Math.min(4, body2.models.length) }, async () => {
+        while (next < body2.models.length) {
+          const row = body2.models[next++], id = row?.model ?? row?.name;
+          if (!parseOllamaModel(row)) {
+            incomplete++;
+            continue;
+          }
+          let show;
+          try {
+            show = await this.json("https://ollama.com/api/show", signal, headers, { model: id });
+          } catch (error2) {
+            if (signal.aborted || ["auth-required", "rate-limited"].includes(error2?.code)) throw error2;
+            incomplete++;
+          }
+          const model = parseOllamaModel(row, show, previous2.get(id));
+          if (model) models.push(model);
+        }
+      }));
+      return { models: models.sort((a5, b5) => a5.id.localeCompare(b5.id)), skipped: incomplete };
+    }
+    const previous = this.cache.value;
+    const response = await this.fetch(`https://pi.dev/api/models/providers/${encodeURIComponent(this.provider)}?types=chat`, {
+      redirect: "error",
+      signal,
+      headers: { accept: "application/json", ...previous?.models.length && previous.etag ? { "if-none-match": previous.etag } : {} }
+    });
+    if (response.status === 304 && previous) return previous;
+    if (response.status === 401 || response.status === 403) throw new ProviderReadError("error");
+    const body = await readProviderJson(response, { maxBytes: 8 * 1024 * 1024, allowArray: true });
+    return { ...parsePiCatalog(this.provider, body, this.baseline), etag: response.headers.get("etag") ?? void 0 };
+  }
+  async refresh({ force = false, signal } = {}) {
+    if (this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
+    try {
+      await this.cache.get(async (signal2) => {
+        const result = await this.load(signal2);
+        if (signal2.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
+        const value = { ...result, version: 1, binding: this.binding, checkedAt: this.now() };
+        await this.persist(JSON.stringify(value), { signal: signal2 });
+        if (signal2.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
+        return value;
+      }, { force, signal });
+      this.retryAt = 0;
+    } catch (error2) {
+      this.retryAt = this.cache.retryAt ?? this.now() + 6e4;
+      throw error2;
+    } finally {
+      if (!this.closed && this.isCurrent()) {
+        this.version++;
+        this.onChange();
+      }
+    }
+  }
+  async validate() {
+    if (!this.isCurrent()) this.dispose();
+  }
+  invalidate() {
+    this.retryAt = 0;
+    this.cache.observedAt = void 0;
+    this.version++;
+    this.onChange();
+  }
+  state() {
+    return {
+      checkedAt: this.cache.value?.checkedAt,
+      skipped: this.cache.value?.skipped ?? 0,
+      stale: !!this.cache.error || this.cache.peek().stale,
+      error: this.cache.error
+    };
+  }
+  dispose() {
+    this.closed = true;
+    clearInterval(this.timer);
+    this.cache.dispose();
+  }
+};
+function liveCatalogProvider(session) {
+  return {
+    session,
+    presentation() {
+      const state3 = session.state();
+      return { status: {
+        message: state3.error ? state3.checkedAt ? "catalogCachedAfterFailure" : "catalogInitialLoadFailed" : state3.skipped ? "catalogPartiallyUpdated" : state3.checkedAt ? "catalogUpdated" : "catalogUpdating",
+        ...state3.checkedAt ? { detail: new Date(state3.checkedAt).toISOString() } : {}
+      }, notes: ["catalogAutoUpdateHint"] };
+    },
+    errorCodes: { "auth-required": "catalog-login-required", "rate-limited": "catalog-rate-limited" },
+    errors: { "catalog-login-required": "catalogLoginRequired", "catalog-rate-limited": "catalogRateLimited" }
+  };
+}
+
 // src/connections.mjs
 var NS2 = "dsh-pi-login";
 var RECORD_SCOPE = "llm-pi-ai";
@@ -130764,7 +131534,7 @@ var ConnectionError = class extends Error {
   }
 };
 function profileKeyFor(dir = "default") {
-  return createHash2("sha256").update(`dsh-pi-login:${dir}`).digest("hex").slice(0, 24);
+  return createHash3("sha256").update(`dsh-pi-login:${dir}`).digest("hex").slice(0, 24);
 }
 function text(value, limit3 = 100) {
   if (typeof value !== "string" || !value.trim() || value.length > limit3 || /[\u0000-\u001f\u007f]/.test(value)) throw new ConnectionError("invalid-request");
@@ -131149,6 +131919,7 @@ var ConnectionManager = class {
     delete copy.headerRefs;
     delete copy.legacyRoute;
     delete copy.museCatalog;
+    delete copy.modelCatalog;
     delete copy.credentialCleanupIds;
     delete copy.profile.apiKeyEnv;
     delete copy.profile.headers;
@@ -131245,6 +132016,22 @@ var ConnectionManager = class {
     delete connection.museCode;
     delete connection.connectionId;
     await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token2);
+  }
+  /** Compare the connection and endpoint again before the revision-checked write. */
+  async saveModelCatalog(binding, value, { signal } = {}) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      signal?.throwIfAborted();
+      if (!this.isCurrent(binding) || catalogBinding(binding) !== catalogBinding(this.lookup(binding.connectionId))) throw new ConnectionError("connection-changed");
+      const token2 = this.registry.token(), connection = this.lookup(binding.connectionId);
+      connection.modelCatalog = value;
+      delete connection.connectionId;
+      try {
+        await this.write({ ...this.raw(), [binding.connectionId]: connection }, this.section()?.revision, [], token2);
+        return;
+      } catch (error2) {
+        if (error2.code !== "settings-changed" || attempt === 2) throw error2;
+      }
+    }
   }
   async beginLogin(connectionId2) {
     const token2 = this.registry.token();
@@ -131433,7 +132220,7 @@ import { assertUsableApiKey, LlmError as LlmError8, resolveImageAttachmentAccess
 import { deepEqualJson as deepEqualJson2 } from "@deepseek-ai/dsh-util-values";
 
 // src/runtime/adapter.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import {
   attributionHeaders,
   contentHasImage as contentHasImage2,
@@ -133191,8 +133978,8 @@ init_radius_config();
 function radiusProvider(options = {}) {
   const id = options.id ?? "radius";
   const name2 = options.name ?? "Radius";
-  const gateway = normalizeRadiusGatewayUrl(options.gateway ?? DEFAULT_RADIUS_GATEWAY);
-  const baselineModels = gateway === normalizeRadiusGatewayUrl(DEFAULT_RADIUS_GATEWAY) ? Object.values(RADIUS_MODELS).map((model) => ({ ...model, provider: id })) : [];
+  const gateway2 = normalizeRadiusGatewayUrl(options.gateway ?? DEFAULT_RADIUS_GATEWAY);
+  const baselineModels = gateway2 === normalizeRadiusGatewayUrl(DEFAULT_RADIUS_GATEWAY) ? Object.values(RADIUS_MODELS).map((model) => ({ ...model, provider: id })) : [];
   let dynamicModels;
   const streams = piMessagesApi();
   return {
@@ -133200,7 +133987,7 @@ function radiusProvider(options = {}) {
     name: name2,
     auth: {
       apiKey: envApiKeyAuth("Radius API key", ["RADIUS_API_KEY"]),
-      oauth: lazyOAuth({ name: name2, load: () => loadRadiusOAuth({ name: name2, gateway }) })
+      oauth: lazyOAuth({ name: name2, load: () => loadRadiusOAuth({ name: name2, gateway: gateway2 }) })
     },
     getModels: () => dynamicModels ?? baselineModels,
     refreshModels: async (context) => {
@@ -133231,7 +134018,7 @@ function radiusProvider(options = {}) {
       if (!context.allowNetwork || context.signal.aborted)
         return;
       const apiKey = context.credential?.type === "oauth" ? context.credential.access : context.credential?.key;
-      const config = await loadRadiusGatewayConfig(gateway, apiKey, context.signal);
+      const config = await loadRadiusGatewayConfig(gateway2, apiKey, context.signal);
       if (context.signal.aborted)
         return;
       const refreshed = getRadiusModelsFromConfig(id, config);
@@ -133492,6 +134279,39 @@ function supplementCatalog(provider, installed) {
   return catalog;
 }
 
+// src/runtime/gateway-providers.ts
+function gatewayProviders() {
+  return [
+    gateway("commandcode", "CommandCode", "https://api.commandcode.ai/provider/v1", {
+      "anthropic-messages": anthropicMessagesApi(),
+      "openai-completions": openAICompletionsApi(),
+      "openai-responses": openAIResponsesApi()
+    }),
+    gateway("ollama-cloud", "Ollama Cloud", "https://ollama.com/v1", {
+      "openai-completions": openAICompletionsApi()
+    })
+  ];
+}
+function gateway(id, name2, baseUrl, apis) {
+  const apiFor = (api) => {
+    const implementation = apis[api];
+    if (!implementation) throw new Error(`Unsupported ${name2} protocol: ${api}`);
+    return implementation;
+  };
+  return {
+    id,
+    name: name2,
+    baseUrl,
+    auth: { apiKey: { name: `${name2} API key`, resolve: async ({ credential }) => ({
+      auth: credential?.key === void 0 ? {} : { apiKey: credential.key },
+      source: name2
+    }) } },
+    getModels: () => [],
+    stream: (model, context, options) => apiFor(model.api).stream(model, context, options),
+    streamSimple: (model, context, options) => apiFor(model.api).streamSimple(model, context, options)
+  };
+}
+
 // src/runtime/catalog.ts
 var NO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 var MODALITY_GATE = {
@@ -133553,7 +134373,7 @@ function servesChat(provider) {
   return getBuiltinModels(id).length > 0 || getAllBuiltinModels(id).length === 0;
 }
 function catalogProviders() {
-  providerIndex ??= new Map(builtinProviders().filter(servesChat).map((provider) => [provider.id, provider]));
+  providerIndex ??= new Map([...builtinProviders().filter(servesChat), ...gatewayProviders()].map((provider) => [provider.id, provider]));
   return providerIndex;
 }
 function catalogProvider(provider) {
@@ -133564,7 +134384,7 @@ function catalogProviderIds() {
 }
 function catalogModels(provider) {
   if (!catalogProviders().has(provider)) return /* @__PURE__ */ new Map();
-  const models = getBuiltinModels(provider);
+  const models = [...catalogProvider(provider).getModels()];
   return supplementCatalog(provider, models);
 }
 var COMPLETIONS_COMPAT_GATE = {
@@ -133667,18 +134487,18 @@ function assertOfferedCompatFields(provider, site, compat) {
     if (compatProtocols(field).length === 0) {
       const declared = Object.values(COMPAT_GATES).some((gate) => gate[field] !== void 0);
       if (declared) {
-        invalid(provider, `${site} sets compat "${field}", which is not configurable here: pi-ai's installed catalog sets it for the vendors that need it, so name that provider as the route instead`);
+        invalid2(provider, `${site} sets compat "${field}", which is not configurable here: pi-ai's installed catalog sets it for the vendors that need it, so name that provider as the route instead`);
       }
-      invalid(provider, `${site} sets compat "${field}", which no wire protocol declares; the configurable switches are ${allOfferedCompatFields().join(", ")}`);
+      invalid2(provider, `${site} sets compat "${field}", which no wire protocol declares; the configurable switches are ${allOfferedCompatFields().join(", ")}`);
     }
     if (value == null) {
-      invalid(provider, `${site} sets compat "${field}" with no value; give it one, or remove the key to leave the field to the next layer \u2014 the installed catalog entry, then pi-ai's own detection`);
+      invalid2(provider, `${site} sets compat "${field}" with no value; give it one, or remove the key to leave the field to the next layer \u2014 the installed catalog entry, then pi-ai's own detection`);
     }
   }
 }
 var PiAiCatalogError = class extends Error {
 };
-function invalid(provider, detail) {
+function invalid2(provider, detail) {
   throw new PiAiCatalogError(`llm-pi-ai: provider "${provider}" ${detail}`);
 }
 function sharedCatalogApi(defaults3) {
@@ -133693,7 +134513,7 @@ function resolveModelReasoning(provider, entry, base) {
   }
   if (efforts === false) return { reasoning: false };
   if (efforts === null || Object.keys(efforts).length === 0) {
-    invalid(provider, `model "${entry.id}" has an empty reasoningEfforts; declare the offered levels, set false for a non-reasoning model, or omit the field to keep the installed catalog's capability`);
+    invalid2(provider, `model "${entry.id}" has an empty reasoningEfforts; declare the offered levels, set false for a non-reasoning model, or omit the field to keep the installed catalog's capability`);
   }
   const declared = THINKING_LEVELS.flatMap((level) => {
     const wire = efforts[level];
@@ -133702,14 +134522,14 @@ function resolveModelReasoning(provider, entry, base) {
   for (const [level, wire] of declared) {
     if (wire === null) {
       if (level !== "off") {
-        invalid(provider, `model "${entry.id}" reasoningEfforts.${level} needs the wire value dispatch should send; only "off" may leave it empty`);
+        invalid2(provider, `model "${entry.id}" reasoningEfforts.${level} needs the wire value dispatch should send; only "off" may leave it empty`);
       }
     } else if (wire.length === 0) {
-      invalid(provider, `model "${entry.id}" reasoningEfforts.${level} must not be an empty string`);
+      invalid2(provider, `model "${entry.id}" reasoningEfforts.${level} must not be an empty string`);
     }
   }
   if (!declared.some(([level]) => level !== "off")) {
-    invalid(provider, `model "${entry.id}" reasoningEfforts offers no level beyond "off"; declare a thinking level, or set reasoningEfforts to false for a non-reasoning model`);
+    invalid2(provider, `model "${entry.id}" reasoningEfforts offers no level beyond "off"; declare a thinking level, or set reasoningEfforts to false for a non-reasoning model`);
   }
   const map3 = {};
   for (const level of THINKING_LEVELS) {
@@ -133732,7 +134552,7 @@ function resolveModelCompat(provider, entry, route, base, api) {
   for (const [field, value] of configuredCompatEntries(entry.compat)) {
     if (gate?.[field] !== "offer") {
       const offered = offeredCompatFields(api);
-      invalid(provider, `model "${entry.id}" sets compat "${field}", but its api is "${api}", which does not take it; that switch exists on ${compatProtocols(field).join(", ")}, and "${api}" offers ${offered.length === 0 ? "no configurable compat" : offered.join(", ")}`);
+      invalid2(provider, `model "${entry.id}" sets compat "${field}", but its api is "${api}", which does not take it; that switch exists on ${compatProtocols(field).join(", ")}, and "${api}" offers ${offered.length === 0 ? "no configurable compat" : offered.join(", ")}`);
     }
     configured[field] = value;
   }
@@ -133748,28 +134568,28 @@ function resolveRouteModels(request, validation = "strict", installed) {
   const overrides = request.modelOverrides ?? {};
   const modelErrors = /* @__PURE__ */ new Map();
   for (const [id, override] of Object.entries(overrides)) {
-    if (id.length === 0) invalid(provider, "has a modelOverrides entry with an empty model id");
+    if (id.length === 0) invalid2(provider, "has a modelOverrides entry with an empty model id");
     if (defaults3.size === 0 && installed === void 0) {
-      invalid(provider, `sets modelOverrides for "${id}", but the installed catalog does not describe this route; a declared route spells every model out in its models list`);
+      invalid2(provider, `sets modelOverrides for "${id}", but the installed catalog does not describe this route; a declared route spells every model out in its models list`);
     }
     if (configured.length > 0) {
-      invalid(provider, `sets modelOverrides for "${id}" beside a models list; models already replaces the served catalog, so declare the fields on its entries`);
+      invalid2(provider, `sets modelOverrides for "${id}" beside a models list; models already replaces the served catalog, so declare the fields on its entries`);
     }
     if (!defaults3.has(id)) {
       const message = `modelOverrides names "${id}", which the installed catalog does not describe`;
-      if (validation === "strict" && !(installed !== void 0 && catalogModels(provider).has(id))) invalid(provider, message);
+      if (validation === "strict" && !(installed !== void 0 && catalogModels(provider).has(id))) invalid2(provider, message);
       modelErrors.set(id, `llm-pi-ai: provider "${provider}" ${message}`);
     }
     if ("id" in override) {
-      invalid(provider, `modelOverrides entry "${id}" sets "id", which is the dict key`);
+      invalid2(provider, `modelOverrides entry "${id}" sets "id", which is the dict key`);
     }
   }
   const entries = configured.length > 0 ? configured : [...defaults3.values()].map((model) => ({ id: model.id, ...overrides[model.id] }));
-  if (entries.length === 0 && installed !== void 0) {
+  if (entries.length === 0 && (installed !== void 0 || provider === "commandcode" || provider === "ollama-cloud")) {
     return { models: [], configuredMaxTokens: /* @__PURE__ */ new Map(), modelErrors };
   }
   if (entries.length === 0) {
-    invalid(provider, "resolves no models; the installed catalog does not describe this route, so its models must be listed in configuration");
+    invalid2(provider, "resolves no models; the installed catalog does not describe this route, so its models must be listed in configuration");
   }
   const routeApi = sharedCatalogApi(defaults3);
   assertOfferedCompatFields(provider, "route", request.compat);
@@ -133777,25 +134597,25 @@ function resolveRouteModels(request, validation = "strict", installed) {
   const configuredMaxTokens = /* @__PURE__ */ new Map();
   const resolveEntry = (entry) => {
     assertOfferedCompatFields(provider, `model "${entry.id}"`, entry.compat);
-    if (entry.id.length === 0) invalid(provider, "has a model with an empty id");
-    if (seen.has(entry.id)) invalid(provider, `lists model "${entry.id}" more than once`);
+    if (entry.id.length === 0) invalid2(provider, "has a model with an empty id");
+    if (seen.has(entry.id)) invalid2(provider, `lists model "${entry.id}" more than once`);
     seen.add(entry.id);
     const base = defaults3.get(entry.id);
     const api = request.api ?? base?.api ?? routeApi;
     if (api === void 0) {
-      invalid(provider, `model "${entry.id}" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks`);
+      invalid2(provider, `model "${entry.id}" needs an api; the installed catalog does not describe it, so set the route's api to the wire protocol its endpoint speaks`);
     }
     const baseUrl = request.baseURL ?? base?.baseUrl ?? providerBaseUrl;
     if (baseUrl === void 0) {
-      invalid(provider, `model "${entry.id}" needs a baseURL; the installed catalog does not describe this route`);
+      invalid2(provider, `model "${entry.id}" needs a baseURL; the installed catalog does not describe this route`);
     }
     const contextWindow = entry.contextWindow ?? base?.contextWindow ?? request.defaultContextWindow;
     if (!Number.isInteger(contextWindow) || contextWindow <= 0) {
-      invalid(provider, `model "${entry.id}" contextWindow must be a positive integer`);
+      invalid2(provider, `model "${entry.id}" contextWindow must be a positive integer`);
     }
     const maxTokens = entry.maxTokens ?? base?.maxTokens ?? request.defaultMaxTokens;
     if (!Number.isInteger(maxTokens) || maxTokens <= 0) {
-      invalid(provider, `model "${entry.id}" maxTokens must be a positive integer`);
+      invalid2(provider, `model "${entry.id}" maxTokens must be a positive integer`);
     }
     if (entry.maxTokens !== void 0) configuredMaxTokens.set(entry.id, entry.maxTokens);
     return {
@@ -133834,7 +134654,7 @@ function resolveRouteModels(request, validation = "strict", installed) {
   for (const [field] of configuredCompatEntries(request.compat)) {
     const takers = compatProtocols(field);
     if (serviceableModels.some((model) => takers.includes(model.api))) continue;
-    invalid(provider, `sets compat "${field}", but no model on the route speaks a protocol that takes it; it exists on ${takers.join(", ")}`);
+    invalid2(provider, `sets compat "${field}", but no model on the route speaks a protocol that takes it; it exists on ${takers.join(", ")}`);
   }
   return { models: serviceableModels, configuredMaxTokens, modelErrors };
 }
@@ -133888,7 +134708,7 @@ var PROTOCOLS = {
 function supportedProtocols() {
   return Object.keys(PROTOCOLS);
 }
-var USAGE_SERVICES = /* @__PURE__ */ new Set(["openai", "openai-codex", "anthropic", "github-copilot", "opencode-go", "meta"]);
+var USAGE_SERVICES = /* @__PURE__ */ new Set(["openai", "openai-codex", "anthropic", "github-copilot", "opencode-go", "meta", "commandcode", "ollama-cloud"]);
 function listPiServices(extraServiceIds = []) {
   const ids = [];
   const seen = /* @__PURE__ */ new Set();
@@ -133966,17 +134786,6 @@ function buildProvider2(spec) {
 
 // src/runtime/fast.ts
 init_simple_options();
-
-// src/catalog-metadata.mjs
-var DISCOVERED_MODEL = /* @__PURE__ */ Symbol("dsh-pi-login/discovered-model");
-var MUSE_CONTRIBUTOR = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor");
-var MUSE_CONTRIBUTOR_ONLY = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-only");
-var MUSE_CONTRIBUTOR_CAPS = /* @__PURE__ */ Symbol("dsh-pi-login/muse-contributor-caps");
-var MUSE_EFFORTS_UNVERIFIED = /* @__PURE__ */ Symbol("dsh-pi-login/muse-efforts-unverified");
-var MUSE_DEFAULT_EFFORT = /* @__PURE__ */ Symbol("dsh-pi-login/muse-default-effort");
-var MUSE_CONTRIBUTOR_HEADER = "x-tbh-contributor-mode";
-
-// src/runtime/fast.ts
 var GPT_FAST_IDS = [
   "gpt-5.5",
   "gpt-5.6-sol",
@@ -134215,6 +135024,7 @@ var Config = z.object({
     serviceLabel: z.string(),
     profile,
     museCode: z.object({ contributorMode: z.boolean(), modelId: z.string() }),
+    modelCatalog: z.string(),
     museCatalog: z.array(z.object({
       id: z.string().required(),
       name: z.string().required(),
@@ -134867,6 +135677,9 @@ function describableReasoningLevel(model, effort) {
 }
 function resolveReasoningLevel(model, effort) {
   if (effort === void 0) return void 0;
+  const control = model[CATALOG_CONTROL];
+  if (control?.toggle && effort === "on") return "high";
+  if (control?.toggle && effort !== "off") throw new LlmError4("This model supports thinking on/off only", "UNSUPPORTED_REASONING_EFFORT");
   const supported = getSupportedThinkingLevels2(model);
   if (supported.some((level) => level === effort)) return effort;
   throw new LlmError4(
@@ -134877,13 +135690,16 @@ function resolveReasoningLevel(model, effort) {
 function reasoningInfo(model, defaultLevel) {
   if (!model.reasoning) return {};
   const levels = getSupportedThinkingLevels2(model);
+  const control = model[CATALOG_CONTROL];
+  const offered = control?.toggle ? [...levels.includes("off") ? ["off"] : [], "on"] : levels;
+  const selectedDefault = defaultLevel ?? control?.defaultEffort;
   return {
     reasoning: {
-      efforts: levels.map((level) => ({
+      efforts: offered.map((level) => ({
         id: ReasoningEffortId(level),
         name: `${level.charAt(0).toUpperCase()}${level.slice(1)}`
       })),
-      ...defaultLevel === void 0 ? {} : { defaultEffort: ReasoningEffortId(defaultLevel) }
+      ...selectedDefault === void 0 || !offered.includes(selectedDefault) ? {} : { defaultEffort: ReasoningEffortId(selectedDefault) }
     }
   };
 }
@@ -135124,7 +135940,7 @@ var PiAiAdapter = class extends LlmAdapter {
           ...profileOptions(profile2, reasoning, apiKey),
           ...options.temperature === void 0 ? {} : { temperature: options.temperature },
           ...options.maxTokens === void 0 ? {} : { maxTokens: options.maxTokens },
-          ...options.sessionId === void 0 ? {} : { sessionId: replayScope === void 0 ? String(options.sessionId) : createHash7("sha256").update(JSON.stringify([
+          ...options.sessionId === void 0 ? {} : { sessionId: replayScope === void 0 ? String(options.sessionId) : createHash8("sha256").update(JSON.stringify([
             replayScope.connectionId,
             replayScope.credentialGeneration,
             replayScope.endpoint,
@@ -135136,7 +135952,8 @@ var PiAiAdapter = class extends LlmAdapter {
           // Harness-owned and therefore win collisions.
           headers: { ...requestHeaders2({ ...profile2.headers, ...storedHeaders }), ...choice.headers, ...accountAuthorization?.headers }
         };
-        const events = choice.serviceTier !== void 0 ? streamWithTier(models, model, context, streamOptions, choice.serviceTier) : models.streamSimple(model, context, streamOptions);
+        const requestModel = modelForCatalogRequest(model, reasoning);
+        const events = choice.serviceTier !== void 0 ? streamWithTier(models, requestModel, context, streamOptions, choice.serviceTier) : models.streamSimple(requestModel, context, streamOptions);
         const iterator = toStreamChunks(events, model.contextWindow, options.signal, options.model, replayScope, options.provider)[Symbol.asyncIterator]();
         let exhausted = false;
         try {
@@ -135373,362 +136190,8 @@ function authContextFrom(ctx) {
 }
 
 // src/openai-chatgpt-catalog.mjs
-import { createHash as createHash8 } from "node:crypto";
+import { createHash as createHash9 } from "node:crypto";
 import { LlmError as LlmError6 } from "@deepseek-ai/dsh-llm";
-
-// src/provider-cache.mjs
-var ProviderReadError = class extends Error {
-  constructor(code = "error", retryAfterMs) {
-    super(["auth-required", "unsupported", "rate-limited", "error", "aborted", "account-changed"].includes(code) ? code : "error");
-    this.code = this.message;
-    if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) this.retryAfterMs = retryAfterMs;
-  }
-};
-function retryAfterMilliseconds(value, now = Date.now()) {
-  if (typeof value !== "string" || !value.trim()) return void 0;
-  if (/^\d+(?:\.\d+)?$/.test(value.trim())) return Number(value) * 1e3;
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? Math.max(0, parsed - now) : void 0;
-}
-var ProviderCache = class {
-  constructor({ ttl = 3e5, maxStale = 36e5, timeout = 2e4, now = Date.now } = {}) {
-    this.ttl = ttl;
-    this.maxStale = maxStale;
-    this.timeout = timeout;
-    this.now = now;
-    this.epoch = 0;
-    this.failures = 0;
-    this.closed = false;
-  }
-  peek() {
-    const age = this.value === void 0 ? Infinity : this.now() - this.observedAt;
-    return {
-      value: age <= this.maxStale ? this.value : void 0,
-      fresh: age < this.ttl,
-      stale: age >= this.ttl,
-      observedAt: this.observedAt,
-      checkedAt: this.checkedAt,
-      retryAt: this.retryAt > this.now() ? this.retryAt : void 0,
-      error: this.error
-    };
-  }
-  get(load, { force = false, signal } = {}) {
-    if (this.closed || signal?.aborted) return Promise.reject(new ProviderReadError("aborted"));
-    if (this.pending) return this.consume(this.pending, signal);
-    if (this.retryAt > this.now()) return Promise.reject(new ProviderReadError("rate-limited", this.retryAt - this.now()));
-    const cached = this.peek();
-    if (!force && cached.fresh && cached.value !== void 0) return Promise.resolve(cached.value);
-    const controller = new AbortController(), epoch2 = this.epoch;
-    const operation2 = { controller, consumers: /* @__PURE__ */ new Set() };
-    operation2.promise = Promise.resolve().then(async () => {
-      const deadline = AbortSignal.timeout(this.timeout);
-      const requestSignal3 = AbortSignal.any([controller.signal, deadline]);
-      let onAbort;
-      const cancelled = new Promise((_, reject) => {
-        onAbort = () => reject(new ProviderReadError(controller.signal.aborted ? "aborted" : "error"));
-        requestSignal3.addEventListener("abort", onAbort, { once: true });
-      });
-      try {
-        const value = await Promise.race([Promise.resolve().then(() => load(requestSignal3)), cancelled]);
-        if (requestSignal3.aborted || this.epoch !== epoch2 || this.closed) throw new ProviderReadError("aborted");
-        this.value = value;
-        this.observedAt = this.now();
-        this.checkedAt = this.observedAt;
-        this.error = void 0;
-        this.retryAt = void 0;
-        this.failures = 0;
-        return value;
-      } catch (error2) {
-        const safe = error2 instanceof ProviderReadError ? error2 : new ProviderReadError("error");
-        if (this.epoch === epoch2 && !this.closed && safe.code !== "aborted") {
-          this.checkedAt = this.now();
-          this.error = safe.code;
-          if (safe.code === "rate-limited") {
-            this.failures++;
-            this.retryAt = this.now() + (safe.retryAfterMs ?? Math.min(6e4 * 2 ** (this.failures - 1), 36e5));
-          }
-          if (safe.code === "auth-required" || safe.code === "account-changed") this.value = void 0;
-        }
-        throw safe;
-      } finally {
-        requestSignal3.removeEventListener("abort", onAbort);
-      }
-    }).finally(() => {
-      if (this.pending === operation2) this.pending = void 0;
-    });
-    this.pending = operation2;
-    return this.consume(operation2, signal);
-  }
-  consume(operation2, signal) {
-    const consumer = {};
-    operation2.consumers.add(consumer);
-    if (!signal) {
-      operation2.promise.then(() => operation2.consumers.delete(consumer), () => operation2.consumers.delete(consumer));
-      return operation2.promise;
-    }
-    return new Promise((resolve3, reject) => {
-      const finish = () => {
-        signal.removeEventListener("abort", abort);
-        operation2.consumers.delete(consumer);
-      };
-      const abort = () => {
-        finish();
-        reject(new ProviderReadError("aborted"));
-        if (operation2.consumers.size === 0) operation2.controller.abort();
-      };
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) return abort();
-      operation2.promise.then((value) => {
-        finish();
-        resolve3(value);
-      }, (error2) => {
-        finish();
-        reject(error2);
-      });
-    });
-  }
-  invalidate() {
-    this.epoch++;
-    this.pending?.controller.abort();
-    this.pending = void 0;
-    this.value = void 0;
-    this.observedAt = void 0;
-    this.checkedAt = void 0;
-    this.error = void 0;
-    this.retryAt = void 0;
-    this.failures = 0;
-  }
-  dispose() {
-    this.closed = true;
-    this.invalidate();
-  }
-};
-
-// src/account-usage-providers.mjs
-var USAGE_ENDPOINTS = Object.freeze({
-  anthropic: "https://api.anthropic.com/api/oauth/usage",
-  "openai-codex": "https://chatgpt.com/backend-api/wham/usage",
-  "github-copilot": "https://api.github.com/copilot_internal/user",
-  "opencode-go": "https://opencode.ai/inference/go/v1/usage",
-  meta: "https://api.meta.ai/muse-code/key"
-});
-var invalid2 = () => {
-  throw new ProviderReadError("error");
-};
-var object = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : invalid2();
-var count = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : invalid2();
-var optionalBoolean = (value) => value == null ? void 0 : typeof value === "boolean" ? value : invalid2();
-var iso = (ms) => Number.isFinite(ms) && Number.isFinite(new Date(ms).getTime()) ? new Date(ms).toISOString() : invalid2();
-function calendar(value) {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) || iso(Date.parse(`${value}T00:00:00Z`)).slice(0, 10) !== value) invalid2();
-  return value;
-}
-function timestamp(value) {
-  if (value == null) return null;
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value)) invalid2();
-  calendar(value.slice(0, 10));
-  if (Number(value.slice(11, 13)) > 23 || Number(value.slice(14, 16)) > 59 || Number(value.slice(17, 19)) > 59) invalid2();
-  return iso(Date.parse(value));
-}
-function epoch(value, unknownNonpositive = false) {
-  if (value == null) return null;
-  if (typeof value !== "number" || !Number.isFinite(value)) invalid2();
-  if (unknownNonpositive && (value <= 0 || !Number.isFinite(new Date(value * 1e3).getTime()))) return null;
-  return iso(count(value) * 1e3);
-}
-var window2 = (id, scope2, usedPercent, resetsAt, windowSeconds) => ({ id, scope: scope2, usedPercent: count(usedPercent), resetsAt, windowSeconds });
-function parseClaudeUsage(payload2) {
-  const data = object(payload2);
-  const buckets = [["five_hour", "account", 18e3], ["seven_day", "account", 604800], ["seven_day_sonnet", "sonnet", 604800], ["seven_day_opus", "opus", 604800]];
-  if (!buckets.some(([id]) => Object.hasOwn(data, id))) invalid2();
-  return buckets.filter(([id]) => data[id] != null).map(([id, scope2, seconds]) => {
-    const bucket = object(data[id]);
-    return window2(id, scope2, bucket.utilization, timestamp(bucket.resets_at), seconds);
-  });
-}
-function parseCodexUsage(payload2, observedAt = Date.now()) {
-  const data = object(payload2);
-  if (!Object.hasOwn(data, "rate_limit")) invalid2();
-  if (data.rate_limit === null) return [];
-  const limits = object(data.rate_limit);
-  if (!["primary_window", "secondary_window"].some((id) => Object.hasOwn(limits, id))) invalid2();
-  return ["primary_window", "secondary_window"].filter((id) => limits[id] != null).map((id) => {
-    const bucket = object(limits[id]);
-    const seconds = bucket.limit_window_seconds == null ? null : count(bucket.limit_window_seconds);
-    if (seconds === 0) invalid2();
-    const reset = bucket.reset_at != null ? epoch(bucket.reset_at) : bucket.reset_after_seconds != null ? iso(observedAt + count(bucket.reset_after_seconds) * 1e3) : null;
-    return window2(id, "account", bucket.used_percent, reset, seconds);
-  });
-}
-function parseOpenCodeUsage(payload2) {
-  const usage = object(object(payload2).usage);
-  return [["rolling", 18e3], ["weekly", 604800], ["monthly", null]].map(([id, seconds]) => {
-    const bucket = object(usage[id]), percent = count(bucket.percent);
-    if (!["ok", "rate-limited"].includes(bucket.status) || percent > 100 || bucket.status === "rate-limited" !== (percent === 100)) invalid2();
-    const reset = timestamp(bucket.resetsAt);
-    if (reset === null) invalid2();
-    return window2(id, "account", percent, reset, seconds);
-  });
-}
-function parseMuseUsage(payload2) {
-  const data = object(payload2);
-  if (optionalBoolean(data.require_payment) === true || optionalBoolean(data.is_subs_active) !== true) throw new ProviderReadError("auth-required");
-  if (data.subs_usage == null) return [];
-  const usage = object(data.subs_usage), primary = object(usage.window), weekly = object(usage.weekly);
-  const seconds = count(primary.window_duration_mins) * 60;
-  if (!Number.isSafeInteger(seconds) || seconds <= 0) invalid2();
-  return [window2("window", "account", primary.used_percent, epoch(primary.resets_at, true), seconds), window2("weekly", "account", weekly.used_percent, epoch(weekly.resets_at, true), 604800)];
-}
-function copilotReset(data, bucket) {
-  if (bucket.quota_reset_at != null && bucket.quota_reset_at !== 0) return { resetsAt: epoch(bucket.quota_reset_at, true) };
-  const value = data.quota_reset_date_utc ?? data.quota_reset_date ?? data.limited_user_reset_date;
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? { resetsAt: null, resetsOn: calendar(value) } : { resetsAt: timestamp(value) };
-}
-function parseCopilotUsage(payload2) {
-  const data = object(payload2), credits = optionalBoolean(data.token_based_billing) === true;
-  if (!Object.hasOwn(data, "quota_snapshots")) invalid2();
-  if (data.quota_snapshots === null) return [];
-  const buckets = object(data.quota_snapshots);
-  const ids = data.copilot_plan === "free" || data.access_type_sku === "free_limited_copilot" ? ["chat"] : ["premium_interactions", "chat"];
-  for (const id of ids) {
-    if (buckets[id] == null) continue;
-    const bucket = object(buckets[id]), unlimited = optionalBoolean(bucket.unlimited);
-    if (unlimited === void 0) invalid2();
-    let total = bucket.entitlement;
-    if (total == null || unlimited && (total === -1 || total === "-1")) total = null;
-    else {
-      if (typeof total === "string") {
-        if (!/^\d+(?:\.\d+)?$/.test(total)) invalid2();
-        total = Number(total);
-      }
-      total = count(total);
-      if (total > Number.MAX_SAFE_INTEGER) invalid2();
-    }
-    if (!unlimited && total === 0) continue;
-    const result = { id, scope: "account", usedPercent: null, ...copilotReset(data, bucket), windowSeconds: null };
-    const unit = credits ? "credits" : "requests";
-    if (unlimited) {
-      result.quotaState = optionalBoolean(bucket.has_quota) === false && optionalBoolean(bucket.overage_permitted) !== true ? "unavailable" : "unlimited";
-      if (credits && bucket.credits_used != null) result.quota = { used: count(bucket.credits_used), total: null, remaining: null, unit, estimated: false };
-    } else {
-      const remainingPercent = count(bucket.percent_remaining);
-      if (remainingPercent > 100) invalid2();
-      result.usedPercent = 100 - remainingPercent;
-      const remaining = bucket.quota_remaining == null ? null : count(bucket.quota_remaining);
-      if (total !== null) result.quota = { used: remaining === null ? total * result.usedPercent / 100 : Math.max(0, total - remaining), total, remaining, unit, estimated: remaining === null };
-    }
-    return [result];
-  }
-  return [];
-}
-function codexAccountId(access3) {
-  try {
-    const parts = access3.split(".");
-    if (parts.length !== 3 || !/^[\w-]+$/.test(parts[1])) throw 0;
-    const auth = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"))["https://api.openai.com/auth"];
-    if (typeof auth?.chatgpt_account_id !== "string" || !/^[\x21-\x7e]{1,512}$/.test(auth.chatgpt_account_id)) throw 0;
-    return auth.chatgpt_account_id;
-  } catch {
-    throw new ProviderReadError("auth-required");
-  }
-}
-async function readProviderJson(response, { now = Date.now(), maxBytes = 262144, allowArray = false } = {}) {
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {
-    });
-    throw new ProviderReadError(response.status === 401 || response.status === 403 ? "auth-required" : response.status === 429 ? "rate-limited" : "error", response.status === 429 ? retryAfterMilliseconds(response.headers.get("retry-after"), now) : void 0);
-  }
-  if (Number(response.headers.get("content-length")) > maxBytes) {
-    await response.body?.cancel().catch(() => {
-    });
-    invalid2();
-  }
-  const reader = response.body?.getReader();
-  if (!reader) invalid2();
-  const chunks = [];
-  let length = 0;
-  try {
-    for (; ; ) {
-      const next = await reader.read();
-      if (next.done) break;
-      length += next.value.byteLength;
-      if (length > maxBytes) invalid2();
-      chunks.push(next.value);
-    }
-    const bytes = new Uint8Array(length);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-    const value = JSON.parse(new TextDecoder().decode(bytes));
-    return allowArray && Array.isArray(value) ? value : object(value);
-  } catch (error2) {
-    throw error2 instanceof ProviderReadError ? error2 : new ProviderReadError("error");
-  } finally {
-    await reader.cancel().catch(() => {
-    });
-  }
-}
-function standardProfile(connection, allowedBases) {
-  const profile2 = connection.profile ?? {};
-  if (connection.credentialRef || profile2.apiKeyEnv || [...Object.keys(profile2.headers ?? {}), ...Object.keys(connection.headerRefs ?? {})].some((key) => key.toLowerCase() === "authorization")) throw new ProviderReadError("unsupported");
-  if (profile2.baseURL !== void 0 && !allowedBases.includes(profile2.baseURL.replace(/\/+$/, ""))) throw new ProviderReadError("unsupported");
-}
-var token = (value) => typeof value === "string" && /^[\x21-\x7e]+$/.test(value) && !value.startsWith("!") ? value : (() => {
-  throw new ProviderReadError("auth-required");
-})();
-function createPiUsageProviders({ fetch: request = (...args) => globalThis.fetch(...args), now = Date.now, metaSession } = {}) {
-  const definitions = {
-    anthropic: { bases: ["https://api.anthropic.com"], parser: parseClaudeUsage, refreshAccess: true },
-    "openai-codex": { bases: ["https://chatgpt.com/backend-api"], parser: parseCodexUsage, refreshAccess: true },
-    "github-copilot": { bases: ["https://api.individual.githubcopilot.com", "https://api.business.githubcopilot.com", "https://api.enterprise.githubcopilot.com"], parser: parseCopilotUsage },
-    "opencode-go": { bases: ["https://opencode.ai/inference/go", "https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go", "https://opencode.ai/zen/go/v1"], parser: parseOpenCodeUsage, apiKey: true }
-  };
-  const providers = Object.fromEntries(Object.entries(definitions).map(([id, definition]) => [id, {
-    source: "internal-http",
-    refreshAccess: definition.refreshAccess === true,
-    validate: (connection) => standardProfile(connection, definition.bases),
-    async read({ connection, credential, signal }) {
-      standardProfile(connection, definition.bases);
-      let headers = { accept: "application/json" };
-      if (definition.apiKey) {
-        if (credential?.type !== "api_key" || credential.env || connection.authMethod !== "api-key") throw new ProviderReadError("unsupported");
-        headers.authorization = `Bearer ${token(credential.key)}`;
-      } else {
-        if (credential?.type !== "oauth" || connection.authMethod !== "oauth") throw new ProviderReadError(credential ? "unsupported" : "auth-required");
-        if (id === "github-copilot") {
-          if (credential.enterpriseUrl !== void 0 && credential.enterpriseUrl !== null && credential.enterpriseUrl !== "") throw new ProviderReadError("unsupported");
-          headers.authorization = `token ${token(credential.refresh)}`;
-          headers["x-github-api-version"] = "2025-04-01";
-        } else {
-          headers.authorization = `Bearer ${token(credential.access)}`;
-          if (id === "anthropic") headers["anthropic-beta"] = "oauth-2025-04-20";
-          else headers["chatgpt-account-id"] = codexAccountId(credential.access);
-        }
-      }
-      const body = await readProviderJson(await request(USAGE_ENDPOINTS[id], { method: "GET", redirect: "error", signal, headers }), { now: now() });
-      const observedAt = now();
-      return { source: "internal-http", sourceObservedAt: iso(observedAt), windows: definition.parser(body, observedAt) };
-    }
-  }]));
-  providers.openai = {
-    source: "internal-http",
-    requiresCredentials: false,
-    validate() {
-      throw new ProviderReadError("unsupported");
-    },
-    read() {
-      throw new ProviderReadError("unsupported");
-    }
-  };
-  if (metaSession) providers.meta = {
-    source: "internal-http",
-    validate: (connection) => standardProfile(connection, ["https://api.meta.ai/v1"]),
-    read: ({ connection, signal, force }) => metaSession(connection).usage({ signal, force })
-  };
-  return providers;
-}
 
 // src/openai-chatgpt-models.mjs
 function chatGPTModelRows(payload2) {
@@ -135745,7 +136208,7 @@ function chatGPTModelRows(payload2) {
 // src/openai-chatgpt-catalog.mjs
 var BASE = "https://api.openai.com/v1";
 var oauth = (credential) => credential?.type === "oauth" && typeof credential.refresh === "string" && credential.refresh.length > 0;
-var principal = (credential) => createHash8("sha256").update(credential.refresh).digest("hex");
+var principal = (credential) => createHash9("sha256").update(credential.refresh).digest("hex");
 var signature = (profile2) => JSON.stringify([profile2.baseURL, profile2.api, profile2.apiKeyEnv, profile2.credentialRef, profile2.headers, profile2.headerRefs]);
 function hasChatGPTCredentialOverride(profile2 = {}) {
   return profile2.apiKeyEnv !== void 0 || profile2.credentialRef !== void 0 || [...Object.keys(profile2.headers ?? {}), ...Object.keys(profile2.headerRefs ?? {})].some((key) => key.toLowerCase() === "authorization");
@@ -135977,7 +136440,7 @@ function capacity(...candidates) {
   }
   return void 0;
 }
-function label(...candidates) {
+function label2(...candidates) {
   for (const candidate of candidates) {
     if (typeof candidate === "string" && candidate.length > 0) return candidate;
   }
@@ -136041,9 +136504,9 @@ function readListing(body) {
   const models = [];
   for (const { key, raw } of listed) {
     const entry = raw;
-    const id = label(key, entry?.id);
+    const id = label2(key, entry?.id);
     if (id === void 0) continue;
-    const name2 = label(entry?.name, entry?.display_name, entry?.displayName) ?? id;
+    const name2 = label2(entry?.name, entry?.display_name, entry?.displayName) ?? id;
     const contextWindow = capacity(
       entry?.contextWindow,
       entry?.context_window,
@@ -136675,9 +137138,9 @@ function apply(ctx, config, live) {
 }
 
 // src/account-usage.mjs
-import { createHash as createHash9 } from "node:crypto";
+import { createHash as createHash10 } from "node:crypto";
 var statuses = /* @__PURE__ */ new Set(["available", "unobserved", "unsupported", "auth-required", "stale", "rate-limited", "error"]);
-var label2 = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value) ? value : void 0;
+var label3 = (value) => typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(value) ? value : void 0;
 var instant = (value) => {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) || !Number.isFinite(Date.parse(value))) return void 0;
   const calendar2 = /* @__PURE__ */ new Date(`${value.slice(0, 10)}T00:00:00Z`);
@@ -136691,7 +137154,7 @@ function normalizeUsageSnapshot(raw = {}) {
   if (!Array.isArray(raw.windows) || raw.windows.length > 50) throw new ProviderReadError("error");
   const seen = /* @__PURE__ */ new Set();
   const windows = raw.windows.map((row) => {
-    const id = label2(row?.id), scope2 = label2(row?.scope ?? "account");
+    const id = label3(row?.id), scope2 = label3(row?.scope ?? "account");
     if (!id || !scope2 || seen.has(`${id}:${scope2}`) || row.usedPercent !== null && number(row.usedPercent) === void 0) throw new ProviderReadError("error");
     seen.add(`${id}:${scope2}`);
     const windowSeconds = row.windowSeconds == null ? null : number(row.windowSeconds);
@@ -136704,12 +137167,12 @@ function normalizeUsageSnapshot(raw = {}) {
     }
     if (["unlimited", "unavailable", "unallocated"].includes(row.quotaState)) result.quotaState = row.quotaState;
     if (row.quota) {
-      const quota = row.quota;
-      if (!["credits", "requests", "tokens", "USD"].includes(quota.unit)) throw new ProviderReadError("error");
-      result.quota = { unit: quota.unit, estimated: quota.estimated === true };
+      const quota2 = row.quota;
+      if (!["credits", "requests", "tokens", "USD"].includes(quota2.unit)) throw new ProviderReadError("error");
+      result.quota = { unit: quota2.unit, estimated: quota2.estimated === true };
       for (const field of ["used", "total", "remaining"]) {
-        if (quota[field] != null && number(quota[field]) === void 0) throw new ProviderReadError("error");
-        result.quota[field] = quota[field] ?? null;
+        if (quota2[field] != null && number(quota2[field]) === void 0) throw new ProviderReadError("error");
+        result.quota[field] = quota2[field] ?? null;
       }
     }
     return result;
@@ -136731,7 +137194,7 @@ function fingerprint(connection, credential) {
       identity = credential.refresh;
     }
   } else identity = credential.type === "oauth" ? credential.refresh : credential.key ?? JSON.stringify(credential.env ?? {});
-  return createHash9("sha256").update(`${credential.type}:${identity ?? ""}`).digest("hex");
+  return createHash10("sha256").update(`${credential.type}:${identity ?? ""}`).digest("hex");
 }
 var scope = (connection) => JSON.stringify([connection.profileKey, connection.integrationId, connection.serviceId, connection.connectionId, connection.credentialGeneration, connection.authMethod, connection.credentialRecordId, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api, Object.keys(connection.headerRefs ?? {}).some((key) => key.toLowerCase() === "authorization")]);
 var publicIdentity = (connection) => ({ integrationId: connection.integrationId, serviceId: connection.serviceId, connectionId: connection.connectionId });
@@ -136837,11 +137300,11 @@ var AccountUsageManager = class {
 };
 
 // src/muse-code-owner.mjs
-var ID2 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+var ID3 = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 var CONTRIBUTOR_TERMS = "https://dev.meta.ai/help/subscriptions/muse-code-contributor-mode";
 function createMuseCodeOwner({ ctx, connections } = {}) {
   const recordKey = (connection) => {
-    if (!ID2.test(connection?.credentialRecordId ?? "")) throw new ConnectionError("invalid-request");
+    if (!ID3.test(connection?.credentialRecordId ?? "")) throw new ConnectionError("invalid-request");
     return `llm-pi-ai/${connection.credentialRecordId}`;
   };
   return {
@@ -136859,7 +137322,7 @@ function createMuseCodeOwner({ ctx, connections } = {}) {
     authKey: recordKey,
     routeIdFor: (id) => `muse-${id}`,
     validateConnection(connection) {
-      if (connection.serviceId !== MUSE_CODE_SERVICE_ID || connection.authMethod !== "oauth" || !ID2.test(connection.credentialRecordId) || connection.credentialRef || connection.headerRefs && Object.keys(connection.headerRefs).length || connection.profile?.baseURL || connection.profile?.api || connection.profile?.apiKeyEnv) throw new ConnectionError("owner-managed");
+      if (connection.serviceId !== MUSE_CODE_SERVICE_ID || connection.authMethod !== "oauth" || !ID3.test(connection.credentialRecordId) || connection.credentialRef || connection.headerRefs && Object.keys(connection.headerRefs).length || connection.profile?.baseURL || connection.profile?.api || connection.profile?.apiKeyEnv) throw new ConnectionError("owner-managed");
     },
     async describeConnection(connection) {
       const description = await ctx.credentials.describeRecord(recordKey(connection));
@@ -136873,7 +137336,7 @@ function createMuseCodeOwner({ ctx, connections } = {}) {
 }
 
 // src/external-integrations.mjs
-import { createHash as createHash10 } from "node:crypto";
+import { createHash as createHash11 } from "node:crypto";
 var ExternalIntegrationError = class extends Error {
   constructor(code = "external-unavailable") {
     super(["external-unavailable", "external-models-unsupported", "external-provider-unavailable", "external-aborted", "external-route-conflict", "external-profile-changed"].includes(code) ? code : "external-unavailable");
@@ -136881,7 +137344,7 @@ var ExternalIntegrationError = class extends Error {
   }
 };
 var publicText = (value, limit3 = 200) => typeof value === "string" && value.length > 0 && value.length <= limit3 && !/[\u0000-\u001f\u007f]/.test(value) ? value : void 0;
-var connectionId = (profileKey, routeId) => `x-${createHash10("sha256").update(JSON.stringify([profileKey, routeId])).digest("hex").slice(0, 32)}`;
+var connectionId = (profileKey, routeId) => `x-${createHash11("sha256").update(JSON.stringify([profileKey, routeId])).digest("hex").slice(0, 32)}`;
 function createExternalIntegrations({ llm, profileKey = "default", generation = () => 1, excludeRoutes = () => [], excludeSettingsNamespaces = ["dsh-pi-login", "llm-pi-ai"], allowModelRead = false, timeout = 2e4 } = {}) {
   const integrationId = "external-host";
   const omittedNamespaces = new Set(excludeSettingsNamespaces);
@@ -137030,7 +137493,7 @@ function createExternalIntegrations({ llm, profileKey = "default", generation = 
 }
 
 // src/muse-code-catalog.mjs
-import { createHash as createHash11 } from "node:crypto";
+import { createHash as createHash12 } from "node:crypto";
 var MUSE_CODE_MODELS_URL = "https://api.meta.ai/muse-code/models";
 var MUSE_CODE_KEY_URL = "https://api.meta.ai/muse-code/key";
 var BASE_URL = "https://api.meta.ai/v1";
@@ -137040,12 +137503,12 @@ var KNOWN_EFFORTS = /* @__PURE__ */ new Set([...LEVELS, "none"]);
 var DOCUMENTED_STANDARD_EFFORTS = /* @__PURE__ */ new Map([
   ["muse-wonder-1.0", ["minimal", "low", "medium", "high", "xhigh", "max"]]
 ]);
-var ID3 = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
+var ID4 = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/;
 var NON_CHAT = /^(?:muse-image|muse-voice|sam-)/;
 var oauth2 = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
-var principalOf = (credential) => createHash11("sha256").update(credential.refresh).digest("hex");
-var positive = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
-var label3 = (value) => typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 100) : void 0;
+var principalOf = (credential) => createHash12("sha256").update(credential.refresh).digest("hex");
+var positive2 = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
+var label4 = (value) => typeof value === "string" && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 100) : void 0;
 var first = (row, keys) => keys.map((key) => row[key]).find((value) => value !== void 0 && value !== null);
 function rowsOf(body) {
   const rows = Array.isArray(body) ? body : first(body, ["data", "models", "rows", "items"]);
@@ -137132,14 +137595,14 @@ function parseMuseCatalog(body) {
   for (const row of rowsOf(body)) {
     if (!row || typeof row !== "object") continue;
     const id = first(row, ["id", "model_id", "modelId", "model"]);
-    if (typeof id !== "string" || !ID3.test(id) || NON_CHAT.test(id) || rows.some((entry) => entry.id === id)) continue;
+    if (typeof id !== "string" || !ID4.test(id) || NON_CHAT.test(id) || rows.some((entry) => entry.id === id)) continue;
     if (row.enabled === false || ["hidden", "internal", "disabled"].includes(row.visibility)) continue;
     const parsed = effortsOf(row);
     const next = {
       id,
-      name: label3(first(row, ["display_label", "displayLabel", "display_name", "displayName", "name"])) ?? id,
-      contextWindow: positive(first(row, ["context_limit", "contextLimit", "context_window", "contextWindow"])) ?? 1048576,
-      maxTokens: positive(first(row, ["output_limit", "outputLimit", "max_output_tokens", "maxTokens"])) ?? 131072,
+      name: label4(first(row, ["display_label", "displayLabel", "display_name", "displayName", "name"])) ?? id,
+      contextWindow: positive2(first(row, ["context_limit", "contextLimit", "context_window", "contextWindow"])) ?? 1048576,
+      maxTokens: positive2(first(row, ["output_limit", "outputLimit", "max_output_tokens", "maxTokens"])) ?? 131072,
       // Muse chat models accept images; the catalog only flags video and image output.
       input: ["text", "image"],
       efforts: parsed.efforts,
@@ -137177,7 +137640,7 @@ function descriptor(row) {
     ...row.defaultEffort && efforts.includes(row.defaultEffort) ? { [MUSE_DEFAULT_EFFORT]: row.defaultEffort } : {}
   };
   const mode = row.contributorMode;
-  if (mode && positive(mode.contextWindow) && positive(mode.maxTokens) && Array.isArray(mode.efforts)) {
+  if (mode && positive2(mode.contextWindow) && positive2(mode.maxTokens) && Array.isArray(mode.efforts)) {
     model[MUSE_CONTRIBUTOR_CAPS] = descriptor({
       id: row.id,
       name: mode.name || row.name,
@@ -137334,7 +137797,7 @@ var MuseCodeCatalogSession = class {
         body: "{}",
         headers: { accept: "application/json", "content-type": "application/json", "x-api-version": "1.0.0", authorization: `Bearer ${current.refresh}` }
       }), { now: this.now() });
-      const account = { active: typeof body.is_subs_active === "boolean" ? body.is_subs_active : null, tierName: label3(body.subs_tier_name) };
+      const account = { active: typeof body.is_subs_active === "boolean" ? body.is_subs_active : null, tierName: label4(body.subs_tier_name) };
       const stored = await this.credentials.read("meta");
       if (this.closed || requestSignal3.aborted || !oauth2(stored) || principalOf(stored) !== principal2) throw new ProviderReadError("account-changed");
       if (account.active === true && typeof body.api_key === "string" && body.api_key) {
@@ -137385,14 +137848,14 @@ function museCatalogProvider(session) {
 }
 
 // src/meta-catalog.mjs
-import { createHash as createHash12 } from "node:crypto";
+import { createHash as createHash13 } from "node:crypto";
 var META_CATALOG_GRANT = /* @__PURE__ */ Symbol("dsh-pi-login/meta-catalog-grant");
 var LEVELS2 = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-var principalOf2 = (credential) => createHash12("sha256").update(credential.refresh).digest("hex");
+var principalOf2 = (credential) => createHash13("sha256").update(credential.refresh).digest("hex");
 var oauth3 = (value) => value?.type === "oauth" && typeof value.refresh === "string" && value.refresh.length > 0;
 var fullModel = (id) => /^muse-wonder-full(?:-|$)/.test(id);
 var cleanLabel = (value) => typeof value === "string" ? value.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 100) : void 0;
-var positive2 = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
+var positive3 = (value) => Number.isSafeInteger(value) && value > 0 ? value : void 0;
 var MetaCatalogError = class extends Error {
   constructor(code) {
     super(code);
@@ -137406,8 +137869,8 @@ function checkProfile(profile2) {
   }
 }
 function learnedModel(row, profile2, principal2) {
-  const context = positive2(row.contextWindow ?? row.context_window ?? row.context_length ?? row.limit?.context);
-  const output = positive2(row.maxTokens ?? row.max_tokens ?? row.max_output_tokens ?? row.limit?.output);
+  const context = positive3(row.contextWindow ?? row.context_window ?? row.context_length ?? row.limit?.context);
+  const output = positive3(row.maxTokens ?? row.max_tokens ?? row.max_output_tokens ?? row.limit?.output);
   const input = row.input ?? row.modalities?.input;
   const offeredInput = Array.isArray(input) ? input.filter((value) => value === "text" || value === "image") : [];
   const map3 = row.thinkingLevelMap;
@@ -137474,7 +137937,7 @@ var MetaCatalogSession = class {
   }
   async validate() {
     const profile2 = this.profile();
-    const signature2 = createHash12("sha256").update(JSON.stringify({
+    const signature2 = createHash13("sha256").update(JSON.stringify({
       baseURL: profile2.baseURL,
       api: profile2.api,
       apiKeyEnv: profile2.apiKeyEnv,
@@ -137713,6 +138176,88 @@ function metaCatalogProvider(session) {
   };
 }
 
+// src/gateway-usage.mjs
+var finite = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+var reset = (value) => {
+  if (value == null) return null;
+  const date2 = new Date(typeof value === "number" && value < 1e11 ? value * 1e3 : value);
+  return Number.isFinite(date2.getTime()) ? date2.toISOString() : null;
+};
+var quota = (id, remaining, total, until, unit = "USD") => ({
+  id,
+  scope: "account",
+  usedPercent: finite(total) && total > 0 ? Math.max(0, 100 * (total - remaining) / total) : null,
+  resetsAt: reset(until),
+  windowSeconds: null,
+  quota: { unit, remaining, total: finite(total) ? total : null, used: finite(total) ? Math.max(0, total - remaining) : null }
+});
+function parseOllamaBalance(body) {
+  const windows = [], included = body?.included;
+  if (finite(included?.balance_usd)) windows.push(quota("included", included.balance_usd, included.allowance_usd, included.period?.until));
+  for (const id of ["session", "weekly"]) {
+    const entry = included?.[id];
+    if (finite(entry?.remaining_percent) && entry.remaining_percent <= 100) windows.push({
+      id,
+      scope: "account",
+      usedPercent: 100 - entry.remaining_percent,
+      resetsAt: reset(entry.resets_at),
+      windowSeconds: id === "weekly" ? 604800 : null
+    });
+  }
+  if (finite(body?.purchased?.balance_usd)) windows.push(quota("purchased", body.purchased.balance_usd));
+  if (!windows.length) throw new ProviderReadError("error");
+  return windows;
+}
+function parseCommandCredits(body) {
+  const credits = body?.credits;
+  const amounts = ["monthlyCredits", "purchasedCredits", "freeCredits"].map((key) => credits?.[key]).filter(finite);
+  if (!amounts.length) throw new ProviderReadError("error");
+  const windows = [quota("balance", amounts.reduce((sum, value) => sum + value, 0), void 0, void 0, "credits")];
+  for (const [key, id, seconds] of [["fiveHour", "rolling", 18e3], ["weekly", "weekly", 604800]]) {
+    const entry = body.windowLimits?.[key];
+    if (!finite(entry?.used)) continue;
+    windows.push({
+      id,
+      scope: "account",
+      usedPercent: finite(entry.cap) && entry.cap > 0 ? 100 * entry.used / entry.cap : null,
+      resetsAt: reset(entry.resetAt),
+      windowSeconds: seconds,
+      quota: {
+        unit: "credits",
+        used: entry.used,
+        total: finite(entry.cap) ? entry.cap : null,
+        remaining: finite(entry.cap) ? Math.max(0, entry.cap - entry.used) : null
+      }
+    });
+  }
+  return windows;
+}
+function gatewayUsageProviders({ fetch: request = (...args) => globalThis.fetch(...args), now = Date.now } = {}) {
+  return Object.fromEntries(["commandcode", "ollama-cloud"].map((provider) => {
+    const base = provider === "commandcode" ? "https://api.commandcode.ai/provider/v1" : "https://ollama.com/v1";
+    const validate2 = (connection) => {
+      if (connection.authMethod !== "api-key" || connection.credentialRef || connection.profile?.apiKeyEnv || connection.profile?.baseURL && connection.profile.baseURL.replace(/\/+$/, "") !== base || Object.keys(connection.headerRefs ?? {}).length || Object.keys(connection.profile?.headers ?? {}).length) throw new ProviderReadError("unsupported");
+    };
+    return [provider, { source: "internal-http", validate: validate2, async read({ connection, credential, signal }) {
+      validate2(connection);
+      if (credential?.type !== "api_key" || credential.env || typeof credential.key !== "string" || !/^[\x21-\x7e]+$/.test(credential.key)) throw new ProviderReadError("auth-required");
+      const get2 = async (url) => readProviderJson(await request(url, {
+        redirect: "error",
+        signal,
+        headers: { accept: "application/json", authorization: `Bearer ${credential.key}` }
+      }), { now: now() });
+      let windows;
+      if (provider === "ollama-cloud") windows = parseOllamaBalance(await get2("https://ollama.com/api/balance"));
+      else {
+        const identity = await get2("https://api.commandcode.ai/alpha/whoami");
+        const org = typeof identity?.org?.id === "string" ? `?orgId=${encodeURIComponent(identity.org.id)}` : "";
+        windows = parseCommandCredits(await get2(`https://api.commandcode.ai/alpha/billing/credits${org}`));
+      }
+      return { source: "internal-http", sourceObservedAt: new Date(now()).toISOString(), windows };
+    } }];
+  }));
+}
+
 // src/index.mjs
 var inject = ["llm", "authorization", "credentials", "connection", "settings"];
 var name = "dsh-pi-login";
@@ -137766,7 +138311,7 @@ function apply2(ctx, config, options = {}) {
   registry2.register(muse);
   registry2.register(external.descriptor);
   ctx.on("dsh-pi-login/register-integration", (owner, ownRegistration) => registry2.register(owner, ownRegistration));
-  const sessionIdentity = (connection) => JSON.stringify([connection.serviceId, connection.authMethod, connection.credentialRecordId, connection.credentialGeneration, connection.credentialRef, connection.profile?.baseURL, connection.profile?.api, hasChatGPTCredentialOverride({ ...connection.profile, credentialRef: connection.credentialRef, headerRefs: connection.headerRefs })]);
+  const sessionIdentity = (connection) => JSON.stringify([catalogBinding(connection), connection.authMethod, connection.profile?.models]);
   const authFor = (connection) => {
     const binding = manager.binding(connection);
     return connectionAuthFrom(ctx, { ...binding, serviceId: sdkServiceOf(connection) ?? connection.serviceId, isCurrent: () => manager.isCurrent(binding) });
@@ -137786,7 +138331,7 @@ function apply2(ctx, config, options = {}) {
     if (previous?.identity === identity) return previous.catalogs;
     previous?.catalogs.dispose();
     if (connection.integrationId === MUSE_CODE_INTEGRATION_ID) {
-      const binding = manager.binding(connection);
+      const binding2 = manager.binding(connection);
       const museSession = new MuseCodeCatalogSession({
         credentials: authFor(connection).credentials,
         snapshot: () => {
@@ -137796,7 +138341,7 @@ function apply2(ctx, config, options = {}) {
             return void 0;
           }
         },
-        persist: (rows, options2) => manager.saveMuseCatalog(binding, rows, options2),
+        persist: (rows, options2) => manager.saveMuseCatalog(binding2, rows, options2),
         refreshAuth: (signal) => refreshAuth(manager.lookup(id), signal),
         onChange: () => {
           revision++;
@@ -137837,8 +138382,22 @@ function apply2(ctx, config, options = {}) {
         ctx.emit("dsh-pi-login/catalog-updated");
       }
     }) : void 0;
-    const catalogs = new ProviderCatalogs(meta ? { meta: metaCatalogProvider(meta) } : {});
-    sessions.set(id, { identity, catalogs, meta });
+    const baseline = catalogModels(connection.serviceId);
+    const binding = manager.binding(connection);
+    const live = !meta && canUseLiveCatalog(connection, baseline) ? new LiveCatalogSession({
+      connection,
+      baseline,
+      credentials: authFor(connection).credentials,
+      snapshot: () => manager.lookup(id).modelCatalog,
+      persist: (value, options2) => manager.saveModelCatalog(binding, value, options2),
+      isCurrent: () => manager.isCurrent(binding) && catalogBinding(manager.lookup(id)) === catalogBinding(binding),
+      onChange: () => {
+        revision++;
+        ctx.emit("dsh-pi-login/catalog-updated");
+      }
+    }) : void 0;
+    const catalogs = new ProviderCatalogs(meta ? { meta: metaCatalogProvider(meta) } : live ? { [connection.serviceId]: liveCatalogProvider(live) } : {});
+    sessions.set(id, { identity, catalogs, meta, live });
     return catalogs;
   };
   const usage = new AccountUsageManager({
@@ -137847,6 +138406,7 @@ function apply2(ctx, config, options = {}) {
         catalogsFor(connection);
         return sessions.get(connection.connectionId).meta;
       } }),
+      ...gatewayUsageProviders(),
       [`${MUSE_CODE_INTEGRATION_ID}/muse-code`]: {
         source: "internal-http",
         read: ({ connection, signal, force }) => {
