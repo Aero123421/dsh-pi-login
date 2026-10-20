@@ -73,7 +73,7 @@ jobs:
         run: |
           npm install --prefix .cache/dsh-cli-alpha --ignore-scripts @deepseek-ai/dsh@alpha pnpm@11.28.5
           PATH="$PWD/.cache/dsh-cli-alpha/node_modules/.bin:$PATH" npm run test:boot
-      - name: Publish verified package
+      - name: Create or update the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -95,5 +95,4 @@ jobs:
             gh release create "$RELEASE_TAG" "$package" artifacts/SHA256SUMS \
               --verify-tag --draft --title "$RELEASE_TAG" "${notes[@]}"
           fi
-          gh release edit "$RELEASE_TAG" --draft=false --latest
           gh release view "$RELEASE_TAG" --json url,isDraft,assets
