@@ -4,6 +4,7 @@ export const en = {
   catalogUpdated: 'Model catalog updated', catalogUpdating: 'Checking the model catalog…',
   catalogCachedAfterFailure: 'Could not update. Showing the last available model catalog.',
   catalogInitialLoadFailed: 'Could not fetch the latest model catalog. Choose Update model list to try again.',
+  catalogSaveFailed: 'The model list was fetched, but it could not be saved in this profile. Choose Update model list to try again.',
   emptyModelCatalog: 'No models are available to display.',
   catalogPartiallyUpdated: 'Catalog updated. Some model information could not be loaded or needs a newer SDK.',
   catalogAutoUpdateHint: 'Model data updates hourly without a plugin update. New models are off until selected.',
@@ -95,6 +96,7 @@ export const ja = {
   catalogUpdated: 'モデル一覧を更新しました', catalogUpdating: '最新のモデル一覧を確認しています…',
   catalogCachedAfterFailure: '更新できなかったため、最後に取得できたモデル一覧を表示しています。',
   catalogInitialLoadFailed: '最新のモデル一覧を取得できませんでした。「モデル一覧を更新」で再試行してください。',
+  catalogSaveFailed: 'モデル一覧は取得できましたが、このプロファイルへ保存できませんでした。「モデル一覧を更新」で再試行してください。',
   emptyModelCatalog: '表示できるモデルがありません。',
   catalogPartiallyUpdated: '一覧を更新しました。一部のモデル情報は取得できなかったか、新しいSDKが必要です。',
   catalogAutoUpdateHint: 'プラグイン更新とは別に、1時間ごとにモデル情報を更新します。新モデルは選択するまでオフです。',
@@ -217,6 +219,7 @@ Object.assign(en, {
   resets: 'Resets', resetDate: 'Reset date (time not supplied)', retryAt: 'Retry after', observedAt: 'Last observed', checkedAt: 'Last checked',
   lastObserved: 'Recorded from a prior response. Opening this screen does not run a generation.',
   endpointUntrusted: 'This endpoint is not trusted by the host. Add it to the host allowlist before saving.',
+  invalidEndpoint: 'Enter an http or https endpoint without a username, password, query, or fragment.',
   serviceUnavailable: 'This integration does not provide a supported model connection in this DSH version.',
   cloneHint: 'The copy starts disabled and has no credentials. Configure its account separately.',
 
@@ -257,6 +260,7 @@ Object.assign(ja, {
   resets: 'リセット時刻', resetDate: 'リセット日（時刻の情報なし）', retryAt: '再試行可能時刻', observedAt: '最終観測時刻', checkedAt: '最終取得時刻',
   lastObserved: '過去の応答で観測した情報です。この画面を開いても生成は行いません。',
   endpointUntrusted: 'この接続先はホストで許可されていません。ホストの許可リストに追加してから保存してください。',
+  invalidEndpoint: 'ユーザー名、パスワード、クエリ、フラグメントを含まない http または https の接続先を入力してください。',
   serviceUnavailable: 'このDSH版では、この連携のモデル接続を利用できません。',
   cloneHint: '複製した接続は無効・認証なしで作成します。アカウントは別に設定してください。',
 

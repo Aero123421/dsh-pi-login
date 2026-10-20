@@ -14,10 +14,15 @@ export class LoginController {
     if (this.closed) return Promise.resolve()
     if (this.pending) return this.pending.promise
     const request = { abort: new AbortController() }
+    // A newer refresh() replaces this request. Wait for that request instead of
+    // resolving with the list that was current when this one started.
+    const follow = () => this.pending && this.pending !== request ? this.pending.promise : undefined
     request.promise = this.call('connection-list', {}, request.abort.signal).then(snapshot => {
-      if (this.pending === request) this.publish({ status: 'ready', ...snapshot, entries: snapshot.connections ?? [], error: false })
+      if (this.pending !== request) return follow()
+      this.publish({ status: 'ready', ...snapshot, entries: snapshot.connections ?? [], error: false })
     }, () => {
-      if (this.pending === request) this.publish({ ...this.state, status: 'ready', error: true })
+      if (this.pending !== request) return follow()
+      this.publish({ ...this.state, status: 'ready', error: true })
     }).finally(() => { if (this.pending === request) this.pending = undefined })
     this.pending = request
     this.publish({ ...this.state, status: 'loading', error: false })
@@ -26,8 +31,12 @@ export class LoginController {
   refresh() {
     const previous = this.pending
     this.pending = undefined
+    const next = this.load()
     previous?.abort.abort()
-    return this.load()
+    return next
+  }
+  entry(connectionId) {
+    return this.state.entries.find(item => item.connectionId === connectionId)
   }
   /** The connection page is showing. Background events must not fetch while it is hidden. */
   retain() {
@@ -65,6 +74,7 @@ export class LoginController {
       start: (id, method) => this.start(id, method, scope),
       cancel: ticket => this.cancel(ticket, scope),
       refresh: async () => { this.assertCurrent(scope); await this.refresh(); this.assertCurrent(scope) },
+      entry: connectionId => this.entry(connectionId),
       getSnapshot: this.getSnapshot,
     }
     return scoped
@@ -95,4 +105,25 @@ export class LoginController {
     for (const [ticket, scope] of this.tickets) void this.call('cancel', { ticket, ...scope }).catch(() => {})
     this.tickets.clear()
   }
+}
+
+/** The connection just created, taken by id from the list refresh has published. */
+export function createdLoginEntry(controller, result, fallback = {}) {
+  const created = result?.connection ?? result ?? {}
+  return result?.connection ?? controller.entry(created.connectionId) ?? {
+    connectionId: created.connectionId, authMethod: fallback.authMethod, displayName: fallback.displayName, enabled: false,
+  }
+}
+
+export async function finishConnectionCreate(controller, result, { method, displayName, onSaved, onLogin }) {
+  await controller.refresh()
+  onSaved()
+  if (method !== 'oauth') return
+  onLogin(createdLoginEntry(controller, result, { authMethod: method, displayName }))
+}
+
+export async function finishConnectionRecover(controller, entry, { onSaved, notice }) {
+  await controller.refresh()
+  const current = controller.entry(entry.connectionId)
+  if (current && current.credentialGeneration !== entry.credentialGeneration) onSaved(notice)
 }

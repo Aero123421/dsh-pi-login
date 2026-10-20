@@ -181,6 +181,41 @@ test('model activation preserves provider configuration and uses optimistic revi
  assert.equal(fixture.writes.length,1)
 })
 
+test('a catalog migration write error does not fail the route and the next request tries again', async () => {
+  let attempts = 0
+  const order = []
+  const routes = new Map()
+  apply({
+    get: () => undefined,
+    authorization: { list: () => [] },
+    credentials: {},
+    settings: {},
+    effect: () => {},
+    connection: { fetch: { register: route => routes.set(route.path, route) } },
+  }, {
+    connections: {
+      migrateModelCatalogs: () => {
+        attempts++
+        order.push('migrate')
+        return Promise.reject(Object.assign(new Error('ENOSPC'), { code: 'write-failed' }))
+      },
+      list: async () => { order.push('list'); return [{ connectionId: 'c-1' }] },
+    },
+  })
+  const route = routes.get('/api/dsh-pi-login/connection-list')
+  const call = () => route.fetch(new Request('http://localhost/api/dsh-pi-login/connection-list', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId: 'id-1', method: 'dsh-pi-login/connection-list', payload: {} }),
+  }))
+  const first = await (await call()).json()
+  const second = await (await call()).json()
+  assert.equal(first.result.ok, true)
+  assert.deepEqual(first.result.value, [{ connectionId: 'c-1' }])
+  assert.equal(second.result.ok, true)
+  assert.equal(attempts, 2)
+  assert.deepEqual(order, ['migrate', 'list', 'migrate', 'list'])
+})
+
 test('Host registers authenticated Connection routes, rejects malformed envelopes, and redacts errors',async t=>{
  const fixture=setup(async()=>{})
  const effects=[],routes=new Map()

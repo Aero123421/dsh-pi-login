@@ -19,6 +19,10 @@ import { DEFAULT_INPUT, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_TOKENS } from './run
 import { modelChoices } from './runtime/fast.ts'
 import { listPiServices } from './runtime/provider.ts'
 import { LiveCatalogSession, liveCatalogProvider, canUseLiveCatalog, catalogBinding } from './live-catalog.mjs'
+import { CatalogFiles } from './catalog-files.mjs'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { gatewayUsageProviders } from './gateway-usage.mjs'
 export { Config, applyLoginUI }
 export { IntegrationRegistry, ConnectionManager, connectionAuthFrom, resolveConnectionProfiles }
@@ -38,8 +42,11 @@ export function apply(ctx, config, options = {}) {
     credentials: credentialStoreFrom(ctx), profile: () => config.providers.get().meta ?? {}, baseline: catalogModels,
     onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
   })) })
+  const profileDir = ctx.get('profileContext')?.dir
+  const catalogDir = options.catalogDir ?? (profileDir ? join(profileDir, '.dsh-pi-login') : mkdtempSync(join(tmpdir(), 'dsh-pi-login-catalog-')))
+  const catalogFiles = new CatalogFiles(catalogDir)
   const manager = new ConnectionManager({
-    settings: ctx.settings, credentials: ctx.credentials, registry, legacyProviders,
+    settings: ctx.settings, credentials: ctx.credentials, registry, legacyProviders, catalogFiles,
     connectionSnapshot: () => config.connections.get(),
     validateProfile: connection => resolveConnectionProfiles({ check: connection }),
     onChange: connectionId => {
@@ -120,7 +127,7 @@ export function apply(ctx, config, options = {}) {
     const binding = manager.binding(connection)
     const live = !meta && canUseLiveCatalog(connection, baseline) ? new LiveCatalogSession({
       connection, baseline, credentials: authFor(connection).credentials,
-      snapshot: () => manager.lookup(id).modelCatalog,
+      snapshot: () => { try { return catalogFiles.readSync(id) } catch { return undefined } },
       persist: (value, options) => manager.saveModelCatalog(binding, value, options),
       isCurrent: () => manager.isCurrent(binding) && catalogBinding(manager.lookup(id)) === catalogBinding(binding),
       onChange: () => { revision++; ctx.emit('dsh-pi-login/catalog-updated') },
@@ -141,6 +148,10 @@ export function apply(ctx, config, options = {}) {
       refresh: (connection, _record, signal) => refreshAuth(connection, signal),
     },
   })
+  // profiles() inside applyRuntime opens live catalog sessions immediately.
+  // Copy 0.8.0 settings catalogs to files first. A session opened against a
+  // missing file starts a network refresh and replaces the migrated catalog.
+  manager.copyLegacyCatalogs()
   const runtime = applyRuntime(ctx, config, {
     connections: () => config.connections.get(), authForProfile: profile => authFor(profile),
     catalog: (provider, id) => id ? catalogsFor(manager.lookup(id)).catalog(provider) : legacyCatalogs.catalog(provider), revision: () => revision,
@@ -179,7 +190,9 @@ export function apply(ctx, config, options = {}) {
       return modelChoices(provider, models, profile, discovered).map(choice => ({ ...choice, capabilityUnverified: choice.discovered && !choice.model[DISCOVERED_MODEL]?.verified }))
     },
   })
+  scheduleCatalogMigration(ctx, manager)
   let alive = true
+  if (!profileDir && !options.catalogDir) ctx.effect(() => () => { rmSync(catalogDir, { recursive: true, force: true }) }, 'AI connections: temporary catalog files')
   ctx.effect(() => () => {
     alive = false; manager.dispose(); registry.dispose(); external.dispose(); usage.dispose(); legacyCatalogs.dispose()
     for (const value of sessions.values()) value.catalogs.dispose()
@@ -190,4 +203,15 @@ export function apply(ctx, config, options = {}) {
     await manager.migrate()
     manager.changed()
   }).catch(() => { if (alive) ctx.logger.warn('AI connections: migration did not complete; original settings and credentials remain available') })
+}
+
+// settings.mutate takes the HMR queue. Apply already holds that queue, so the
+// one-time removal of modelCatalog waits until the transaction has finished.
+function scheduleCatalogMigration(ctx, manager) {
+  const run = () => manager.migrateModelCatalogs().catch(() => {
+    ctx.logger?.warn('AI connections: model catalogs were copied to profile files, but the settings copy could not be removed')
+  })
+  const executing = ctx.get('hmr')?.executing
+  if (executing?.getStore()) executing.exit(() => { const timer = setTimeout(run, 0); timer.unref?.() })
+  else queueMicrotask(run)
 }

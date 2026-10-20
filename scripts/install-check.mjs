@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
@@ -154,6 +154,9 @@ export async function apply(ctx) {
 `)
   patches.push({ insert: [{ id: 'install-credential-fixture', name: fixtureModule }] })
   await writeFile(patchPath, stringify(patches))
+  // The first start already saved a live catalog file. A 0.8.0 upgrade has the
+  // settings string and no file; an existing file is left in place.
+  await rm(join(home, 'profiles', 'smoke', '.dsh-pi-login', `catalog-${crud.fixtureId}.json`), { force: true })
   startApp()
   page=await browser.newPage(); await page.goto(await appURL())
   const restarted = await page.evaluate(async () => {
@@ -183,7 +186,12 @@ export async function apply(ctx) {
     return envelope.result.value
   }, crud.fixtureId)
   assert.equal(liveRestored.models.find(model => model.id === 'fixture-new:1017')?.enabled, false)
-  console.log('Clean DSH profile: SDK-independent catalog restored through Host schema; newly discovered model stays off')
+  const migratedPatch = parse(await readFile(patchPath, 'utf8'))
+  const migratedConnection = migratedPatch.find(entry => entry.id === 'dsh-pi-login').config.connections[crud.fixtureId]
+  assert.equal(migratedConnection.modelCatalog, undefined)
+  const catalogFile = JSON.parse(await readFile(join(home, 'profiles', 'smoke', '.dsh-pi-login', `catalog-${crud.fixtureId}.json`), 'utf8'))
+  assert.equal(catalogFile.models[0].id, 'fixture-new:1017')
+  console.log('Clean DSH profile: 0.8.0 modelCatalog copied to .dsh-pi-login and removed from settings; newly discovered model stays off')
   const restoredModels = await page.evaluate(async museId => {
     const method = 'dsh-pi-login/models'
     const response = await fetch('/api/' + method, { method: 'POST', headers: { 'content-type': 'application/json' },
