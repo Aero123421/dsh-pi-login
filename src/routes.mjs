@@ -32,7 +32,10 @@ export function applyLoginUI(ctx, options = {}) {
           if (envelope?.type !== 'client-request' || typeof envelope.rpcId !== 'string' || envelope.rpcId.length > 100 || envelope.method !== endpoint) return new Response('invalid request', { status: 400 })
           rpcId = envelope.rpcId
           request.signal.throwIfAborted()
-          if (options.connections?.migrateModelCatalogs) await options.connections.migrateModelCatalogs()
+          // A write error leaves modelCatalog in settings. The next request tries the migration again.
+          if (options.connections?.migrateModelCatalogs) await options.connections.migrateModelCatalogs().catch(error => {
+            if (request.signal.aborted) throw error
+          })
           let value
           if (method.startsWith('update-')) {
             const payload = envelope.payload

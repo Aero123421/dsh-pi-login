@@ -131471,15 +131471,20 @@ var LiveCatalogSession = class {
           await this.persist(JSON.stringify(value), { signal: signal2 });
         } catch (error2) {
           if (signal2.aborted || error2 instanceof ProviderReadError && error2.code === "aborted") throw new ProviderReadError("aborted");
-          const failed = new ProviderReadError("aborted");
-          failed.persistFailed = true;
-          throw failed;
+          if (signal2.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
+          this.persistFailed = true;
+          return value;
         }
         if (signal2.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError("aborted");
+        this.persistFailed = false;
         return value;
       }, { force, signal });
       this.retryAt = 0;
-      this.persistFailed = false;
+      if (this.persistFailed) {
+        const failed = new ProviderReadError("aborted");
+        failed.persistFailed = true;
+        throw failed;
+      }
     } catch (error2) {
       const network = error2 instanceof ProviderReadError && ["error", "rate-limited", "auth-required"].includes(error2.code);
       if (error2?.persistFailed) {
@@ -132237,7 +132242,9 @@ function applyLoginUI(ctx, options = {}) {
           if (envelope?.type !== "client-request" || typeof envelope.rpcId !== "string" || envelope.rpcId.length > 100 || envelope.method !== endpoint) return new Response("invalid request", { status: 400 });
           rpcId = envelope.rpcId;
           request.signal.throwIfAborted();
-          if (options.connections?.migrateModelCatalogs) await options.connections.migrateModelCatalogs();
+          if (options.connections?.migrateModelCatalogs) await options.connections.migrateModelCatalogs().catch((error2) => {
+            if (request.signal.aborted) throw error2;
+          });
           let value;
           if (method.startsWith("update-")) {
             const payload2 = envelope.payload;

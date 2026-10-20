@@ -139,15 +139,21 @@ export class LiveCatalogSession {
         try { await this.persist(JSON.stringify(value), { signal }) }
         catch (error) {
           if (signal.aborted || error instanceof ProviderReadError && error.code === 'aborted') throw new ProviderReadError('aborted')
-          const failed = new ProviderReadError('aborted')
-          failed.persistFailed = true
-          throw failed
+          if (signal.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError('aborted')
+          // The fetch succeeded. Keep that list fresh so schedule() does not download it again.
+          this.persistFailed = true
+          return value
         }
         if (signal.aborted || this.closed || !this.isCurrent()) throw new ProviderReadError('aborted')
+        this.persistFailed = false
         return value
       }, { force, signal })
       this.retryAt = 0
-      this.persistFailed = false
+      if (this.persistFailed) {
+        const failed = new ProviderReadError('aborted')
+        failed.persistFailed = true
+        throw failed
+      }
     } catch (error) {
       const network = error instanceof ProviderReadError && ['error', 'rate-limited', 'auth-required'].includes(error.code)
       if (error?.persistFailed) {
