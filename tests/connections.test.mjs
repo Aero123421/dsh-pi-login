@@ -110,6 +110,21 @@ test('an existing modelCatalog string is copied once and then removed from setti
   assert.equal(await f.manager.migrateModelCatalogs(), false)
 })
 
+test('migrating when no catalog string remains does not write settings or emit a change', async () => {
+  const f = fixture()
+  const { connectionId } = await f.manager.create({ integrationId: 'pi', serviceId: 'openai', authMethod: 'oauth', displayName: 'Fresh' }, f.revision)
+  assert.equal(f.value.connections[connectionId].modelCatalog, undefined)
+  const mutations = f.mutations.length
+  const events = []
+  const unsubscribe = f.registry.subscribe(event => { if (event.type === 'changed') events.push(event) })
+  assert.equal(await f.manager.migrateModelCatalogs(), false)
+  assert.equal(await f.manager.migrateModelCatalogs(), false)
+  unsubscribe()
+  assert.equal(f.mutations.length, mutations)
+  assert.deepEqual(events, [])
+  assert.equal(f.value.connections[connectionId].displayName, 'Fresh')
+})
+
 test('one-time migration atomically retains old OAuth identity, history route, model/Fast/Thinking settings without copying secrets', async () => {
   const profile = { enabled: true, disabledModels: ['hidden-model'], enabledFastModels: ['gpt-6.1-sol::fast'], reasoning: 'high', cacheRetention: 'long' }
   const record = { kind: 'grant', payload: { type: 'oauth', access: 'fixture-access', refresh: 'fixture-refresh', expires: 1234 } }

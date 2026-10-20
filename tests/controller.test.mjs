@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LoginController } from '../src/controller.mjs'
+import { LoginController, finishConnectionCreate, finishConnectionRecover } from '../src/controller.mjs'
 
 function setup() {
   const requests = []
@@ -36,12 +36,17 @@ test('refresh after a saved setting invalidates the outstanding list', async t =
   const current = controller.refresh()
   assert.equal(requests.length, 2)
   assert.equal(requests[0].signal.aborted, true)
+  let oldDone = false
+  const waited = old.then(() => { oldDone = true })
   reply(requests[0], false)
-  await old
+  await Promise.resolve()
+  assert.equal(oldDone, false)
   assert.equal(controller.getSnapshot().status, 'loading')
   assert.equal(controller.load(), current)
   reply(requests[1], true)
   await current
+  await waited
+  assert.equal(oldDone, true)
   assert.deepEqual(controller.getSnapshot(), expected(true))
 })
 
@@ -72,11 +77,15 @@ test('repeated invalidations retain only the latest request', async t => {
   const third = controller.refresh()
   assert.equal(requests[0].signal.aborted, true)
   assert.equal(requests[1].signal.aborted, true)
+  let settled = false
+  const gate = Promise.all([first, second]).then(() => { settled = true })
   reply(requests[1], false)
   requests[0].reject(new Error('stale failure'))
-  await Promise.all([first, second])
+  await Promise.resolve()
+  assert.equal(settled, false)
   assert.equal(controller.load(), third)
   reply(requests[2], true)
+  await gate
   await third
   assert.equal(controller.getSnapshot().entries[0].enabled, true)
 })
@@ -166,6 +175,87 @@ test('RPC errors preserve a stable code separately from display text', async () 
   const controller = new LoginController({ rpc: { async call() { return { ok: false, error: { code: 'dsh-pi-login/credential-delete-failed' } } } } })
   await assert.rejects(controller.call('connection-delete'), error => error.code === 'dsh-pi-login/credential-delete-failed')
   controller.dispose()
+})
+
+test('a superseded load resolves only after the latest list is published', async t => {
+  const { controller, requests } = setup()
+  t.after(() => controller.dispose())
+  const first = controller.load()
+  const latest = controller.refresh()
+  reply(requests[0], false)
+  await Promise.resolve()
+  assert.equal(controller.getSnapshot().entries.length, 0)
+  let published = false
+  controller.subscribe(() => { if (controller.getSnapshot().status === 'ready') published = true })
+  let done = false
+  const finished = first.then(() => { done = true })
+  await Promise.resolve()
+  assert.equal(done, false)
+  reply(requests[1], true)
+  await latest
+  await finished
+  assert.equal(published, true)
+  assert.equal(done, true)
+  assert.deepEqual(controller.getSnapshot(), expected(true))
+})
+
+function listReply(request, connections) {
+  request.resolve({ ok: true, value: { connections, integrations: [], services: [], profileKey: 'test-profile', generation: 1, revision: 7 } })
+}
+
+test('an interrupting refresh still lets Add and sign in open the new connection once', async t => {
+  const { controller, requests } = setup()
+  t.after(() => controller.dispose())
+  controller.publish(expected(true))
+  const dialog = controller.scoped()
+  const startup = controller.load()
+  const opened = []
+  const saving = finishConnectionCreate(dialog, { connectionId: 'c-new', saved: true }, {
+    method: 'oauth', displayName: 'New', onSaved() {}, onLogin(entry) { opened.push(entry) },
+  })
+  const interrupt = controller.refresh()
+  assert.equal(requests[0].signal.aborted, true)
+  assert.equal(requests[1].signal.aborted, true)
+  listReply(requests[0], [])
+  listReply(requests[1], [{ connectionId: 'c-stale', authMethod: 'oauth', displayName: 'Stale', credentialGeneration: 0 }])
+  let done = false
+  const finished = saving.then(() => { done = true })
+  await Promise.resolve()
+  assert.equal(done, false)
+  assert.equal(opened.length, 0)
+  listReply(requests[2], [{ connectionId: 'c-new', authMethod: 'oauth', displayName: 'New', credentialGeneration: 0, enabled: false }])
+  await interrupt
+  await finished
+  await startup
+  assert.equal(opened.length, 1)
+  assert.equal(opened[0].connectionId, 'c-new')
+  assert.equal(opened[0].authMethod, 'oauth')
+  assert.equal(controller.getSnapshot().entries[0].connectionId, 'c-new')
+})
+
+test('an interrupting refresh still lets a settings dialog see the latest credential generation once', async t => {
+  const { controller, requests } = setup()
+  t.after(() => controller.dispose())
+  controller.publish({ ...expected(true), entries: [{ connectionId: 'c-1', credentialGeneration: 0 }] })
+  const dialog = controller.scoped()
+  const startup = controller.load()
+  const saved = []
+  const recovering = finishConnectionRecover(dialog, { connectionId: 'c-1', credentialGeneration: 0 }, {
+    notice: 'settings-changed', onSaved(notice) { saved.push(notice) },
+  })
+  const interrupt = controller.refresh()
+  listReply(requests[0], [{ connectionId: 'c-1', credentialGeneration: 9 }])
+  listReply(requests[1], [{ connectionId: 'c-1', credentialGeneration: 0 }])
+  let done = false
+  const finished = recovering.then(() => { done = true })
+  await Promise.resolve()
+  assert.equal(done, false)
+  listReply(requests[2], [{ connectionId: 'c-1', credentialGeneration: 1 }])
+  await interrupt
+  await finished
+  await startup
+  assert.deepEqual(saved, ['settings-changed'])
+  assert.equal(controller.entry('c-1').credentialGeneration, 1)
 })
 
 test('refreshIfMounted skips RPC until the connection page is retained', async t => {

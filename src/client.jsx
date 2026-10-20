@@ -1,6 +1,6 @@
 import React, { useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
-import { LoginController } from './controller.mjs'
+import { LoginController, finishConnectionCreate, finishConnectionRecover } from './controller.mjs'
 import { UpdateController } from './update-controller.mjs'
 import { createModelEditor } from './model-snapshot.mjs'
 import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
@@ -455,12 +455,8 @@ function AddDialog({ state, controller: sourceController, t, onClose, onLogin, o
     try {
       const fields = { displayName: name, authMethod: method, ...(apiKey ? { apiKey } : {}), ...(endpointUrl.trim() ? { endpointUrl: endpointUrl.trim() } : {}), ...(api ? { api } : {}) }
       const result = await controller.mutation('connection-create', { integrationId: service.integrationId, serviceId: service.serviceId ?? service.id, ...fields, revision: state.revision })
-      setApiKey(''); await controller.refresh(); onSaved()
-      if (method === 'oauth') {
-        const created = result.connection ?? result
-        const next = controller.getSnapshot().entries.find(item => item.connectionId === created.connectionId)
-        if (next) onLogin(next)
-      }
+      setApiKey('')
+      await finishConnectionCreate(controller, result, { method, displayName: name, onSaved, onLogin })
     } catch (error) {
       setError(connectionError(error) === 'credentialSaveFailed' ? 'createdCredentialFailed' : connectionError(error))
       await controller.refresh().catch(() => {})
@@ -511,11 +507,9 @@ function ConnectionDialog({ entry, state, controller: sourceController, t, onClo
     const copy = connectionError(error)
     setError(copy)
     try {
-      await controller.refresh()
-      const current = controller.getSnapshot().entries.find(item => item.connectionId === entry.connectionId)
       // A committed tombstone/key swap changes the authority captured by this
       // dialog. Close with persistent feedback; retry only from a fresh entry.
-      if (current && current.credentialGeneration !== entry.credentialGeneration) onSaved(copy)
+      await finishConnectionRecover(controller, entry, { onSaved, notice: copy })
     } catch {}
   }
   async function save() {
