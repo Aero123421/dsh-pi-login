@@ -78,21 +78,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.version.outputs.tag }}
-        run: |
-          set -euo pipefail
-          package="artifacts/local-dsh-pi-login-${RELEASE_TAG#v}.tgz"
-          if draft=$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft'); then
-            if [ "$draft" = false ]; then
-              echo 'This release is already published; leaving its assets unchanged.'
-              exit 0
-            fi
-            gh release upload "$RELEASE_TAG" "$package" artifacts/SHA256SUMS --clobber
-          else
-            notes=(--generate-notes)
-            if [ -f "$RUNNER_TEMP/pi-release-notes.md" ]; then
-              notes=(--notes-file "$RUNNER_TEMP/pi-release-notes.md")
-            fi
-            gh release create "$RELEASE_TAG" "$package" artifacts/SHA256SUMS \
-              --verify-tag --draft --title "$RELEASE_TAG" "${notes[@]}"
-          fi
-          gh release view "$RELEASE_TAG" --json url,isDraft,assets
+          RELEASE_NOTES_FILE: ${{ runner.temp }}/pi-release-notes.md
+        run: node scripts/release-assets.mjs "artifacts/local-dsh-pi-login-${RELEASE_TAG#v}.tgz" artifacts/SHA256SUMS
