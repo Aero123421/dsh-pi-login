@@ -3,10 +3,19 @@ import { existsSync } from 'node:fs'
 import { basename } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+function assetLeftBehind(tag, name, result) {
+  const detail = result.stderr && !result.stderr.endsWith('\n') ? `${result.stderr}\n` : result.stderr
+  return {
+    status: result.status || 1,
+    stdout: result.stdout ?? '',
+    stderr: `${detail}Release ${tag} still has ${name}. Delete that asset, then run this again:\ngh release delete-asset ${tag} ${name}\n`,
+  }
+}
+
 /** Attach a package to a draft GitHub Release without publishing it or replacing assets. */
 export function attachReleaseAssets({ tag, packagePath, checksumPath, notesFile, gh }) {
   const names = [basename(packagePath), basename(checksumPath)]
-  const listed = gh(['release', 'list', '--json', 'tagName,isDraft'])
+  const listed = gh(['release', 'list', '--limit', '1000', '--json', 'tagName,isDraft'])
   if (listed.status !== 0) return listed
   const known = JSON.parse(listed.stdout).find(item => item.tagName === tag)
   if (!known) {
@@ -14,7 +23,7 @@ export function attachReleaseAssets({ tag, packagePath, checksumPath, notesFile,
     if (notesFile && existsSync(notesFile)) args.push('--notes-file', notesFile)
     else args.push('--generate-notes')
     const created = gh(args)
-    if (created.status !== 0) return created
+    if (created.status !== 0) return assetLeftBehind(tag, names[0], created)
   } else {
     const view = gh(['release', 'view', tag, '--json', 'isDraft,assets'])
     if (view.status !== 0) return view
@@ -30,14 +39,7 @@ export function attachReleaseAssets({ tag, packagePath, checksumPath, notesFile,
     const uploaded = gh(['release', 'upload', tag, packagePath])
     if (uploaded.status !== 0) return uploaded
     const checksum = gh(['release', 'upload', tag, checksumPath])
-    if (checksum.status !== 0) {
-      const detail = checksum.stderr && !checksum.stderr.endsWith('\n') ? `${checksum.stderr}\n` : checksum.stderr
-      return {
-        status: checksum.status || 1,
-        stdout: checksum.stdout ?? '',
-        stderr: `${detail}Release ${tag} still has ${names[0]}. Delete that asset, then run this again:\ngh release delete-asset ${tag} ${names[0]}\n`,
-      }
-    }
+    if (checksum.status !== 0) return assetLeftBehind(tag, names[0], checksum)
   }
   return gh(['release', 'view', tag, '--json', 'url,isDraft,assets'])
 }

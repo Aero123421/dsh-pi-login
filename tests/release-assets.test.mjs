@@ -48,7 +48,7 @@ test('a missing release is created as a draft and is not published', () => {
   assert.equal(create.includes(packagePath), true)
   assert.equal(create.includes(checksumPath), true)
   assert.equal(calls.some(args => args[1] === 'upload'), false)
-  assert.deepEqual(calls[0], ['release', 'list', '--json', 'tagName,isDraft'])
+  assert.deepEqual(calls[0], ['release', 'list', '--limit', '1000', '--json', 'tagName,isDraft'])
   forbidden(calls)
 })
 
@@ -94,6 +94,21 @@ test('an existing draft receives assets that are not already present', () => {
     ['release', 'upload', 'v0.8.1', checksumPath],
   ])
   assert.equal(calls.some(args => args[1] === 'create'), false)
+  forbidden(calls)
+})
+
+test('a create failure tells the operator to delete the package asset and does not delete it', () => {
+  const { calls, gh } = capture(args => {
+    if (args[1] === 'list') return { status: 0, stdout: '[]', stderr: '' }
+    if (args[1] === 'create') return { status: 1, stdout: '', stderr: 'failed to upload SHA256SUMS\n' }
+    return { status: 0, stdout: '', stderr: '' }
+  })
+  const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /failed to upload SHA256SUMS/)
+  assert.match(result.stderr, new RegExp(`gh release delete-asset v0\\.8\\.1 ${assetNames[0]}`))
+  assert.equal(calls.some(args => args[1] === 'upload' || args[1] === 'delete-asset'), false)
+  assert.deepEqual(calls.map(args => args[1]), ['list', 'create'])
   forbidden(calls)
 })
 
@@ -148,7 +163,9 @@ test('the workflow and script do not publish, edit notes, or overwrite assets', 
   }
   assert.match(sources[1], /'--draft'/)
   assert.doesNotMatch(sources[1], /not found/i)
-  assert.match(sources[1], /'release', 'list', '--json', 'tagName,isDraft'/)
+  assert.match(sources[1], /'release', 'list', '--limit', '1000', '--json', 'tagName,isDraft'/)
+  assert.match(sources[1], /gh release delete-asset/)
+  assert.equal(sources[1].includes("'delete-asset'"), false)
 })
 
 test('the command exits 1 when the release already has the package or checksum', () => {
@@ -175,7 +192,7 @@ if (args[1] === 'view') {
   assert.match(result.stderr, /leaving those assets unchanged/)
   const calls = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line))
   assert.deepEqual(calls, [
-    ['release', 'list', '--json', 'tagName,isDraft'],
+    ['release', 'list', '--limit', '1000', '--json', 'tagName,isDraft'],
     ['release', 'view', 'v0.8.1', '--json', 'isDraft,assets'],
   ])
 })
