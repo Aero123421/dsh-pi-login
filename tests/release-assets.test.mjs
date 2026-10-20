@@ -28,9 +28,13 @@ function forbidden(calls) {
   assert.equal(calls.some(args => args[0] === 'release' && args[1] === 'edit'), false)
 }
 
+function releaseList(tag, isDraft) {
+  return JSON.stringify([{ tagName: tag, isDraft }])
+}
+
 test('a missing release is created as a draft and is not published', () => {
   const { calls, gh } = capture(args => {
-    if (args[1] === 'view' && calls.length === 1) return { status: 1, stdout: '', stderr: 'release not found\n' }
+    if (args[1] === 'list') return { status: 0, stdout: '[]', stderr: '' }
     if (args[1] === 'create') return { status: 0, stdout: '', stderr: '' }
     return { status: 0, stdout: '{"url":"https://example.test/v0.8.1","isDraft":true,"assets":[]}', stderr: '' }
   })
@@ -39,18 +43,20 @@ test('a missing release is created as a draft and is not published', () => {
   const create = calls.find(args => args[1] === 'create')
   assert.ok(create)
   assert.equal(create.includes('--draft'), true)
+  assert.equal(create.includes('--verify-tag'), true)
   assert.equal(create.includes('--generate-notes'), true)
   assert.equal(create.includes(packagePath), true)
   assert.equal(create.includes(checksumPath), true)
   assert.equal(calls.some(args => args[1] === 'upload'), false)
+  assert.deepEqual(calls[0], ['release', 'list', '--json', 'tagName,isDraft'])
   forbidden(calls)
 })
 
 test('a new draft uses the notes file without editing an existing release', () => {
   const notes = join(mkdtempSync(join(tmpdir(), 'pi-notes-')), 'notes.md')
   writeFileSync(notes, 'draft notes\n')
-  const { calls, gh } = capture(args => args[1] === 'view' && calls.length === 1
-    ? { status: 1, stdout: '', stderr: 'release not found\n' }
+  const { calls, gh } = capture(args => args[1] === 'list'
+    ? { status: 0, stdout: '[]', stderr: '' }
     : { status: 0, stdout: '', stderr: '' })
   assert.equal(attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, notesFile: notes, gh }).status, 0)
   const create = calls.find(args => args[1] === 'create')
@@ -60,37 +66,74 @@ test('a new draft uses the notes file without editing an existing release', () =
   forbidden(calls)
 })
 
-test('an existing release only receives assets that are not already present', () => {
-  for (const isDraft of [true, false]) {
-    const { calls, gh } = capture(args => args[1] === 'view' && calls.length === 1
-      ? { status: 0, stdout: JSON.stringify({ isDraft, assets: [{ name: 'other.txt' }] }), stderr: '' }
-      : { status: 0, stdout: JSON.stringify({ url: 'https://example.test', isDraft, assets: [] }), stderr: '' })
-    const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
-    assert.equal(result.status, 0)
-    const upload = calls.find(args => args[1] === 'upload')
-    assert.deepEqual(upload, ['release', 'upload', 'v0.8.1', packagePath, checksumPath])
-    assert.equal(calls.some(args => args[1] === 'create'), false)
-    forbidden(calls)
-  }
+test('a published release exits 1 and uploads nothing', () => {
+  const { calls, gh } = capture(args => args[1] === 'list'
+    ? { status: 0, stdout: releaseList('v0.8.1', false), stderr: '' }
+    : { status: 0, stdout: JSON.stringify({ isDraft: false, assets: [{ name: 'other.txt' }] }), stderr: '' })
+  const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /not a draft/)
+  assert.equal(calls.some(args => args[1] === 'upload'), false)
+  assert.equal(calls.some(args => args[1] === 'create'), false)
+  forbidden(calls)
+})
+
+test('an existing draft receives assets that are not already present', () => {
+  const { calls, gh } = capture(args => {
+    if (args[1] === 'list') return { status: 0, stdout: releaseList('v0.8.1', true), stderr: '' }
+    if (args[1] === 'view' && args.at(-1) === 'isDraft,assets') {
+      return { status: 0, stdout: JSON.stringify({ isDraft: true, assets: [{ name: 'other.txt' }] }), stderr: '' }
+    }
+    return { status: 0, stdout: JSON.stringify({ url: 'https://example.test', isDraft: true, assets: [] }), stderr: '' }
+  })
+  const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
+  assert.equal(result.status, 0)
+  const uploads = calls.filter(args => args[1] === 'upload')
+  assert.deepEqual(uploads, [
+    ['release', 'upload', 'v0.8.1', packagePath],
+    ['release', 'upload', 'v0.8.1', checksumPath],
+  ])
+  assert.equal(calls.some(args => args[1] === 'create'), false)
+  forbidden(calls)
+})
+
+test('a checksum upload failure tells the operator to delete the package asset', () => {
+  const { calls, gh } = capture(args => {
+    if (args[1] === 'list') return { status: 0, stdout: releaseList('v0.8.1', true), stderr: '' }
+    if (args[1] === 'view') return { status: 0, stdout: JSON.stringify({ isDraft: true, assets: [] }), stderr: '' }
+    if (args.at(-1) === packagePath) return { status: 0, stdout: '', stderr: '' }
+    return { status: 1, stdout: '', stderr: 'failed to upload SHA256SUMS\n' }
+  })
+  const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /failed to upload SHA256SUMS/)
+  assert.match(result.stderr, new RegExp(`gh release delete-asset v0\\.8\\.1 ${assetNames[0]}`))
+  assert.deepEqual(calls.filter(args => args[1] === 'upload'), [
+    ['release', 'upload', 'v0.8.1', packagePath],
+    ['release', 'upload', 'v0.8.1', checksumPath],
+  ])
+  forbidden(calls)
 })
 
 test('an existing asset of the same name is left in place and the command fails', () => {
   for (const assets of [[{ name: assetNames[0] }], [{ name: assetNames[1] }], assetNames.map(name => ({ name }))]) {
-    const { calls, gh } = capture(() => ({ status: 0, stdout: JSON.stringify({ isDraft: true, assets }), stderr: '' }))
+    const { calls, gh } = capture(args => args[1] === 'list'
+      ? { status: 0, stdout: releaseList('v0.8.1', true), stderr: '' }
+      : { status: 0, stdout: JSON.stringify({ isDraft: true, assets }), stderr: '' })
     const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
     assert.equal(result.status, 1)
     assert.match(result.stderr, /leaving those assets unchanged/)
-    assert.equal(calls.length, 1)
-    assert.equal(calls[0][1], 'view')
+    assert.deepEqual(calls.map(args => args[1]), ['list', 'view'])
     forbidden(calls)
   }
 })
 
-test('a release lookup other than not found does not create or upload', () => {
+test('a release list failure does not create or upload', () => {
   const { calls, gh } = capture(() => ({ status: 1, stdout: '', stderr: 'authentication required\n' }))
   const result = attachReleaseAssets({ tag: 'v0.8.1', packagePath, checksumPath, gh })
   assert.equal(result.status, 1)
   assert.equal(calls.length, 1)
+  assert.equal(calls[0][1], 'list')
   forbidden(calls)
 })
 
@@ -104,6 +147,8 @@ test('the workflow and script do not publish, edit notes, or overwrite assets', 
     assert.doesNotMatch(source, /release edit/)
   }
   assert.match(sources[1], /'--draft'/)
+  assert.doesNotMatch(sources[1], /not found/i)
+  assert.match(sources[1], /'release', 'list', '--json', 'tagName,isDraft'/)
 })
 
 test('the command exits 1 when the release already has the package or checksum', () => {
@@ -114,8 +159,11 @@ const { appendFileSync } = require('node:fs')
 const args = process.argv.slice(2)
 appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n')
 if (args.includes('--clobber') || args[1] === 'edit' || args.includes('--latest') || args.includes('--draft=false')) process.exit(99)
+if (args[1] === 'list') {
+  console.log(JSON.stringify([{ tagName: 'v0.8.1', isDraft: true }]))
+}
 if (args[1] === 'view') {
-  console.log(JSON.stringify({ isDraft: false, assets: [{ name: 'local-dsh-pi-login-0.8.1.tgz' }, { name: 'SHA256SUMS' }] }))
+  console.log(JSON.stringify({ isDraft: true, assets: [{ name: 'local-dsh-pi-login-0.8.1.tgz' }, { name: 'SHA256SUMS' }] }))
 }
 `)
   chmodSync(join(root, 'gh'), 0o755)
@@ -126,5 +174,8 @@ if (args[1] === 'view') {
   assert.equal(result.status, 1)
   assert.match(result.stderr, /leaving those assets unchanged/)
   const calls = readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line))
-  assert.deepEqual(calls, [['release', 'view', 'v0.8.1', '--json', 'isDraft,assets']])
+  assert.deepEqual(calls, [
+    ['release', 'list', '--json', 'tagName,isDraft'],
+    ['release', 'view', 'v0.8.1', '--json', 'isDraft,assets'],
+  ])
 })

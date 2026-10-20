@@ -39,7 +39,7 @@ test('refresh after a saved setting invalidates the outstanding list', async t =
   let oldDone = false
   const waited = old.then(() => { oldDone = true })
   reply(requests[0], false)
-  await Promise.resolve()
+  await new Promise(r => setImmediate(r))
   assert.equal(oldDone, false)
   assert.equal(controller.getSnapshot().status, 'loading')
   assert.equal(controller.load(), current)
@@ -81,7 +81,7 @@ test('repeated invalidations retain only the latest request', async t => {
   const gate = Promise.all([first, second]).then(() => { settled = true })
   reply(requests[1], false)
   requests[0].reject(new Error('stale failure'))
-  await Promise.resolve()
+  await new Promise(r => setImmediate(r))
   assert.equal(settled, false)
   assert.equal(controller.load(), third)
   reply(requests[2], true)
@@ -183,13 +183,13 @@ test('a superseded load resolves only after the latest list is published', async
   const first = controller.load()
   const latest = controller.refresh()
   reply(requests[0], false)
-  await Promise.resolve()
+  await new Promise(r => setImmediate(r))
   assert.equal(controller.getSnapshot().entries.length, 0)
   let published = false
   controller.subscribe(() => { if (controller.getSnapshot().status === 'ready') published = true })
   let done = false
   const finished = first.then(() => { done = true })
-  await Promise.resolve()
+  await new Promise(r => setImmediate(r))
   assert.equal(done, false)
   reply(requests[1], true)
   await latest
@@ -220,7 +220,7 @@ test('an interrupting refresh still lets Add and sign in open the new connection
   listReply(requests[1], [{ connectionId: 'c-stale', authMethod: 'oauth', displayName: 'Stale', credentialGeneration: 0 }])
   let done = false
   const finished = saving.then(() => { done = true })
-  await Promise.resolve()
+  await new Promise(r => setImmediate(r))
   assert.equal(done, false)
   assert.equal(opened.length, 0)
   listReply(requests[2], [{ connectionId: 'c-new', authMethod: 'oauth', displayName: 'New', credentialGeneration: 0, enabled: false }])
@@ -248,7 +248,7 @@ test('an interrupting refresh still lets a settings dialog see the latest creden
   listReply(requests[1], [{ connectionId: 'c-1', credentialGeneration: 0 }])
   let done = false
   const finished = recovering.then(() => { done = true })
-  await Promise.resolve()
+  await new Promise(r => setImmediate(r))
   assert.equal(done, false)
   listReply(requests[2], [{ connectionId: 'c-1', credentialGeneration: 1 }])
   await interrupt
