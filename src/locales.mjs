@@ -366,3 +366,4 @@ Object.assign(ja, {
   museCatalogFailed: 'Muse Codeのモデル一覧を読み込めませんでした。再ログインするか、時間をおいて試してください。',
   museEffortsUnlisted: 'このアカウントの一覧に推論レベルがないため、Maxは出していません。',
 })
+addLanguage();
