@@ -130019,6 +130019,26 @@ function recordOf(value) {
 function rangeSatisfied(range2, runtime) {
   return typeof range2 === "string" && range2.trim() !== "" && import_semver.default.satisfies(runtime, range2, { includePrerelease: true });
 }
+function requiredDshVersion(requirements) {
+  if (!recordOf(requirements)) return void 0;
+  const clean = (value) => value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim();
+  const entries = Object.entries(requirements).filter(
+    ([name2, range2]) => (name2 === "engines.dsh" || name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-")) && typeof range2 === "string" && range2.trim() !== ""
+  );
+  if (!entries.length) return void 0;
+  const text2 = entries.map(([name2, range2]) => {
+    const version = clean(range2), label5 = name2 === "engines.dsh" ? "" : clean(name2);
+    return label5 ? `${label5} ${version}` : version;
+  }).join("; ");
+  if (!text2) return void 0;
+  return text2.length > 512 ? `${text2.slice(0, 511)}\u2026` : text2;
+}
+function incompatibleError(requirements) {
+  const error2 = new Error("incompatible");
+  const version = requiredDshVersion(requirements);
+  if (version) error2.requiredDshVersion = version;
+  return error2;
+}
 function dshPeerSatisfied(range2, runtime) {
   semanticVersion(runtime);
   if (typeof range2 !== "string") return false;
@@ -130062,7 +130082,7 @@ function checkCompatibility(packageJson, candidate, runtime) {
   if (!recordOf(engines)) throw new Error("compatibility-unknown");
   if (Object.hasOwn(engines, "dsh")) {
     if (typeof engines.dsh !== "string") throw new Error("compatibility-unknown");
-    if (!rangeSatisfied(engines.dsh, runtime)) throw new Error("incompatible");
+    if (!rangeSatisfied(engines.dsh, runtime)) throw incompatibleError({ "engines.dsh": engines.dsh });
     return runtime;
   }
   if (!Object.hasOwn(packageJson, "peerDependencies")) return runtime;
@@ -130071,9 +130091,10 @@ function checkCompatibility(packageJson, candidate, runtime) {
   const peers = [];
   for (const [name2, range2] of Object.entries(dependencies)) {
     if (typeof range2 !== "string") throw new Error("compatibility-unknown");
-    if (name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-")) peers.push(range2);
+    if (name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-")) peers.push([name2, range2]);
   }
-  if (peers.some((range2) => !dshPeerSatisfied(range2, runtime))) throw new Error("incompatible");
+  const unmet = Object.fromEntries(peers.filter(([, range2]) => !dshPeerSatisfied(range2, runtime)));
+  if (Object.keys(unmet).length) throw incompatibleError(unmet);
   return runtime;
 }
 async function checkCandidateCompatibility(packageJson, candidate, runtime, evaluator) {
@@ -130087,7 +130108,7 @@ async function checkCandidateCompatibility(packageJson, candidate, runtime, eval
       throw new Error("compatibility-unknown");
     }
     if (result === null) checkCompatibility(packageJson, candidate, runtime);
-    else if (result !== void 0) throw new Error("incompatible");
+    else if (result !== void 0) throw incompatibleError(result?.requirements);
   } else {
     checkCompatibility(packageJson, candidate, runtime);
   }
@@ -130502,7 +130523,12 @@ var PluginUpdates = class {
         return { ...this.base(), status: this.candidate ? "available" : "current", candidate: this.candidate && this.publicCandidate(this.candidate), checkedAt: (/* @__PURE__ */ new Date()).toISOString() };
       } catch (error2) {
         this.candidate = null;
-        return { ...this.base(), status: "blocked", reason: reasonOf(error2) };
+        return {
+          ...this.base(),
+          status: "blocked",
+          reason: reasonOf(error2),
+          ...typeof error2?.requiredDshVersion === "string" ? { requiredDshVersion: error2.requiredDshVersion } : {}
+        };
       }
     })().finally(() => {
       this.checking = null;
@@ -130625,6 +130651,7 @@ var PluginUpdates = class {
       } else {
         operation2.status = managerInvoked ? "unknown" : "failed";
         operation2.reason = reasonOf(error2);
+        if (typeof error2?.requiredDshVersion === "string") operation2.requiredDshVersion = error2.requiredDshVersion;
       }
     }
     try {

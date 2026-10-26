@@ -32,10 +32,57 @@ test('connection reset and disposal suppress stale check replies', async () => {
   assert.equal(controller.state.status, 'idle'); controller.dispose()
   controller.publish({ status: 'failed' }); assert.equal(controller.state.status, 'idle')
 })
+test('a new check clears stale incompatibility details while the reply is pending', async () => {
+  const check = deferred()
+  const controller = new UpdateController({ rpc: { call: async (_path, method) => method.endsWith('check') ? check.promise : { ok: true, value: { status: 'idle' } } } }, storage())
+  controller.publish({ status: 'blocked', reason: 'incompatible', requiredDshVersion: 'old-range', candidate: { id: 'old-candidate' } })
+  const pending = controller.check(); await tick()
+  assert.equal(controller.state.status, 'checking')
+  assert.equal(controller.state.reason, undefined)
+  assert.equal(controller.state.requiredDshVersion, undefined)
+  assert.equal(controller.state.candidate, undefined)
+  check.resolve({ ok: true, value: { status: 'blocked', reason: 'network' } }); await pending
+  assert.equal(controller.state.reason, 'network')
+  controller.dispose()
+})
 test('explicit host refusal is failed rather than unknown or success', async () => {
   const controller = new UpdateController({ rpc: { call: async () => ({ ok: false, error: { code: 'dsh-pi-login/busy' } }) } }, storage())
   controller.publish({ status: 'available', profileKey, candidate: { id: '7' } }); await controller.begin()
   assert.equal(controller.state.status, 'failed'); assert.equal(controller.state.reason, 'busy'); controller.dispose()
+})
+
+test('incompatible begin refusal clears an unadmitted id and preserves the required range', async () => {
+  const saved = storage(), calls = []
+  const controller = new UpdateController({ rpc: { call: async (_path, method) => {
+    calls.push(method)
+    return { ok: true, value: { status: 'blocked', reason: 'incompatible', requiredDshVersion: '>=0.2.2 <0.3.0-0', profileKey } }
+  } } }, saved)
+  controller.publish({ status: 'available', profileKey, candidate: { id: '7', version: '0.6.0' } }); await controller.begin()
+  assert.deepEqual(calls, ['dsh-pi-login/update-begin'])
+  assert.equal(controller.state.status, 'blocked')
+  assert.equal(controller.state.reason, 'incompatible')
+  assert.equal(controller.state.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  assert.equal(controller.state.candidate, undefined)
+  assert.equal(controller.requestId, undefined)
+  assert.equal(saved.getItem('dsh-pi-login:update:' + profileKey), undefined)
+  controller.dispose()
+})
+
+test('reconnect restores required DSH range from an admitted operation journal', async () => {
+  const saved = storage(), requestId = crypto.randomUUID(), calls = []
+  saved.setItem('dsh-pi-login:update:' + profileKey, requestId)
+  const controller = new UpdateController({ rpc: { call: async (_path, method, payload) => {
+    calls.push({ method, payload })
+    if (method.endsWith('status')) return { ok: true, value: { status: 'idle', profileKey } }
+    return { ok: true, value: { status: 'failed', reason: 'incompatible', requiredDshVersion: '>=0.2.2 <0.3.0-0', profileKey, requestId } }
+  } } }, saved)
+  await controller.load()
+  assert.equal(calls.at(-1).method, 'dsh-pi-login/update-reconcile')
+  assert.equal(calls.at(-1).payload.requestId, requestId)
+  assert.equal(controller.state.status, 'failed')
+  assert.equal(controller.state.reason, 'incompatible')
+  assert.equal(controller.state.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  controller.dispose()
 })
 
 test('authoritative begin refusal clears the rejected id and reconnect discovers the accepted operation', async () => {

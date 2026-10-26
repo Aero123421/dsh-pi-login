@@ -337,6 +337,7 @@ export function UpdateUI({ controller, t }) {
     {quiet ? null : <>
       <p role={['failed', 'blocked'].includes(state.status) ? 'alert' : 'status'}>{t(messages[state.status] || 'updateUnknown')}</p>
       {state.reason ? <p className="dsh-pi-muted">{t(`updateReason_${state.reason}`) || t('updateReason_network')} <a className="dsh-pi-link" href="https://github.com/Aero123421/dsh-pi-login/releases" target="_blank" rel="noopener noreferrer">{t('updateManual')}</a></p> : null}
+      {state.reason === 'incompatible' && typeof state.requiredDshVersion === 'string' ? <p className="dsh-pi-muted">{t('updateRequiredDshVersion').replace('{version}', state.requiredDshVersion)}</p> : null}
       {state.reason === 'restored' && state.restoredVersion ? <p className="dsh-pi-muted">{t('updateRestoredVersion').replace('{version}', state.restoredVersion)}</p> : null}
       {state.reason === 'version-differs' ? <p className="dsh-pi-muted">{versionDiffersLine(state, t)}</p> : null}
       {state.candidate ? <><p>{state.runtimeVersion} → {state.candidate.version} · DSH {state.candidate.compatibility}</p><p className="dsh-pi-update-notes">{state.candidate.notes}</p></> : null}

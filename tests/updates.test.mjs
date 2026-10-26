@@ -50,7 +50,7 @@ function mockEvaluator(calls) {
     assert.deepEqual(exemptions, {})
     const range = packageJson.engines?.dsh
     return runtime === '0.2.1-rc.2' && range === '>=0.2.2 <0.3.0-0'
-      ? { unmetRequirements: { 'engines.dsh': range } }
+      ? { requirements: { 'engines.dsh': range } }
       : undefined
   }
 }
@@ -85,10 +85,14 @@ test('release metadata and DSH compatibility follow the official evaluator', () 
   const peerLater = { '@deepseek-ai/dsh-llm': '>=0.2.2 <0.3.0-0' }
   const engineLater = { ...pkg, engines: { dsh: '>=0.2.2 <0.3.0-0' }, peerDependencies: peerLower }
   const engineEarlier = { ...pkg, engines: { dsh: '>=0.2.1-alpha.2 <0.3.0-0' }, peerDependencies: peerLater }
-  assert.throws(() => checkCompatibility(engineLater, candidate, runtime), /incompatible/)
+  assert.throws(() => checkCompatibility(engineLater, candidate, runtime), error =>
+    error.message === 'incompatible' && error.requiredDshVersion === '>=0.2.2 <0.3.0-0',
+  )
   assert.equal(checkCompatibility(engineEarlier, candidate, runtime), runtime)
   assert.equal(checkUpdateScope(engineEarlier, runtime), runtime)
-  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: peerLater }, candidate, runtime), /incompatible/)
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: peerLater }, candidate, runtime), error =>
+    error.message === 'incompatible' && error.requiredDshVersion === '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0',
+  )
   assert.equal(checkCompatibility({ ...pkg, peerDependencies: peerLower }, candidate, runtime), runtime)
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.3.0-alpha.1'), /incompatible/)
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'not a range' } }, candidate, '0.2.1-alpha.2'), /incompatible/)
@@ -127,6 +131,7 @@ test('candidate and verified archive share engines.dsh precedence; peer-only fal
   const deniedStatus = await denied.updater.check()
   assert.equal(deniedStatus.status, 'blocked')
   assert.equal(deniedStatus.reason, 'incompatible')
+  assert.equal(deniedStatus.requiredDshVersion, '>=0.2.2 <0.3.0-0')
   assert.equal(denied.calls.length, 0)
   assert.equal(deniedEvaluations.length, 1)
 
@@ -149,7 +154,14 @@ test('candidate and verified archive share engines.dsh precedence; peer-only fal
   await archiveCheck.updater.begin(archiveCandidate.candidate.id, id, archiveCheck.updater.base().profileKey)
   await settle(archiveCheck.updater)
   assert.equal(archiveCheck.calls.length, 0)
-  assert.equal((await archiveCheck.updater.reconcile(id)).reason, 'incompatible')
+  const archiveResult = await archiveCheck.updater.reconcile(id)
+  assert.equal(archiveResult.reason, 'incompatible')
+  assert.equal(archiveResult.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  const reloaded = new PluginUpdates({ manager: () => archiveCheck.manager, profileDir: archiveCheck.directory, runtimeVersion, version: '0.5.0' })
+  t.after(() => reloaded.dispose())
+  const reloadedResult = await reloaded.reconcile(id)
+  assert.equal(reloadedResult.requestId, id)
+  assert.equal(reloadedResult.requiredDshVersion, '>=0.2.2 <0.3.0-0')
   assert.equal(archiveEvaluations.length, 3)
 })
 test('archive validation refuses traversal, links, rewriting headers, duplicates and corrupt records', () => {

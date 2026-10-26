@@ -152,6 +152,29 @@ function rangeSatisfied(range, runtime) {
   return typeof range === 'string' && range.trim() !== '' && semver.satisfies(runtime, range, { includePrerelease: true })
 }
 
+function requiredDshVersion(requirements) {
+  if (!recordOf(requirements)) return undefined
+  const clean = value => value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim()
+  const entries = Object.entries(requirements).filter(([name, range]) =>
+    (name === 'engines.dsh' || name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) &&
+    typeof range === 'string' && range.trim() !== '',
+  )
+  if (!entries.length) return undefined
+  const text = entries.map(([name, range]) => {
+    const version = clean(range), label = name === 'engines.dsh' ? '' : clean(name)
+    return label ? `${label} ${version}` : version
+  }).join('; ')
+  if (!text) return undefined
+  return text.length > 512 ? `${text.slice(0, 511)}…` : text
+}
+
+function incompatibleError(requirements) {
+  const error = new Error('incompatible')
+  const version = requiredDshVersion(requirements)
+  if (version) error.requiredDshVersion = version
+  return error
+}
+
 /** Local fallback for evaluatePluginCompatibility at deepseek-harness 687f282e (0.2.1-rc.2). */
 export function dshPeerSatisfied(range, runtime) {
   semanticVersion(runtime)
@@ -205,7 +228,7 @@ export function checkCompatibility(packageJson, candidate, runtime) {
   if (!recordOf(engines)) throw new Error('compatibility-unknown')
   if (Object.hasOwn(engines, 'dsh')) {
     if (typeof engines.dsh !== 'string') throw new Error('compatibility-unknown')
-    if (!rangeSatisfied(engines.dsh, runtime)) throw new Error('incompatible')
+    if (!rangeSatisfied(engines.dsh, runtime)) throw incompatibleError({ 'engines.dsh': engines.dsh })
     return runtime
   }
 
@@ -215,9 +238,10 @@ export function checkCompatibility(packageJson, candidate, runtime) {
   const peers = []
   for (const [name, range] of Object.entries(dependencies)) {
     if (typeof range !== 'string') throw new Error('compatibility-unknown')
-    if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) peers.push(range)
+    if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) peers.push([name, range])
   }
-  if (peers.some(range => !dshPeerSatisfied(range, runtime))) throw new Error('incompatible')
+  const unmet = Object.fromEntries(peers.filter(([, range]) => !dshPeerSatisfied(range, runtime)))
+  if (Object.keys(unmet).length) throw incompatibleError(unmet)
   return runtime
 }
 
@@ -229,7 +253,7 @@ async function checkCandidateCompatibility(packageJson, candidate, runtime, eval
     try { result = await evaluator(packageJson, {}, runtime) }
     catch { throw new Error('compatibility-unknown') }
     if (result === null) checkCompatibility(packageJson, candidate, runtime)
-    else if (result !== undefined) throw new Error('incompatible')
+    else if (result !== undefined) throw incompatibleError(result?.requirements)
   } else {
     checkCompatibility(packageJson, candidate, runtime)
   }
@@ -725,7 +749,15 @@ export class PluginUpdates {
         }
         this.candidate = await this.getCandidate(bundle.version ?? this.version)
         return { ...this.base(), status: this.candidate ? 'available' : 'current', candidate: this.candidate && this.publicCandidate(this.candidate), checkedAt: new Date().toISOString() }
-      } catch (error) { this.candidate = null; return { ...this.base(), status: 'blocked', reason: reasonOf(error) } }
+      } catch (error) {
+        this.candidate = null
+        return {
+          ...this.base(),
+          status: 'blocked',
+          reason: reasonOf(error),
+          ...(typeof error?.requiredDshVersion === 'string' ? { requiredDshVersion: error.requiredDshVersion } : {}),
+        }
+      }
     })().finally(() => { this.checking = null })
     return this.checking
   }
@@ -860,6 +892,7 @@ export class PluginUpdates {
       } else {
         operation.status = managerInvoked ? 'unknown' : 'failed'
         operation.reason = reasonOf(error)
+        if (typeof error?.requiredDshVersion === 'string') operation.requiredDshVersion = error.requiredDshVersion
       }
     }
     try {
