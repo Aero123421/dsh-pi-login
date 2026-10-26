@@ -120,10 +120,9 @@ function boundedComparator(item, direction) {
   return item.operator === '>' || item.operator === '>='
 }
 
-/** A peer range stays in the current 0.2 series when every alternative has a
- * lower and an upper comparator, nothing older than 0.2.1-alpha.2 matches,
- * and nothing from 0.3.0-0 upward matches. `<99.0.0` and `^0` have a written
- * cap and still reach the next series or the versions before this floor.
+/** An auto-update range stays in the supported 0.2 series only when every
+ * alternative is bounded and excludes versions before the floor or at/after
+ * the next series. This update policy is separate from DSH compatibility.
  */
 function peerRangeInCurrentSeries(range) {
   let parsed
@@ -143,26 +142,98 @@ function peerRangeInCurrentSeries(range) {
   return true
 }
 
-/** Whether one DSH peer range accepts the running host.
- * `semver.satisfies` includes prereleases. `workspace:` follows whatever is
- * linked. A range is also rejected when its cap is only formal (`<99.0.0`,
- * `^0`) or when it has no lower bound inside the current series.
- */
+const DSH_WORKSPACE_PEER_RANGES = new Set(['workspace:^', 'workspace:~', 'workspace:*'])
+
+function recordOf(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function rangeSatisfied(range, runtime) {
+  return typeof range === 'string' && range.trim() !== '' && semver.satisfies(runtime, range, { includePrerelease: true })
+}
+
+/** Local fallback for evaluatePluginCompatibility at deepseek-harness 687f282e (0.2.1-rc.2). */
 export function dshPeerSatisfied(range, runtime) {
   semanticVersion(runtime)
   if (typeof range !== 'string') return false
-  const text = range.trim()
-  if (text === '' || text.startsWith('workspace:') || !peerRangeInCurrentSeries(text)) return false
-  try { return semver.satisfies(runtime, text, { includePrerelease: true }) }
+  const requirement = DSH_WORKSPACE_PEER_RANGES.has(range) ? runtime : range
+  try { return rangeSatisfied(requirement, runtime) }
   catch { return false }
+}
+
+/** Match the supported-series policy for the declaration that DSH actually
+ * uses: engines.dsh wins over peers; otherwise all DSH peers must be bounded.
+ */
+export function checkUpdateScope(packageJson, runtime) {
+  semanticVersion(runtime)
+  if (!recordOf(packageJson)) throw new Error('compatibility-unknown')
+  const engines = Object.hasOwn(packageJson, 'engines') ? packageJson.engines : {}
+  if (!recordOf(engines)) throw new Error('compatibility-unknown')
+
+  let ranges
+  if (Object.hasOwn(engines, 'dsh')) {
+    if (typeof engines.dsh !== 'string') throw new Error('compatibility-unknown')
+    ranges = [engines.dsh]
+  } else {
+    if (!Object.hasOwn(packageJson, 'peerDependencies')) throw new Error('compatibility-unknown')
+    const dependencies = packageJson.peerDependencies
+    if (!recordOf(dependencies)) throw new Error('compatibility-unknown')
+    ranges = Object.entries(dependencies)
+      .filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
+      .map(([, range]) => range)
+    if (!ranges.length || ranges.some(range => typeof range !== 'string')) throw new Error('compatibility-unknown')
+  }
+
+  const inScope = ranges.every(range => {
+    const scopedRange = DSH_WORKSPACE_PEER_RANGES.has(range) ? runtime : range
+    return peerRangeInCurrentSeries(scopedRange)
+  })
+  if (!inScope) throw new Error('compatibility-unknown')
+  return runtime
+}
+
+function validateCandidateManifest(packageJson, candidate) {
+  if (!recordOf(packageJson) || packageJson.name !== PACKAGE || packageJson.version !== candidate?.version || typeof packageJson.dsh?.bundle?.patch !== 'string') throw new Error('metadata')
 }
 
 export function checkCompatibility(packageJson, candidate, runtime) {
   semanticVersion(runtime)
-  if (!packageJson || packageJson.name !== PACKAGE || packageJson.version !== candidate.version || typeof packageJson.dsh?.bundle?.patch !== 'string') throw new Error('metadata')
-  const peers = Object.entries(packageJson.peerDependencies ?? {}).filter(([name]) => name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-'))
-  if (!peers.length || peers.some(([, range]) => typeof range !== 'string')) throw new Error('compatibility-unknown')
-  if (peers.some(([, range]) => !dshPeerSatisfied(range, runtime))) throw new Error('incompatible')
+  validateCandidateManifest(packageJson, candidate)
+
+  // DSH's official evaluator ignores peerDependencies when engines.dsh exists.
+  const engines = Object.hasOwn(packageJson, 'engines') ? packageJson.engines : {}
+  if (!recordOf(engines)) throw new Error('compatibility-unknown')
+  if (Object.hasOwn(engines, 'dsh')) {
+    if (typeof engines.dsh !== 'string') throw new Error('compatibility-unknown')
+    if (!rangeSatisfied(engines.dsh, runtime)) throw new Error('incompatible')
+    return runtime
+  }
+
+  if (!Object.hasOwn(packageJson, 'peerDependencies')) return runtime
+  const dependencies = packageJson.peerDependencies
+  if (!recordOf(dependencies)) throw new Error('compatibility-unknown')
+  const peers = []
+  for (const [name, range] of Object.entries(dependencies)) {
+    if (typeof range !== 'string') throw new Error('compatibility-unknown')
+    if (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) peers.push(range)
+  }
+  if (peers.some(range => !dshPeerSatisfied(range, runtime))) throw new Error('incompatible')
+  return runtime
+}
+
+async function checkCandidateCompatibility(packageJson, candidate, runtime, evaluator) {
+  semanticVersion(runtime)
+  validateCandidateManifest(packageJson, candidate)
+  if (typeof evaluator === 'function') {
+    let result
+    try { result = await evaluator(packageJson, {}, runtime) }
+    catch { throw new Error('compatibility-unknown') }
+    if (result === null) checkCompatibility(packageJson, candidate, runtime)
+    else if (result !== undefined) throw new Error('incompatible')
+  } else {
+    checkCompatibility(packageJson, candidate, runtime)
+  }
+  checkUpdateScope(packageJson, runtime)
   return runtime
 }
 
@@ -582,8 +653,8 @@ export function resultState(result, expected, runtime, installed) {
 
 /** Optional manager is resolved for every operation; login never depends on it. */
 export class PluginUpdates {
-  constructor({ manager, profileDir, runtimeVersion, isBusy = () => false, fetcher = fetch, version = manifest.version }) {
-    Object.assign(this, { manager, profileDir, runtimeVersion, isBusy, fetcher, version })
+  constructor({ manager, profileDir, runtimeVersion, compatibilityEvaluator, isBusy = () => false, fetcher = fetch, version = manifest.version }) {
+    Object.assign(this, { manager, profileDir, runtimeVersion, compatibilityEvaluator, isBusy, fetcher, version })
     this.candidate = null; this.checking = null; this.running = null; this.closed = false; this.abort = new AbortController()
   }
   get cacheDir() { return this.profileDir && join(this.profileDir, '.dsh-pi-login-updates') }
@@ -635,7 +706,7 @@ export class PluginUpdates {
     const candidate = releaseCandidate(release, current)
     if (!candidate) return null
     const packageJson = JSON.parse((await boundedFetch(`https://raw.githubusercontent.com/${REPOSITORY}/${candidate.tag}/package.json`, 64 * 1024, options)).toString())
-    candidate.compatibility = checkCompatibility(packageJson, candidate, await this.runtimeVersion())
+    candidate.compatibility = await checkCandidateCompatibility(packageJson, candidate, await this.runtimeVersion(), this.compatibilityEvaluator)
     return candidate
   }
   check() {
@@ -724,7 +795,7 @@ export class PluginUpdates {
       if (!match || match[2] !== candidate.filename) throw new Error('checksum')
       const bytes = await boundedFetch(candidate.tarball, MAX_PACKAGE, options)
       if (createHash('sha256').update(bytes).digest('hex') !== match[1].toLowerCase()) throw new Error('checksum')
-      checkCompatibility(packageManifest(bytes), candidate, await this.runtimeVersion())
+      await checkCandidateCompatibility(packageManifest(bytes), candidate, await this.runtimeVersion(), this.compatibilityEvaluator)
       const dir = await mkdtemp(join(await this.privateDir(), 'verified-'))
       const path = join(dir, candidate.filename)
       await writeFile(path, bytes, { flag: 'wx', mode: 0o600 })

@@ -7,13 +7,24 @@ import { RegistryError } from './registry.mjs'
 export function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options)
   let writes = 0
+  let appBoot
+  let appBootSpecifier
+  const loadAppBoot = () => {
+    const moduleName = '@deepseek-ai/dsh-app-boot'
+    const anchor = ctx.get('profileContext')?.installAnchor
+    const resolved = anchor ? pathToFileURL(createRequire(anchor).resolve(moduleName)).href : moduleName
+    if (appBootSpecifier !== resolved) {
+      appBootSpecifier = resolved
+      appBoot = import(resolved)
+    }
+    return appBoot
+  }
   const updates = new PluginUpdates({
     manager: () => ctx.get('pluginManager'), profileDir: ctx.get('profileContext')?.dir,
-    runtimeVersion: async () => {
-      const moduleName = '@deepseek-ai/dsh-app-boot'
-      const anchor = ctx.get('profileContext')?.installAnchor
-      const resolved = anchor ? pathToFileURL(createRequire(anchor).resolve(moduleName)).href : moduleName
-      return (await import(resolved)).getDshRuntimeVersion()
+    runtimeVersion: async () => (await loadAppBoot()).getDshRuntimeVersion(),
+    compatibilityEvaluator: async (packageJson, exemptions, runtimeVersion) => {
+      const evaluate = (await loadAppBoot()).evaluatePluginCompatibility
+      return typeof evaluate === 'function' ? evaluate(packageJson, exemptions, runtimeVersion) : null
     },
     isBusy: () => writes > 0 || ctx.authorization.list().some(entry => entry.key.startsWith('llm-pi-ai/') && entry.inFlight),
     ...options.updates,
