@@ -253,7 +253,11 @@ async function checkCandidateCompatibility(packageJson, candidate, runtime, eval
     try { result = await evaluator(packageJson, {}, runtime) }
     catch { throw new Error('compatibility-unknown') }
     if (result === null) checkCompatibility(packageJson, candidate, runtime)
-    else if (result !== undefined) throw incompatibleError(result?.requirements)
+    else if (result !== undefined) {
+      // dsh-app-boot@0.2.1-alpha.2 used `peers`; later versions call it `requirements`.
+      const requirements = result?.requirements ?? result?.peers
+      throw incompatibleError(requirements)
+    }
   } else {
     checkCompatibility(packageJson, candidate, runtime)
   }

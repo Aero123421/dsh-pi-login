@@ -44,10 +44,16 @@ function manifestFetcher(candidateManifest, archiveManifest = candidateManifest)
     throw new Error(url)
   }
 }
-function mockEvaluator(calls) {
+function mockEvaluator(calls, field = 'requirements') {
   return async (packageJson, exemptions, runtime) => {
     calls.push({ packageJson, exemptions, runtime })
     assert.deepEqual(exemptions, {})
+    if (field === 'peers') {
+      const peers = Object.fromEntries(Object.entries(packageJson.peerDependencies ?? {}).filter(([name, range]) =>
+        (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) && range === '>=0.2.2 <0.3.0-0',
+      ))
+      return Object.keys(peers).length ? { peers } : undefined
+    }
     const range = packageJson.engines?.dsh
     return runtime === '0.2.1-rc.2' && range === '>=0.2.2 <0.3.0-0'
       ? { requirements: { 'engines.dsh': range } }
@@ -162,6 +168,51 @@ test('candidate and verified archive share engines.dsh precedence; peer-only fal
   const reloadedResult = await reloaded.reconcile(id)
   assert.equal(reloadedResult.requestId, id)
   assert.equal(reloadedResult.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  assert.equal(archiveEvaluations.length, 3)
+})
+
+test('alpha.2 evaluator peers are shown for candidate and archive refusals and survive journal reload', async t => {
+  // Official @deepseek-ai/dsh-app-boot@0.2.1-alpha.2 returns PluginCompatibility.peers.
+  const runtimeVersion = async () => '0.2.1-rc.2'
+  const peerLower = { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' }
+  const peerLater = { '@deepseek-ai/dsh-llm': '>=0.2.2 <0.3.0-0' }
+
+  const candidateEvaluations = []
+  const rejectedCandidate = await fixture(t, {
+    runtimeVersion,
+    fetcher: manifestFetcher({ ...pkg, peerDependencies: peerLater }),
+    compatibilityEvaluator: mockEvaluator(candidateEvaluations, 'peers'),
+  })
+  const blocked = await rejectedCandidate.updater.check()
+  assert.equal(blocked.status, 'blocked')
+  assert.equal(blocked.reason, 'incompatible')
+  assert.equal(blocked.requiredDshVersion, '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0')
+  assert.equal(rejectedCandidate.calls.length, 0)
+  assert.equal(candidateEvaluations.length, 1)
+
+  const archiveEvaluations = []
+  const acceptedCandidate = { ...pkg, peerDependencies: peerLower }
+  const incompatibleArchive = { ...pkg, peerDependencies: peerLater }
+  const archiveCheck = await fixture(t, {
+    runtimeVersion,
+    fetcher: manifestFetcher(acceptedCandidate, incompatibleArchive),
+    compatibilityEvaluator: mockEvaluator(archiveEvaluations, 'peers'),
+  })
+  const available = await archiveCheck.updater.check()
+  assert.equal(available.status, 'available')
+  const id = randomUUID()
+  await archiveCheck.updater.begin(available.candidate.id, id, archiveCheck.updater.base().profileKey)
+  await settle(archiveCheck.updater)
+  assert.equal(archiveCheck.calls.length, 0)
+
+  const result = await archiveCheck.updater.reconcile(id)
+  assert.equal(result.reason, 'incompatible')
+  assert.equal(result.requiredDshVersion, '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0')
+  const reloaded = new PluginUpdates({ manager: () => archiveCheck.manager, profileDir: archiveCheck.directory, runtimeVersion, version: '0.5.0' })
+  t.after(() => reloaded.dispose())
+  const restored = await reloaded.reconcile(id)
+  assert.equal(restored.requestId, id)
+  assert.equal(restored.requiredDshVersion, '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0')
   assert.equal(archiveEvaluations.length, 3)
 })
 test('archive validation refuses traversal, links, rewriting headers, duplicates and corrupt records', () => {

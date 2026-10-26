@@ -724,6 +724,14 @@ try {
  assert.equal(await page.locator('.dsh-pi-updates img').count(), 0)
  await captureUpdate('issue46-untrusted-range-en-mobile-light.png')
 
+ // The alpha.2 evaluator's `peers` map is normalized by PluginUpdates to this displayed version line.
+ const legacyPeerRequirement = '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0'
+ updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: legacyPeerRequirement }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.waitForFunction(expected => [...document.querySelectorAll('.dsh-pi-updates p')].some(element => element.textContent === expected), `Required DSH version: ${legacyPeerRequirement}`)
+ assert.equal(await page.locator('.dsh-pi-updates p').filter({ hasText: 'Required DSH version:' }).textContent(), `Required DSH version: ${legacyPeerRequirement}`)
+ await captureUpdate('issue46-legacy-peers-en-mobile-light.png')
+
  const longRequirement = `${untrustedRequirement} ${'>=0.2.2 <0.3.0-0 '.repeat(12)}`
  updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: longRequirement }
  await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()

@@ -130108,7 +130108,7 @@ async function checkCandidateCompatibility(packageJson, candidate, runtime, eval
       throw new Error("compatibility-unknown");
     }
     if (result === null) checkCompatibility(packageJson, candidate, runtime);
-    else if (result !== void 0) throw incompatibleError(result?.requirements);
+    else if (result !== void 0) throw incompatibleError(result?.requirements ?? result?.peers);
   } else {
     checkCompatibility(packageJson, candidate, runtime);
   }
