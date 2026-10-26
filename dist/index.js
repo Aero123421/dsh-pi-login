@@ -130012,23 +130012,110 @@ function peerRangeInCurrentSeries(range2) {
   }
   return true;
 }
+var DSH_WORKSPACE_PEER_RANGES = /* @__PURE__ */ new Set(["workspace:^", "workspace:~", "workspace:*"]);
+function recordOf(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function rangeSatisfied(range2, runtime) {
+  return typeof range2 === "string" && range2.trim() !== "" && import_semver.default.satisfies(runtime, range2, { includePrerelease: true });
+}
+function requiredDshVersion(requirements) {
+  if (!recordOf(requirements)) return void 0;
+  const clean = (value) => value.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").replace(/\s+/g, " ").trim();
+  const entries = Object.entries(requirements).filter(
+    ([name2, range2]) => (name2 === "engines.dsh" || name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-")) && typeof range2 === "string" && range2.trim() !== ""
+  );
+  if (!entries.length) return void 0;
+  const text2 = entries.map(([name2, range2]) => {
+    const version = clean(range2), label5 = name2 === "engines.dsh" ? "" : clean(name2);
+    return label5 ? `${label5} ${version}` : version;
+  }).join("; ");
+  if (!text2) return void 0;
+  return text2.length > 512 ? `${text2.slice(0, 511)}\u2026` : text2;
+}
+function incompatibleError(requirements) {
+  const error2 = new Error("incompatible");
+  const version = requiredDshVersion(requirements);
+  if (version) error2.requiredDshVersion = version;
+  return error2;
+}
 function dshPeerSatisfied(range2, runtime) {
   semanticVersion(runtime);
   if (typeof range2 !== "string") return false;
-  const text2 = range2.trim();
-  if (text2 === "" || text2.startsWith("workspace:") || !peerRangeInCurrentSeries(text2)) return false;
+  const requirement = DSH_WORKSPACE_PEER_RANGES.has(range2) ? runtime : range2;
   try {
-    return import_semver.default.satisfies(runtime, text2, { includePrerelease: true });
+    return rangeSatisfied(requirement, runtime);
   } catch {
     return false;
   }
 }
+function checkUpdateScope(packageJson, runtime) {
+  semanticVersion(runtime);
+  if (!recordOf(packageJson)) throw new Error("compatibility-unknown");
+  const engines = Object.hasOwn(packageJson, "engines") ? packageJson.engines : {};
+  if (!recordOf(engines)) throw new Error("compatibility-unknown");
+  let ranges;
+  if (Object.hasOwn(engines, "dsh")) {
+    if (typeof engines.dsh !== "string") throw new Error("compatibility-unknown");
+    ranges = [engines.dsh];
+  } else {
+    if (!Object.hasOwn(packageJson, "peerDependencies")) throw new Error("compatibility-unknown");
+    const dependencies = packageJson.peerDependencies;
+    if (!recordOf(dependencies)) throw new Error("compatibility-unknown");
+    ranges = Object.entries(dependencies).filter(([name2]) => name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-")).map(([, range2]) => range2);
+    if (!ranges.length || ranges.some((range2) => typeof range2 !== "string")) throw new Error("compatibility-unknown");
+  }
+  const inScope = ranges.every((range2) => {
+    const scopedRange = DSH_WORKSPACE_PEER_RANGES.has(range2) ? runtime : range2;
+    return peerRangeInCurrentSeries(scopedRange);
+  });
+  if (!inScope) throw new Error("compatibility-unknown");
+  return runtime;
+}
+function validateCandidateManifest(packageJson, candidate) {
+  if (!recordOf(packageJson) || packageJson.name !== PACKAGE || packageJson.version !== candidate?.version || typeof packageJson.dsh?.bundle?.patch !== "string") throw new Error("metadata");
+}
 function checkCompatibility(packageJson, candidate, runtime) {
   semanticVersion(runtime);
-  if (!packageJson || packageJson.name !== PACKAGE || packageJson.version !== candidate.version || typeof packageJson.dsh?.bundle?.patch !== "string") throw new Error("metadata");
-  const peers = Object.entries(packageJson.peerDependencies ?? {}).filter(([name2]) => name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-"));
-  if (!peers.length || peers.some(([, range2]) => typeof range2 !== "string")) throw new Error("compatibility-unknown");
-  if (peers.some(([, range2]) => !dshPeerSatisfied(range2, runtime))) throw new Error("incompatible");
+  validateCandidateManifest(packageJson, candidate);
+  const engines = Object.hasOwn(packageJson, "engines") ? packageJson.engines : {};
+  if (!recordOf(engines)) throw new Error("compatibility-unknown");
+  if (Object.hasOwn(engines, "dsh")) {
+    if (typeof engines.dsh !== "string") throw new Error("compatibility-unknown");
+    if (!rangeSatisfied(engines.dsh, runtime)) throw incompatibleError({ "engines.dsh": engines.dsh });
+    return runtime;
+  }
+  if (!Object.hasOwn(packageJson, "peerDependencies")) return runtime;
+  const dependencies = packageJson.peerDependencies;
+  if (!recordOf(dependencies)) throw new Error("compatibility-unknown");
+  const peers = [];
+  for (const [name2, range2] of Object.entries(dependencies)) {
+    if (typeof range2 !== "string") throw new Error("compatibility-unknown");
+    if (name2 === "@deepseek-ai/dsh" || name2.startsWith("@deepseek-ai/dsh-")) peers.push([name2, range2]);
+  }
+  const unmet = Object.fromEntries(peers.filter(([, range2]) => !dshPeerSatisfied(range2, runtime)));
+  if (Object.keys(unmet).length) throw incompatibleError(unmet);
+  return runtime;
+}
+async function checkCandidateCompatibility(packageJson, candidate, runtime, evaluator) {
+  semanticVersion(runtime);
+  validateCandidateManifest(packageJson, candidate);
+  if (typeof evaluator === "function") {
+    let result;
+    try {
+      result = await evaluator(packageJson, {}, runtime);
+    } catch {
+      throw new Error("compatibility-unknown");
+    }
+    if (result === null) checkCompatibility(packageJson, candidate, runtime);
+    else if (result !== void 0) {
+      const requirements = result?.requirements ?? result?.peers;
+      throw incompatibleError(requirements);
+    }
+  } else {
+    checkCompatibility(packageJson, candidate, runtime);
+  }
+  checkUpdateScope(packageJson, runtime);
   return runtime;
 }
 function bundleRecord(list2, name2) {
@@ -130350,8 +130437,8 @@ function resultState(result, expected, runtime, installed) {
   return result.application === "applied" && runtime === expected ? "applied" : "unknown";
 }
 var PluginUpdates = class {
-  constructor({ manager, profileDir, runtimeVersion, isBusy = () => false, fetcher = fetch, version = package_default.version }) {
-    Object.assign(this, { manager, profileDir, runtimeVersion, isBusy, fetcher, version });
+  constructor({ manager, profileDir, runtimeVersion, compatibilityEvaluator, isBusy = () => false, fetcher = fetch, version = package_default.version }) {
+    Object.assign(this, { manager, profileDir, runtimeVersion, compatibilityEvaluator, isBusy, fetcher, version });
     this.candidate = null;
     this.checking = null;
     this.running = null;
@@ -130420,7 +130507,7 @@ var PluginUpdates = class {
     const candidate = releaseCandidate(release2, current);
     if (!candidate) return null;
     const packageJson = JSON.parse((await boundedFetch(`https://raw.githubusercontent.com/${REPOSITORY}/${candidate.tag}/package.json`, 64 * 1024, options)).toString());
-    candidate.compatibility = checkCompatibility(packageJson, candidate, await this.runtimeVersion());
+    candidate.compatibility = await checkCandidateCompatibility(packageJson, candidate, await this.runtimeVersion(), this.compatibilityEvaluator);
     return candidate;
   }
   check() {
@@ -130439,7 +130526,12 @@ var PluginUpdates = class {
         return { ...this.base(), status: this.candidate ? "available" : "current", candidate: this.candidate && this.publicCandidate(this.candidate), checkedAt: (/* @__PURE__ */ new Date()).toISOString() };
       } catch (error2) {
         this.candidate = null;
-        return { ...this.base(), status: "blocked", reason: reasonOf(error2) };
+        return {
+          ...this.base(),
+          status: "blocked",
+          reason: reasonOf(error2),
+          ...typeof error2?.requiredDshVersion === "string" ? { requiredDshVersion: error2.requiredDshVersion } : {}
+        };
       }
     })().finally(() => {
       this.checking = null;
@@ -130508,7 +130600,7 @@ var PluginUpdates = class {
       if (!match2 || match2[2] !== candidate.filename) throw new Error("checksum");
       const bytes = await boundedFetch(candidate.tarball, MAX_PACKAGE, options);
       if (createHash("sha256").update(bytes).digest("hex") !== match2[1].toLowerCase()) throw new Error("checksum");
-      checkCompatibility(packageManifest(bytes), candidate, await this.runtimeVersion());
+      await checkCandidateCompatibility(packageManifest(bytes), candidate, await this.runtimeVersion(), this.compatibilityEvaluator);
       const dir = await mkdtemp(join(await this.privateDir(), "verified-"));
       const path6 = join(dir, candidate.filename);
       await writeFile(path6, bytes, { flag: "wx", mode: 384 });
@@ -130562,6 +130654,7 @@ var PluginUpdates = class {
       } else {
         operation2.status = managerInvoked ? "unknown" : "failed";
         operation2.reason = reasonOf(error2);
+        if (typeof error2?.requiredDshVersion === "string") operation2.requiredDshVersion = error2.requiredDshVersion;
       }
     }
     try {
@@ -132211,14 +132304,25 @@ var ConnectionManager = class {
 function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options);
   let writes = 0;
+  let appBoot;
+  let appBootSpecifier;
+  const loadAppBoot = () => {
+    const moduleName = "@deepseek-ai/dsh-app-boot";
+    const anchor = ctx.get("profileContext")?.installAnchor;
+    const resolved = anchor ? pathToFileURL(createRequire(anchor).resolve(moduleName)).href : moduleName;
+    if (appBootSpecifier !== resolved) {
+      appBootSpecifier = resolved;
+      appBoot = import(resolved);
+    }
+    return appBoot;
+  };
   const updates = new PluginUpdates({
     manager: () => ctx.get("pluginManager"),
     profileDir: ctx.get("profileContext")?.dir,
-    runtimeVersion: async () => {
-      const moduleName = "@deepseek-ai/dsh-app-boot";
-      const anchor = ctx.get("profileContext")?.installAnchor;
-      const resolved = anchor ? pathToFileURL(createRequire(anchor).resolve(moduleName)).href : moduleName;
-      return (await import(resolved)).getDshRuntimeVersion();
+    runtimeVersion: async () => (await loadAppBoot()).getDshRuntimeVersion(),
+    compatibilityEvaluator: async (packageJson, exemptions, runtimeVersion) => {
+      const evaluate = (await loadAppBoot()).evaluatePluginCompatibility;
+      return typeof evaluate === "function" ? evaluate(packageJson, exemptions, runtimeVersion) : null;
     },
     isBusy: () => writes > 0 || ctx.authorization.list().some((entry) => entry.key.startsWith("llm-pi-ai/") && entry.inFlight),
     ...options.updates

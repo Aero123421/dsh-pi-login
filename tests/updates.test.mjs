@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
-import { PluginUpdates, REPOSITORY, PACKAGE, compareVersions, semanticVersion, releaseCandidate, checkCompatibility, dshPeerSatisfied, installPreservingPackage, restoreIfMissing, resultState, sourceKind, boundedFetch, packageManifest } from '../src/updates.mjs'
+import { PluginUpdates, REPOSITORY, PACKAGE, compareVersions, semanticVersion, releaseCandidate, checkCompatibility, checkUpdateScope, dshPeerSatisfied, installPreservingPackage, restoreIfMissing, resultState, sourceKind, boundedFetch, packageManifest } from '../src/updates.mjs'
 const version = '0.6.0', tag = `v${version}`
 const filename = `local-dsh-pi-login-${version}.tgz`
 const download = `https://github.com/${REPOSITORY}/releases/download/${tag}/`
@@ -32,6 +32,34 @@ function fetcher(input) {
   if (url.endsWith('.tgz')) return Promise.resolve(new Response(bytes))
   throw new Error(url)
 }
+function manifestFetcher(candidateManifest, archiveManifest = candidateManifest) {
+  const archive = tarPackage(archiveManifest)
+  const archiveHash = createHash('sha256').update(archive).digest('hex')
+  return input => {
+    const url = String(input)
+    if (url.endsWith('/releases/latest')) return Promise.resolve(Response.json(release))
+    if (url.endsWith('/package.json')) return Promise.resolve(Response.json(candidateManifest))
+    if (url.endsWith('SHA256SUMS')) return Promise.resolve(new Response(`${archiveHash}  ${filename}\n`))
+    if (url.endsWith('.tgz')) return Promise.resolve(new Response(archive))
+    throw new Error(url)
+  }
+}
+function mockEvaluator(calls, field = 'requirements') {
+  return async (packageJson, exemptions, runtime) => {
+    calls.push({ packageJson, exemptions, runtime })
+    assert.deepEqual(exemptions, {})
+    if (field === 'peers') {
+      const peers = Object.fromEntries(Object.entries(packageJson.peerDependencies ?? {}).filter(([name, range]) =>
+        (name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) && range === '>=0.2.2 <0.3.0-0',
+      ))
+      return Object.keys(peers).length ? { peers } : undefined
+    }
+    const range = packageJson.engines?.dsh
+    return runtime === '0.2.1-rc.2' && range === '>=0.2.2 <0.3.0-0'
+      ? { requirements: { 'engines.dsh': range } }
+      : undefined
+  }
+}
 async function fixture(t, overrides = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'pi-update-'))
   t.after(() => rm(directory, { recursive: true, force: true }))
@@ -51,30 +79,141 @@ test('strict SemVer ordering, numeric prereleases, build metadata and invalid me
   assert.equal(compareVersions('1.0.0+x', '1.0.0+y'), 0)
   for (const invalid of ['01.0.0', '1.0', '1.0.0-01', '', null]) assert.throws(() => semanticVersion(invalid))
 })
-test('release schema, stable channel, exact assets and compatibility are fail closed', () => {
+test('release metadata and DSH compatibility follow the official evaluator', () => {
   const candidate = releaseCandidate(release, '0.5.0')
   assert.equal(releaseCandidate(release, version), null)
   assert.equal(checkCompatibility(pkg, candidate, '0.2.1-alpha.2'), '0.2.1-alpha.2')
   assert.throws(() => checkCompatibility(pkg, candidate, '0.2.1'), /incompatible/)
   assert.equal(checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '^0.2.1' } }, candidate, '0.2.1'), '0.2.1')
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '^0.2.1' } }, candidate, '0.2.1-alpha.3'), /incompatible/)
-  assert.equal(checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.2.1-alpha.3'), '0.2.1-alpha.3')
+  const runtime = '0.2.1-rc.2'
+  const peerLower = { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' }
+  const peerLater = { '@deepseek-ai/dsh-llm': '>=0.2.2 <0.3.0-0' }
+  const engineLater = { ...pkg, engines: { dsh: '>=0.2.2 <0.3.0-0' }, peerDependencies: peerLower }
+  const engineEarlier = { ...pkg, engines: { dsh: '>=0.2.1-alpha.2 <0.3.0-0' }, peerDependencies: peerLater }
+  assert.throws(() => checkCompatibility(engineLater, candidate, runtime), error =>
+    error.message === 'incompatible' && error.requiredDshVersion === '>=0.2.2 <0.3.0-0',
+  )
+  assert.equal(checkCompatibility(engineEarlier, candidate, runtime), runtime)
+  assert.equal(checkUpdateScope(engineEarlier, runtime), runtime)
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: peerLater }, candidate, runtime), error =>
+    error.message === 'incompatible' && error.requiredDshVersion === '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0',
+  )
+  assert.equal(checkCompatibility({ ...pkg, peerDependencies: peerLower }, candidate, runtime), runtime)
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' } }, candidate, '0.3.0-alpha.1'), /incompatible/)
   assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'not a range' } }, candidate, '0.2.1-alpha.2'), /incompatible/)
-  assert.equal(dshPeerSatisfied('workspace:*', '0.2.1-alpha.3'), false)
-  assert.equal(dshPeerSatisfied('workspace:^', '0.2.1-alpha.2'), false)
-  assert.equal(dshPeerSatisfied('workspace:~', '0.2.1-alpha.2'), false)
+  const engineOnly = { ...pkg, engines: { dsh: peerLower['@deepseek-ai/dsh-llm'] } }
+  delete engineOnly.peerDependencies
+  assert.equal(checkCompatibility(engineOnly, candidate, runtime), runtime)
+  assert.equal(checkUpdateScope(engineOnly, runtime), runtime)
+  assert.equal(checkCompatibility({ ...engineEarlier, peerDependencies: null }, candidate, runtime), runtime)
+  assert.throws(() => checkCompatibility({ ...pkg, engines: { dsh: 3 }, peerDependencies: peerLower }, candidate, runtime), /compatibility-unknown/)
+  assert.throws(() => checkCompatibility({ ...pkg, engines: { dsh: 'not a range' }, peerDependencies: peerLower }, candidate, runtime), /incompatible/)
+  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 3 } }, candidate, runtime), /compatibility-unknown/)
+  assert.equal(checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'workspace:*' } }, candidate, runtime), runtime)
+  assert.equal(checkUpdateScope({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'workspace:*' } }, runtime), runtime)
+  const noDshPeer = { ...pkg, peerDependencies: { react: '^18.0.0' } }
+  assert.equal(checkCompatibility(noDshPeer, candidate, runtime), runtime)
+  assert.throws(() => checkUpdateScope(noDshPeer, runtime), /compatibility-unknown/)
   for (const range of ['*', '>=0', '>=0.2.1-alpha.2', '<99.0.0', '^0', '>=0.0.0 <1.0.0-0', '<0.3.0-0', '>=0.2.1-alpha.2 <0.3.0', '>=0.2.1-alpha.1 <0.3.0-0', '>0.2.1-alpha.1 <0.3.0-0']) {
-    assert.equal(dshPeerSatisfied(range, '0.2.1-alpha.3'), false, range)
-    assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': range } }, candidate, '0.2.1-alpha.3'), /incompatible/)
+    assert.equal(dshPeerSatisfied(range, '0.2.1-alpha.3'), true, range)
+    assert.throws(() => checkUpdateScope({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': range } }, '0.2.1-alpha.3'), /compatibility-unknown/)
   }
   assert.equal(dshPeerSatisfied('>=0.2.5 <0.3.0-0', '0.2.5'), true)
   assert.equal(dshPeerSatisfied('>=0.2.5 <0.3.0-0', '0.2.1-alpha.3'), false)
   assert.equal(dshPeerSatisfied('^0.2.1-alpha.2', '0.2.1-alpha.3'), true)
-  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: { '@deepseek-ai/dsh-llm': 'workspace:*' } }, candidate, '0.2.1-alpha.2'), /incompatible/)
-  assert.throws(() => checkCompatibility({ ...pkg, peerDependencies: {} }, candidate, '0.2.1-alpha.2'), /compatibility-unknown/)
+  assert.throws(() => checkUpdateScope({ ...pkg, peerDependencies: {} }, runtime), /compatibility-unknown/)
   for (const value of [{ ...release, prerelease: true }, { ...release, draft: true }, { ...release, assets: [...release.assets, release.assets[0]] }, { ...release, assets: [] }, { ...release, tag_name: 'garbage' }]) assert.throws(() => releaseCandidate(value, '0.5.0'))
   assert.deepEqual(packageManifest(bytes), pkg)
+})
+
+test('candidate and verified archive share engines.dsh precedence; peer-only fallback still rejects mismatches', async t => {
+  const runtimeVersion = async () => '0.2.1-rc.2'
+  const peerLower = { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' }
+  const peerLater = { '@deepseek-ai/dsh-llm': '>=0.2.2 <0.3.0-0' }
+  const deniedEvaluations = []
+  const deniedManifest = { ...pkg, engines: { dsh: '>=0.2.2 <0.3.0-0' }, peerDependencies: peerLower }
+  const denied = await fixture(t, { runtimeVersion, fetcher: manifestFetcher(deniedManifest), compatibilityEvaluator: mockEvaluator(deniedEvaluations) })
+  const deniedStatus = await denied.updater.check()
+  assert.equal(deniedStatus.status, 'blocked')
+  assert.equal(deniedStatus.reason, 'incompatible')
+  assert.equal(deniedStatus.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  assert.equal(denied.calls.length, 0)
+  assert.equal(deniedEvaluations.length, 1)
+
+  const acceptedManifest = { ...pkg, engines: { dsh: '>=0.2.1-alpha.2 <0.3.0-0' }, peerDependencies: peerLater }
+  const acceptedEvaluations = []
+  const accepted = await fixture(t, { runtimeVersion, fetcher: manifestFetcher(acceptedManifest), compatibilityEvaluator: mockEvaluator(acceptedEvaluations) })
+  const available = await accepted.updater.check()
+  assert.equal(available.status, 'available')
+  await accepted.updater.begin(available.candidate.id, randomUUID(), accepted.updater.base().profileKey)
+  await settle(accepted.updater)
+  assert.equal(accepted.calls.length, 1)
+  assert.equal(acceptedEvaluations.length, 3)
+
+  const incompatibleArchive = { ...acceptedManifest, engines: { dsh: '>=0.2.2 <0.3.0-0' }, peerDependencies: peerLower }
+  const archiveEvaluations = []
+  const archiveCheck = await fixture(t, { runtimeVersion, fetcher: manifestFetcher(acceptedManifest, incompatibleArchive), compatibilityEvaluator: mockEvaluator(archiveEvaluations) })
+  const archiveCandidate = await archiveCheck.updater.check()
+  assert.equal(archiveCandidate.status, 'available')
+  const id = randomUUID()
+  await archiveCheck.updater.begin(archiveCandidate.candidate.id, id, archiveCheck.updater.base().profileKey)
+  await settle(archiveCheck.updater)
+  assert.equal(archiveCheck.calls.length, 0)
+  const archiveResult = await archiveCheck.updater.reconcile(id)
+  assert.equal(archiveResult.reason, 'incompatible')
+  assert.equal(archiveResult.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  const reloaded = new PluginUpdates({ manager: () => archiveCheck.manager, profileDir: archiveCheck.directory, runtimeVersion, version: '0.5.0' })
+  t.after(() => reloaded.dispose())
+  const reloadedResult = await reloaded.reconcile(id)
+  assert.equal(reloadedResult.requestId, id)
+  assert.equal(reloadedResult.requiredDshVersion, '>=0.2.2 <0.3.0-0')
+  assert.equal(archiveEvaluations.length, 3)
+})
+
+test('alpha.2 evaluator peers are shown for candidate and archive refusals and survive journal reload', async t => {
+  // Official @deepseek-ai/dsh-app-boot@0.2.1-alpha.2 returns PluginCompatibility.peers.
+  const runtimeVersion = async () => '0.2.1-rc.2'
+  const peerLower = { '@deepseek-ai/dsh-llm': '>=0.2.1-alpha.2 <0.3.0-0' }
+  const peerLater = { '@deepseek-ai/dsh-llm': '>=0.2.2 <0.3.0-0' }
+
+  const candidateEvaluations = []
+  const rejectedCandidate = await fixture(t, {
+    runtimeVersion,
+    fetcher: manifestFetcher({ ...pkg, peerDependencies: peerLater }),
+    compatibilityEvaluator: mockEvaluator(candidateEvaluations, 'peers'),
+  })
+  const blocked = await rejectedCandidate.updater.check()
+  assert.equal(blocked.status, 'blocked')
+  assert.equal(blocked.reason, 'incompatible')
+  assert.equal(blocked.requiredDshVersion, '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0')
+  assert.equal(rejectedCandidate.calls.length, 0)
+  assert.equal(candidateEvaluations.length, 1)
+
+  const archiveEvaluations = []
+  const acceptedCandidate = { ...pkg, peerDependencies: peerLower }
+  const incompatibleArchive = { ...pkg, peerDependencies: peerLater }
+  const archiveCheck = await fixture(t, {
+    runtimeVersion,
+    fetcher: manifestFetcher(acceptedCandidate, incompatibleArchive),
+    compatibilityEvaluator: mockEvaluator(archiveEvaluations, 'peers'),
+  })
+  const available = await archiveCheck.updater.check()
+  assert.equal(available.status, 'available')
+  const id = randomUUID()
+  await archiveCheck.updater.begin(available.candidate.id, id, archiveCheck.updater.base().profileKey)
+  await settle(archiveCheck.updater)
+  assert.equal(archiveCheck.calls.length, 0)
+
+  const result = await archiveCheck.updater.reconcile(id)
+  assert.equal(result.reason, 'incompatible')
+  assert.equal(result.requiredDshVersion, '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0')
+  const reloaded = new PluginUpdates({ manager: () => archiveCheck.manager, profileDir: archiveCheck.directory, runtimeVersion, version: '0.5.0' })
+  t.after(() => reloaded.dispose())
+  const restored = await reloaded.reconcile(id)
+  assert.equal(restored.requestId, id)
+  assert.equal(restored.requiredDshVersion, '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0')
+  assert.equal(archiveEvaluations.length, 3)
 })
 test('archive validation refuses traversal, links, rewriting headers, duplicates and corrupt records', () => {
   for (const path of ['../outside', '/package/outside', 'package/../outside', 'package/./file', 'package//file', 'package\\outside']) {

@@ -660,22 +660,138 @@ try {
  // Plugin updates have independent request state and one shared footer.
  const updateProfileKey = 'a'.repeat(64)
  let acceptedUpdateId, begins = 0
+ let updateBeginResponse, updateStatusResponse, updateReconcileResponse
+ let holdUpdateCheck = false, releaseUpdateCheck
+ let updateCheckResponse = { status: 'available', profileKey: updateProfileKey, runtimeVersion: '0.6.0', candidate: { id: 'fixture-release', version: '0.6.1', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } }
  const rpcReply = (route, value) => route.fulfill({ json: { type: 'server-response', rpcId: route.request().postDataJSON().rpcId, result: { ok: true, value } } })
- await page.route('**/api/dsh-pi-login/update-status', route => rpcReply(route, { status: acceptedUpdateId ? 'installing' : 'idle', profileKey: updateProfileKey, ...(acceptedUpdateId ? { requestId: acceptedUpdateId } : {}) }))
- await page.route('**/api/dsh-pi-login/update-check', route => rpcReply(route, { status: 'available', profileKey: updateProfileKey, runtimeVersion: '0.6.0', candidate: { id: 'fixture-release', version: '0.6.1', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } }))
+ await page.route('**/api/dsh-pi-login/update-status', route => rpcReply(route, updateStatusResponse ?? { status: acceptedUpdateId ? 'installing' : 'idle', profileKey: updateProfileKey, ...(acceptedUpdateId ? { requestId: acceptedUpdateId } : {}) }))
+ await page.route('**/api/dsh-pi-login/update-check', async route => {
+  if (holdUpdateCheck) {
+   holdUpdateCheck = false
+   await new Promise(resolve => { releaseUpdateCheck = resolve })
+  }
+  return rpcReply(route, updateCheckResponse)
+ })
  await page.route('**/api/dsh-pi-login/update-begin', route => {
-  begins++; acceptedUpdateId = route.request().postDataJSON().payload.requestId
-  assert.equal(route.request().postDataJSON().payload.profileKey, updateProfileKey)
+  begins++
+  const payload = route.request().postDataJSON().payload
+  assert.equal(payload.profileKey, updateProfileKey)
+  if (typeof updateBeginResponse === 'function') return rpcReply(route, updateBeginResponse(payload))
+  if (updateBeginResponse) return rpcReply(route, updateBeginResponse)
+  acceptedUpdateId = payload.requestId
   return rpcReply(route, { status: 'installing', requestId: acceptedUpdateId, version: '0.6.1' })
  })
- await page.route('**/api/dsh-pi-login/update-reconcile', route => rpcReply(route, { status: 'restart-required', profileKey: updateProfileKey, requestId: acceptedUpdateId, runtimeVersion: '0.6.0', version: '0.6.1' }))
- await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).click()
+ await page.route('**/api/dsh-pi-login/update-reconcile', route => rpcReply(route, updateReconcileResponse ?? { status: 'restart-required', profileKey: updateProfileKey, requestId: acceptedUpdateId, runtimeVersion: '0.6.0', version: '0.6.1' }))
+ const captureUpdate = async name => {
+  const panel = page.locator('.dsh-pi-updates')
+  await panel.evaluate(element => element.scrollIntoView({ block: 'center', inline: 'nearest' }))
+  const bounds = await panel.boundingBox()
+  const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
+  assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= viewport.width && bounds.y >= 0 && bounds.y + bounds.height <= viewport.height, `Update panel is clipped: ${JSON.stringify({ bounds, viewport })}`)
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+  await page.screenshot({ path: artifact(name) })
+ }
+ const statusLoaded = page.waitForResponse(response => response.url().includes('/api/dsh-pi-login/update-status'))
+ await page.reload()
+ await statusLoaded
+ await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).waitFor()
+ await page.setViewportSize({ width: 390, height: 760 })
+ await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
+ await captureUpdate('issue46-update-idle-ja-mobile-light.png')
+ holdUpdateCheck = true
+ const loadingClick = page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).click()
+ await page.locator('.dsh-pi-updates').getByText(/更新を確認中/).waitFor()
+ await captureUpdate('issue46-update-checking-ja-mobile-light.png')
+ releaseUpdateCheck()
+ await loadingClick
  await page.getByRole('button', { name: 'プラグインを更新する', exact: true }).waitFor()
- await page.getByRole('button', { name: 'プラグインを更新する', exact: true }).click()
- await page.getByText('導入しました。現在の作業を終えてからDSHを再起動して適用してください。', { exact: true }).waitFor()
- assert.equal(begins, 1)
- assert.equal(await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).isDisabled(), true)
- await page.screenshot({ path: artifact('plugin-update-restart-mobile.png') })
+ await captureUpdate('issue46-update-available-ja-mobile-light.png')
+
+ updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: '>=0.2.2 <0.3.0-0' }
+ await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''))
+ await page.getByRole('button', { name: 'プラグインの更新を確認', exact: true }).click()
+ await page.locator('.dsh-pi-updates').getByText(/この配布版は実行中のDSH版に対応していません/).waitFor()
+ await page.locator('.dsh-pi-updates').getByText(/必要なDSHバージョン: >=0\.2\.2 <0\.3\.0-0/).waitFor()
+ await captureUpdate('issue46-incompatible-ja-mobile-dark.png')
+ await page.evaluate(() => document.body.removeAttribute('data-ds-dark-theme'))
+ await page.evaluate(async () => { await testRuntime.locale.setLocale('en'); document.documentElement.lang = 'en' })
+ const untrustedRequirement = '<img src=x> & "quoted"'
+ updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: untrustedRequirement }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ const requiredLine = page.locator('.dsh-pi-updates p').filter({ hasText: 'Required DSH version:' })
+ await page.waitForFunction(expected => [...document.querySelectorAll('.dsh-pi-updates p')].some(element => element.textContent === expected), `Required DSH version: ${untrustedRequirement}`)
+ assert.equal(await requiredLine.textContent(), `Required DSH version: ${untrustedRequirement}`)
+ assert.equal(await page.locator('.dsh-pi-updates img').count(), 0)
+ await captureUpdate('issue46-untrusted-range-en-mobile-light.png')
+
+ // The alpha.2 evaluator's `peers` map is normalized by PluginUpdates to this displayed version line.
+ const legacyPeerRequirement = '@deepseek-ai/dsh-llm >=0.2.2 <0.3.0-0'
+ updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: legacyPeerRequirement }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.waitForFunction(expected => [...document.querySelectorAll('.dsh-pi-updates p')].some(element => element.textContent === expected), `Required DSH version: ${legacyPeerRequirement}`)
+ assert.equal(await page.locator('.dsh-pi-updates p').filter({ hasText: 'Required DSH version:' }).textContent(), `Required DSH version: ${legacyPeerRequirement}`)
+ await captureUpdate('issue46-legacy-peers-en-mobile-light.png')
+
+ const longRequirement = `${untrustedRequirement} ${'>=0.2.2 <0.3.0-0 '.repeat(12)}`
+ updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: longRequirement }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.waitForFunction(expected => [...document.querySelectorAll('.dsh-pi-updates p')].some(element => element.textContent === expected), `Required DSH version: ${longRequirement}`)
+ assert.equal(await page.locator('.dsh-pi-updates p').filter({ hasText: 'Required DSH version:' }).textContent(), `Required DSH version: ${longRequirement}`)
+ await captureUpdate('issue46-long-range-en-mobile-light.png')
+
+ updateCheckResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'network' }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.locator('.dsh-pi-updates').getByText(/Could not contact the release service/).waitFor()
+ await captureUpdate('issue46-network-error-en-mobile-light.png')
+ updateCheckResponse = { status: 'available', profileKey: updateProfileKey, runtimeVersion: '0.6.0', candidate: { id: 'fixture-release', version: '0.6.1', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.getByRole('button', { name: 'Update plugin', exact: true }).waitFor()
+ await captureUpdate('issue46-retry-available-en-mobile-light.png')
+
+ updateBeginResponse = { status: 'blocked', profileKey: updateProfileKey, reason: 'incompatible', requiredDshVersion: '>=0.2.2 <0.3.0-0' }
+ await page.getByRole('button', { name: 'Update plugin', exact: true }).click()
+ await page.locator('.dsh-pi-updates').getByText(/Required DSH version: >=0\.2\.2 <0\.3\.0-0/).waitFor()
+ assert.equal(await page.evaluate(key => sessionStorage.getItem(key), `dsh-pi-login:update:${updateProfileKey}`), null)
+ assert.equal(await page.getByRole('button', { name: 'Update plugin', exact: true }).count(), 0)
+ await captureUpdate('issue46-begin-incompatible-refused-en-mobile-light.png')
+
+ updateBeginResponse = payload => {
+  acceptedUpdateId = payload.requestId
+  const state = { status: 'failed', reason: 'incompatible', requiredDshVersion: '>=0.2.2 <0.3.0-0', profileKey: updateProfileKey, requestId: acceptedUpdateId, version: '0.6.1' }
+  updateStatusResponse = state
+  updateReconcileResponse = state
+  return state
+ }
+ updateCheckResponse = { status: 'available', profileKey: updateProfileKey, runtimeVersion: '0.6.0', candidate: { id: 'fixture-release', version: '0.6.1', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.getByRole('button', { name: 'Update plugin', exact: true }).waitFor()
+ await page.getByRole('button', { name: 'Update plugin', exact: true }).click()
+ await page.locator('.dsh-pi-updates').getByText(/Required DSH version: >=0\.2\.2 <0\.3\.0-0/).waitFor()
+ assert.ok(await page.evaluate(key => sessionStorage.getItem(key), `dsh-pi-login:update:${updateProfileKey}`))
+ await captureUpdate('issue46-journaled-incompatibility-en-mobile-light.png')
+ await page.reload()
+ await page.getByRole('heading', { name: 'AI接続', exact: true }).waitFor()
+ await page.locator('.dsh-pi-updates').getByText(/必要なDSHバージョン: >=0\.2\.2 <0\.3\.0-0/).waitFor()
+ await captureUpdate('issue46-journal-reconnect-ja-mobile-light.png')
+
+ // Reset the synthetic journal so the normal successful install fixture can run independently.
+ await page.evaluate(key => sessionStorage.removeItem(key), `dsh-pi-login:update:${updateProfileKey}`)
+ acceptedUpdateId = undefined
+ updateStatusResponse = undefined
+ updateReconcileResponse = undefined
+ updateBeginResponse = undefined
+ await page.reload()
+ await page.getByRole('heading', { name: 'AI接続', exact: true }).waitFor()
+ await page.evaluate(async () => { await testRuntime.locale.setLocale('en'); document.documentElement.lang = 'en' })
+ await page.locator('.dsh-pi-updates').getByRole('button', { name: 'Check plugin update', exact: true }).waitFor()
+ updateCheckResponse = { status: 'available', profileKey: updateProfileKey, runtimeVersion: '0.6.0', candidate: { id: 'fixture-release', version: '0.6.1', notes: 'Fixture release notes', compatibility: '0.2.1-alpha.2' } }
+ await page.getByRole('button', { name: 'Check plugin update', exact: true }).click()
+ await page.getByRole('button', { name: 'Update plugin', exact: true }).waitFor()
+ await page.getByRole('button', { name: 'Update plugin', exact: true }).click()
+ await page.getByText('Installed. Restart DSH when your current work is finished to apply the update.', { exact: true }).waitFor()
+ assert.equal(begins, 3)
+ assert.equal(await page.getByRole('button', { name: 'Check plugin update', exact: true }).isDisabled(), true)
+ await captureUpdate('plugin-update-restart-mobile.png')
  await page.evaluate(async () => { await testRuntime.locale.setLocale('en'); document.documentElement.lang = 'en' })
  await page.getByRole('heading', { name: 'AI connections', exact: true }).waitFor()
  await page.evaluate(() => testRuntime.openHostModal())

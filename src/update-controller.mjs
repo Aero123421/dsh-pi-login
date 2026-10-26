@@ -26,6 +26,14 @@ export class UpdateController {
   storageKey() {
     return this.profileKey ? `${STORAGE}:${this.profileKey}` : undefined
   }
+  clearRequestId() {
+    this.requestId = undefined
+    try {
+      this.storage?.removeItem(this.storageKey())
+    } catch {
+      /* Storage is optional; the Host journals admitted requests. */
+    }
+  }
   selectProfile(key) {
     const next = typeof key === 'string' && /^[a-f0-9]{64}$/.test(key) ? key : undefined
     if (next === this.profileKey) return
@@ -93,7 +101,7 @@ export class UpdateController {
     )
       return
     const generation = ++this.generation
-    this.publish({ ...this.state, status: 'checking' })
+    this.publish({ ...this.state, status: 'checking', reason: undefined, requiredDshVersion: undefined, candidate: undefined })
     try {
       const state = await this.call('check')
       if (generation === this.generation) this.publish(state)
@@ -119,6 +127,13 @@ export class UpdateController {
         profileKey: this.profileKey,
       })
       if (this.closed || generation !== this.generation) return
+      // A blocked begin response without a request id means the Host did not
+      // admit an operation. Do not turn that refusal into an unknown receipt.
+      if (state?.status === 'blocked' && !state.requestId) {
+        this.clearRequestId()
+        this.publish({ ...this.state, ...state, candidate: undefined })
+        return
+      }
       if (typeof state.requestId !== 'string') throw new Error('invalid request')
       this.requestId = state.requestId
       try {
@@ -133,12 +148,7 @@ export class UpdateController {
     } catch (error) {
       if (this.closed || generation !== this.generation) return
       if (error.rejected) {
-        this.requestId = undefined
-        try {
-          this.storage?.removeItem(this.storageKey())
-        } catch {
-          /* Storage is optional; the Host journals admitted requests. */
-        }
+        this.clearRequestId()
       }
       if (generation === this.generation)
         this.publish({

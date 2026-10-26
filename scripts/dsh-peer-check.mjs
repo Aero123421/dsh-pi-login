@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { checkCompatibility, semanticVersion } from '../src/updates.mjs'
+import { checkCompatibility, checkUpdateScope, semanticVersion } from '../src/updates.mjs'
 import manifest from '../package.json' with { type: 'json' }
 
 const ACCEPT = ['0.2.1-alpha.2', '0.2.1-alpha.3', '0.2.1-alpha.10', '0.2.1-rc.2', '0.2.1', '0.2.2-0', '0.2.2-alpha.1', '0.2.9']
@@ -15,6 +15,7 @@ for (const [name, range] of peers) {
   if (pinned) throw new Error(`${name} is pinned to ${range}; the boot check skips the plugin on the next DSH release`)
 }
 const candidate = { version: manifest.version }
+checkUpdateScope(manifest, ACCEPT[0])
 for (const version of ACCEPT) {
   if (checkCompatibility(manifest, candidate, version) !== version) throw new Error(`peers do not accept ${version}`)
 }
