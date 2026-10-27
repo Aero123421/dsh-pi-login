@@ -3,7 +3,7 @@ import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineReg
 import { LoginController, finishConnectionCreate, finishConnectionRecover } from './controller.mjs'
 import { UpdateController } from './update-controller.mjs'
 import { createModelEditor } from './model-snapshot.mjs'
-import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
+import { formatTime, localizedServiceName, loginTerminalCopy, retryWait, serviceChoiceLabel, statusDetail, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
 import { en, ja } from './locales.mjs'
 import { claimSubmit } from './submit-lock.mjs'
 import { SERVICE_GROUPS, serviceGroup } from './service-groups.mjs'
@@ -97,7 +97,7 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
       ticketRef.current = value
       if (alive) setTicket(value)
       else void controller.cancel(value).catch(() => {})
-    }, error => { if (alive) setError(connectionError(error)) })
+    }, error => { if (alive) setError(loginStartError(error)) })
     return () => { alive = false; if (ticketRef.current) void controller.cancel(ticketRef.current).catch(() => {}) }
   }, [])
   useEffect(() => {
@@ -124,7 +124,7 @@ function LoginDialog({ entry, method, controller: sourceController, t, onClose, 
   }, [ticket])
   const link = safeUrl(state.notice?.url)
   const complete = state.status !== 'running' || error
-  const terminalCopy = state.reason?.startsWith('muse-code-') ? connectionError(new Error(state.reason)) : state.reason === 'provider-expired' ? 'providerExpired' : state.reason === 'timeout' ? 'timedOut' : state.status === 'cancelled' ? 'cancelled' : 'failed'
+  const terminalCopy = state.reason?.startsWith('muse-code-') ? connectionError(new Error(state.reason)) : loginTerminalCopy(state)
   async function enable(useLogin = false) {
     setEnabling(true); setEnableError(false)
     try { await controller.mutation(useLogin ? 'use-login' : 'enable', { connectionId: entry.connectionId }); setEnabled(true); setKeyOverride(false) }
@@ -281,7 +281,7 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
       {snapshot ? <span className="dsh-pi-muted">{t('modelsOn').replace('{count}', String(count))}</span> : <span role="status">{error || readError ? '' : t('loading')}</span>}
       {snapshot?.refresh?.canRefresh && snapshot.models.length ? <Button variant="ghost" size="sm" disabled={reloading || !entry.writable} onClick={() => { void reload() }}>{t(reloading ? 'loading' : 'reloadModels')}</Button> : null}
     </div>
-    {snapshot?.refresh?.status ? <p role="status" className="dsh-pi-muted">{t(snapshot.refresh.status.message)}{snapshot.refresh.status.detail ? ` · ${snapshot.refresh.status.detail}` : ''}</p> : null}
+    {snapshot?.refresh?.status ? <p role="status" className="dsh-pi-muted">{t(snapshot.refresh.status.message)}{statusDetail(snapshot.refresh.status.detail)}</p> : null}
     {refreshError ? <p role="alert">{t(refreshError)}</p> : null}
     {error || readError || uncertain ? <p role="alert">{t(uncertain ? 'modelsStateUnknown' : error && snapshot ? 'saveFailed' : 'modelsFailed')}</p> : null}
     {uncertain ? <Button variant="outline" size="sm" disabled={reloading || saving} onClick={() => { void reload(false) }}>{t('modelsReconcile')}</Button> : null}
@@ -301,6 +301,12 @@ function ModelsDialog({ entry, controller: sourceController, t, onClose }) {
       {models?.length === 0 ? <p className="dsh-pi-muted">{t(snapshot.models.length ? 'noResults' : 'emptyModelCatalog')}</p> : null}
     </div>
   </Modal>
+}
+
+function loginStartError(error) {
+  const code = String(error.code ?? error.message).split('/').pop()
+  if (code === 'busy') return 'signInBusy'
+  return connectionError(error)
 }
 
 function connectionError(error) {
@@ -425,16 +431,14 @@ function serviceKey(service) { return `${service.integrationId}/${service.servic
 function AddDialog({ state, controller: sourceController, t, onClose, onLogin, onSaved }) {
   const [controller] = useState(() => sourceController.scoped())
   const services = state.services
+  const integrationLabel = id => state.integrations.find(item => (item.id ?? item.integrationId) === id)?.label
+  const baseLabel = service => localizedServiceName(service, t)
   const labels = new Map()
   for (const service of services) {
-    const label = service.label ?? service.serviceLabel
+    const label = baseLabel(service)
     labels.set(label, (labels.get(label) ?? 0) + 1)
   }
-  const integrationLabel = id => state.integrations.find(item => (item.id ?? item.integrationId) === id)?.label
-  const serviceLabel = service => {
-    const label = service.label ?? service.serviceLabel
-    return labels.get(label) > 1 ? `${label}（${integrationLabel(service.integrationId)}）` : label
-  }
+  const serviceLabel = service => serviceChoiceLabel(baseLabel(service), integrationLabel(service.integrationId), labels.get(baseLabel(service)) > 1, t)
   const [key, setKey] = useState(services[0] ? serviceKey(services[0]) : '')
   const service = services.find(item => serviceKey(item) === key) ?? services[0]
   const methods = service?.methods ?? []
@@ -532,7 +536,7 @@ function ConnectionDialog({ entry, state, controller: sourceController, t, onClo
     } catch (error) { await recover(error) } finally { setBusy(false) }
   }
   const canSignIn = !deletionPending && entry.authMethod === 'oauth' && entry.capabilities?.auth !== false
-  return <Modal open title={entry.displayName} description={`${entry.serviceLabel} · ${t(entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')}`} closeLabel={t('close')} onClose={() => { if (!busy) onClose() }} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
+  return <Modal open title={entry.displayName} description={`${localizedServiceName(entry, t) || entry.serviceLabel} · ${t(entry.authMethod === 'oauth' ? 'oauthShort' : 'apiKey')}`} closeLabel={t('close')} onClose={() => { if (!busy) onClose() }} className="dsh-pi-login dsh-pi-dialog" contentClassName="dsh-pi-modal-content"
     footer={<><Button variant="outline" onClick={onClose} disabled={busy}>{t('close')}</Button>
       <Button variant="primary" disabled={busy || !editable || !dirty || service?.capabilities?.settings === false || confirm === 'delete' || !displayName.trim()} onClick={() => { void save() }}>{t(busy ? 'loading' : confirm === 'method' ? 'confirmSave' : 'save')}</Button></>}>
     <div className="dsh-pi-status-card">
@@ -619,9 +623,10 @@ export function ConnectionUI({ controller, updates, locale }) {
   const groups = new Map()
   for (const entry of state.entries) {
     if (serviceGroup(entry) !== category) continue
-    if (!`${entry.displayName} ${entry.integrationLabel} ${entry.serviceLabel}`.toLocaleLowerCase().includes(needle)) continue
+    const serviceText = localizedServiceName(entry, t) || entry.serviceLabel || entry.integrationLabel
+    if (!`${entry.displayName} ${entry.integrationLabel} ${entry.serviceLabel} ${serviceText}`.toLocaleLowerCase().includes(needle)) continue
     const key = `${entry.integrationId}/${entry.serviceId}`
-    if (!groups.has(key)) groups.set(key, { label: entry.serviceLabel ?? entry.integrationLabel, entries: [] })
+    if (!groups.has(key)) groups.set(key, { label: serviceText, entries: [] })
     groups.get(key).entries.push(entry)
   }
   const close = () => setOpened(undefined)

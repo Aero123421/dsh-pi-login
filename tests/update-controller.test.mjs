@@ -45,6 +45,15 @@ test('a new check clears stale incompatibility details while the reply is pendin
   assert.equal(controller.state.reason, 'network')
   controller.dispose()
 })
+test('a stale update candidate is not reported as a network failure', async () => {
+  const controller = new UpdateController({ rpc: { call: async () => ({ ok: false, error: { code: 'dsh-pi-login/stale-candidate' } }) } }, storage())
+  controller.publish({ status: 'available', profileKey, candidate: { id: '7' } })
+  await controller.begin()
+  assert.equal(controller.state.status, 'failed')
+  assert.equal(controller.state.reason, 'stale-candidate')
+  controller.dispose()
+})
+
 test('explicit host refusal is failed rather than unknown or success', async () => {
   const controller = new UpdateController({ rpc: { call: async () => ({ ok: false, error: { code: 'dsh-pi-login/busy' } }) } }, storage())
   controller.publish({ status: 'available', profileKey, candidate: { id: '7' } }); await controller.begin()

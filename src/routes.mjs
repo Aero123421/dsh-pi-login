@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url'
 import { PluginUpdates } from './updates.mjs'
 import { ConnectionError } from './connections.mjs'
 import { RegistryError } from './registry.mjs'
+import { updateRefusalReason } from './presentation.mjs'
 export function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options)
   let writes = 0
@@ -56,7 +57,10 @@ export function applyLoginUI(ctx, options = {}) {
               else if (method === 'update-check') value = await updates.check()
               else if (method === 'update-begin') value = await updates.begin(payload.candidateId, payload.requestId, payload.profileKey)
               else value = await updates.reconcile(payload.requestId)
-            } catch (error) { throw new LoginError(['busy', 'profile'].includes(error.message) ? error.message : 'update-failed') }
+            } catch (error) {
+              const reason = updateRefusalReason(error instanceof Error ? error.message : '')
+              throw new LoginError(reason === 'network' ? 'update-failed' : reason)
+            }
           } else {
             const mutation = [...connectionMutations, 'start', 'answer', 'enable', 'set-model', 'set-provider', 'use-login'].includes(method)
             if (mutation && updates.running) throw new LoginError('busy')

@@ -48,6 +48,14 @@ test('private OAuth ticket, safe links, and secret prompt persist only through t
  assert.equal(JSON.stringify(await fixture.broker.list()).includes('test-secret-token'),false)
 })
 
+test('a stale connection during sign-in is cancelled as an account change', async t => {
+  const fixture = setup(async () => { throw new Error('stale-connection') })
+  t.after(() => fixture.broker.dispose())
+  const { ticket } = fixture.broker.start(key, 'oauth')
+  await fixture.broker.attempt(ticket).done
+  assert.deepEqual(fixture.broker.snapshot(ticket), { status: 'cancelled', reason: 'connection-changed' })
+})
+
 test('cancellation releases the outstanding prompt without storing a credential', async t=>{
  const fixture=setup(async session=>session.commit(await session.prompt({kind:'secret',message:'Key'})))
  t.after(()=>fixture.broker.dispose())
@@ -214,6 +222,36 @@ test('a catalog migration write error does not fail the route and the next reque
   assert.equal(second.result.ok, true)
   assert.equal(attempts, 2)
   assert.deepEqual(order, ['migrate', 'list', 'migrate', 'list'])
+})
+
+test('update begin keeps a stale candidate distinct from a network failure', async () => {
+  const routes = new Map()
+  apply({
+    get: name => name === 'profileContext' ? { dir: '/tmp/pi-login-update-route' } : name === 'pluginManager' ? {
+      listBundles: async () => [{ name: '@local/dsh-pi-login', installed: true, version: '0.8.1', source: 'github:Aero123421/dsh-pi-login', enabled: true }],
+      installBundle: async () => {},
+      waitForInstall: async () => {},
+    } : undefined,
+    authorization: { list: () => [] },
+    credentials: {},
+    settings: {},
+    effect: () => {},
+    connection: { fetch: { register: route => routes.set(route.path, route) } },
+  }, { updates: { runtimeVersion: async () => '0.2.1-rc.4' } })
+  const call = (name, payload) => routes.get(`/api/dsh-pi-login/${name}`).fetch(new Request(`http://localhost/api/dsh-pi-login/${name}`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId: 'update-1', method: `dsh-pi-login/${name}`, payload }),
+  }))
+  const status = await (await call('update-status', {})).json()
+  assert.equal(status.result.ok, true)
+  const begun = await (await call('update-begin', {
+    candidateId: 'not-the-current-release',
+    requestId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    profileKey: status.result.value.profileKey,
+  })).json()
+  assert.equal(begun.result.ok, false)
+  assert.equal(begun.result.error.code, 'dsh-pi-login/stale-candidate')
+  assert.equal(begun.result.error.message, 'stale-candidate')
 })
 
 test('Host registers authenticated Connection routes, rejects malformed envelopes, and redacts errors',async t=>{

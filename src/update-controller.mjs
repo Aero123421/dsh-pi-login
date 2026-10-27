@@ -1,3 +1,5 @@
+import { updateRefusalReason } from './presentation.mjs'
+
 const STORAGE = 'dsh-pi-login:update'
 export class UpdateController {
   constructor(connection, storage) {
@@ -154,11 +156,7 @@ export class UpdateController {
         this.publish({
           ...this.state,
           status: error.rejected ? 'failed' : 'unknown',
-          reason: error.message.endsWith('/busy')
-            ? 'busy'
-            : error.message.endsWith('/profile')
-              ? 'profile'
-              : 'network',
+          reason: error.rejected ? updateRefusalReason(error.message) : 'network',
         })
     }
   }

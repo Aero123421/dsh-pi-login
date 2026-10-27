@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { formatTime, retryWait, statusOf, usageLimited, versionDiffersLine } from '../src/presentation.mjs'
+import { formatTime, localizedServiceName, loginTerminalCopy, retryWait, serviceChoiceLabel, statusDetail, statusOf, updateRefusalReason, usageLimited, versionDiffersLine } from '../src/presentation.mjs'
 import { en, ja } from '../src/locales.mjs'
 
 const entry = (patch) => ({ configured: true, enabled: true, authStatus: 'saved', ...patch })
@@ -13,6 +13,10 @@ test('a saved key is not shown as a completed sign-in', () => {
   assert.deepEqual(statusOf(entry({ configured: false })), { dot: 'idle', copy: 'notConnected' })
   assert.deepEqual(statusOf(entry({ authStatus: 'expired' })), { dot: 'error', copy: 'authExpired' })
   assert.deepEqual(statusOf(entry({ deletionPending: true })), { dot: 'warning', copy: 'deletionPendingShort' })
+  assert.deepEqual(statusOf(entry({ inFlight: true, authStatus: 'updating', authMethod: 'oauth' })), { dot: 'ongoing', copy: 'busy' })
+  assert.deepEqual(statusOf(entry({ inFlight: true, authStatus: 'saved', authMethod: 'api-key' })), { dot: 'ongoing', copy: 'working' })
+  assert.equal(en.working, 'Working…')
+  assert.equal(ja.working, '処理中…')
 })
 
 test('rate-limit expiry is a clock check and does not invent a retry', () => {
@@ -38,6 +42,43 @@ test('an installed package with a different version names both versions', () => 
   assert.match(versionDiffersLine({}, key => ja[key]), /確認できませんでした/)
   assert.equal(en['updateReason_version-differs'].includes('not the previous version'), true)
   assert.equal(ja['updateReason_version-differs'].includes('直前の版ではありません'), true)
+})
+
+test('a cancelled sign-in names an account change before the generic cancellation', () => {
+  assert.equal(loginTerminalCopy({ status: 'cancelled', reason: 'connection-changed' }), 'connectionChanged')
+  assert.equal(loginTerminalCopy({ status: 'failed', reason: 'connection-changed' }), 'connectionChanged')
+  assert.equal(loginTerminalCopy({ status: 'cancelled', reason: 'timeout' }), 'timedOut')
+  assert.equal(loginTerminalCopy({ status: 'cancelled' }), 'cancelled')
+  assert.equal(loginTerminalCopy({ status: 'failed', reason: 'provider-expired' }), 'providerExpired')
+  assert.equal(loginTerminalCopy({ status: 'failed', reason: 'muse-code-unavailable' }), undefined)
+})
+
+test('catalog instants are formatted and provider text is left intact', () => {
+  const instant = statusDetail('2026-10-15T17:00:00.000Z', { lang: 'en-US', timeZone: 'UTC' })
+  assert.match(instant, /^ · /)
+  assert.match(instant, /2026/)
+  assert.doesNotMatch(instant, /T17:00:00/)
+  assert.equal(statusDetail('Power Usage'), ' · Power Usage')
+  assert.equal(statusDetail(''), '')
+})
+
+test('service labels follow the UI language and disambiguate in that language', () => {
+  const translate = key => key === 'serviceMetaViaPi' ? 'Meta Model API (via Pi)' : '{service} ({integration})'
+  assert.equal(localizedServiceName({ integrationId: 'pi', serviceId: 'meta', label: 'Meta Model API（Pi経由）' }, translate), 'Meta Model API (via Pi)')
+  assert.equal(localizedServiceName({ integrationId: 'pi', serviceId: 'openai', label: 'OpenAI' }, translate), 'OpenAI')
+  assert.equal(serviceChoiceLabel('OpenAI', 'Pi', true, translate), 'OpenAI (Pi)')
+  assert.equal(serviceChoiceLabel('OpenAI', 'Pi', false, translate), 'OpenAI')
+  const japanese = key => ja[key]
+  assert.equal(serviceChoiceLabel('OpenAI', 'Pi', true, japanese), 'OpenAI（Pi）')
+  assert.equal(localizedServiceName({ integrationId: 'pi', serviceId: 'meta' }, key => ja[key]), ja.serviceMetaViaPi)
+})
+
+test('an update refusal keeps its stable reason', () => {
+  assert.equal(updateRefusalReason('dsh-pi-login/stale-candidate'), 'stale-candidate')
+  assert.equal(updateRefusalReason('busy'), 'busy')
+  assert.equal(updateRefusalReason('dsh-pi-login/update-failed'), 'network')
+  assert.equal(updateRefusalReason('disconnected'), 'network')
+  assert.equal(en['updateReason_stale-candidate'].includes('Check again'), true)
 })
 
 test('a calendar reset date stays on that day in a negative offset', () => {
