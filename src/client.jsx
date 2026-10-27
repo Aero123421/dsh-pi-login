@@ -3,7 +3,7 @@ import { Button, Input, Menu, Modal, Switch, StateDot, IconChevronDownOutlineReg
 import { LoginController, finishConnectionCreate, finishConnectionRecover } from './controller.mjs'
 import { UpdateController } from './update-controller.mjs'
 import { createModelEditor } from './model-snapshot.mjs'
-import { formatTime, localizedServiceName, loginTerminalCopy, retryWait, serviceChoiceLabel, statusDetail, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
+import { credentialCleanupVisible, formatTime, localizedServiceName, loginTerminalCopy, retryWait, serviceChoiceLabel, statusDetail, statusOf, usageLimited, versionDiffersLine } from './presentation.mjs'
 import { en, ja } from './locales.mjs'
 import { claimSubmit } from './submit-lock.mjs'
 import { SERVICE_GROUPS, serviceGroup } from './service-groups.mjs'
@@ -501,7 +501,8 @@ function ConnectionDialog({ entry, state, controller: sourceController, t, onClo
   const [confirm, setConfirm] = useState()
   const fieldId = useId()
   const service = state.services.find(item => item.integrationId === entry.integrationId && (item.serviceId ?? item.id) === entry.serviceId)
-  const cleanupPending = state.entries.find(item => item.connectionId === entry.connectionId)?.credentialCleanupPending ?? entry.credentialCleanupPending
+  const latest = state.entries.find(item => item.connectionId === entry.connectionId) ?? entry
+  const cleanupPending = credentialCleanupVisible(latest)
   const deletionPending = state.entries.find(item => item.connectionId === entry.connectionId)?.deletionPending ?? entry.deletionPending
   const writable = entry.writable !== false
   const editable = writable && !deletionPending
@@ -595,7 +596,7 @@ function ConnectionRow({ entry, controller, t, writableRevision, onOpen, onLogin
       : <div className="dsh-pi-row-main">{main}{external ? <a className="dsh-pi-link" href={external} target="_blank" rel="noopener noreferrer">{t('externalSettings')}</a> : null}</div>}
     <div className="dsh-pi-row-actions">
       {settings ? <Button size="sm" variant="outline" aria-label={`${t('manageConnection')}: ${entry.displayName}`} onClick={() => onOpen(entry)}>{t('settingsShort')}</Button> : null}
-      {entry.credentialCleanupPending && !entry.deletionPending ? <span role="alert" className="dsh-pi-row-meta-alert">{t('credentialCleanupShort')}</span> : null}
+      {credentialCleanupVisible(entry) ? <span role="alert" className="dsh-pi-row-meta-alert">{t('credentialCleanupShort')}</span> : null}
       {failed ? <span role="alert" className="dsh-pi-row-meta-alert">{t('saveFailed')}</span> : null}
       {entry.deletionPending ? <span role="alert" className="dsh-pi-row-meta-alert">{t('deletionPendingShort')}</span> : !entry.configured && entry.authMethod === 'oauth' && entry.capabilities?.auth !== false && entry.writable !== false
         ? <Button size="sm" variant="primary" onClick={() => onLogin(entry)}>{t('signIn')}</Button>

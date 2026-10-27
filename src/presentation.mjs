@@ -69,6 +69,14 @@ export function serviceChoiceLabel(label, integration, duplicate, translate) {
   return translate('serviceWithIntegration').replaceAll('{service}', String(label)).replaceAll('{integration}', integration)
 }
 
+/**
+ * Retired credentials stay visible after the write. The id reserved for a key
+ * swap is not a failed cleanup while that swap is still running.
+ */
+export function credentialCleanupVisible(entry) {
+  return entry?.credentialCleanupPending === true && entry.deletionPending !== true && entry.inFlight !== true
+}
+
 /** Copy for a package that is installed without confirming the previous version. */
 export function versionDiffersLine(state, translate) {
   const installed = typeof state?.installedVersion === 'string' ? state.installedVersion : ''

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { formatTime, localizedServiceName, loginTerminalCopy, retryWait, serviceChoiceLabel, statusDetail, statusOf, updateRefusalReason, usageLimited, versionDiffersLine } from '../src/presentation.mjs'
+import { credentialCleanupVisible, formatTime, localizedServiceName, loginTerminalCopy, retryWait, serviceChoiceLabel, statusDetail, statusOf, updateRefusalReason, usageLimited, versionDiffersLine } from '../src/presentation.mjs'
 import { en, ja } from '../src/locales.mjs'
 
 const entry = (patch) => ({ configured: true, enabled: true, authStatus: 'saved', ...patch })
@@ -17,6 +17,9 @@ test('a saved key is not shown as a completed sign-in', () => {
   assert.deepEqual(statusOf(entry({ inFlight: true, authStatus: 'saved', authMethod: 'api-key' })), { dot: 'ongoing', copy: 'working' })
   assert.equal(en.working, 'Working…')
   assert.equal(ja.working, '処理中…')
+  assert.equal(credentialCleanupVisible(entry({ credentialCleanupPending: true, inFlight: true })), false)
+  assert.equal(credentialCleanupVisible(entry({ credentialCleanupPending: true, deletionPending: true })), false)
+  assert.equal(credentialCleanupVisible(entry({ credentialCleanupPending: true })), true)
 })
 
 test('rate-limit expiry is a clock check and does not invent a retry', () => {
