@@ -361,6 +361,19 @@ Object.assign(en, {
   museCatalogFailed: 'Could not load the Muse Code model list. Sign in again or try later.',
   museEffortsUnlisted: 'This account catalog did not list reasoning efforts, so Max is not offered.',
 })
+Object.assign(en, {
+  working: 'Working…',
+  signInBusy: 'A sign-in is already in progress for this connection, or a plugin update is running. Wait for it to finish, then try again.',
+  serviceMetaViaPi: 'Meta Model API (via Pi)',
+  serviceWithIntegration: '{service} ({integration})',
+})
+Object.assign(ja, {
+  working: '処理中…',
+  signInBusy: 'この接続のログインが進行中か、プラグインの更新中です。終わってからやり直してください。',
+  serviceMetaViaPi: 'Meta Model API（Pi経由）',
+  serviceWithIntegration: '{service}（{integration}）',
+})
+
 Object.assign(ja, {
   museContributorNote: 'Contributor版は、利用枠が増える代わりにMetaが内容を将来のモデルの学習に使います。最初はオフです。使うものだけオンにしてください。',
   museCatalogEmpty: 'このアカウントのMuse Codeのモデルを読み込みます。Contributor版は最初はオフです。',

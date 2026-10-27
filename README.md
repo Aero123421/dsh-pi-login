@@ -14,7 +14,7 @@ Pi対応プロバイダーのログイン、接続ごとのモデル選択、ア
 github:Aero123421/dsh-pi-login
 ```
 
-「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。ビルドで Pi SDK 1.3.0 を dist に同梱するため、実行時の依存は不要です。導入時に `@google/genai` と `protobufjs` は入らず、それらの build script も走りません。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.8.0)を使えます。
+「Install」→「Enable now」を押し、アプリを再起動します。ビルド済みのファイルを含むため、インストール時のビルドは不要です。ビルドで Pi SDK 1.3.0 を dist に同梱するため、実行時の依存は不要です。導入時に `@google/genai` と `protobufjs` は入らず、それらの build script も走りません。特定の版を使う場合は[配布ファイルとチェックサム](https://github.com/Aero123421/dsh-pi-login/releases/tag/v0.8.1)を使えます。
 
 WebプロファイルではCLIからも追加できます。
 

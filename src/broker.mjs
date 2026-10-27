@@ -268,8 +268,10 @@ export class PiLoginBroker {
       attempt.status = outcome.status === 'authorized' && !attempt.controller.signal.aborted && this.isAttemptCurrent(attempt) ? 'authorized' : 'cancelled'
       if (attempt.status === 'authorized') attempt.reason = undefined
     }, error => {
-      attempt.status = attempt.controller.signal.aborted ? 'cancelled' : 'failed'
-      if (!attempt.controller.signal.aborted && error instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error.message)) attempt.reason = 'provider-expired'
+      const staleConnection = error instanceof Error && error.message === 'stale-connection'
+      attempt.status = attempt.controller.signal.aborted || staleConnection ? 'cancelled' : 'failed'
+      if (staleConnection) attempt.reason = 'connection-changed'
+      else if (!attempt.controller.signal.aborted && error instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error.message)) attempt.reason = 'provider-expired'
     }).finally(() => {
       if (attempt.loginStarted) this.connections.endLogin(connection.connectionId)
       clearTimeout(attempt.timer)
