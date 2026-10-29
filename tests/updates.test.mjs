@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises'
+import { mkdtemp, rm, readFile, writeFile, mkdir, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID, createHash } from 'node:crypto'
 import { gzipSync } from 'node:zlib'
+import { UpdateController } from '../src/update-controller.mjs'
 import { PluginUpdates, REPOSITORY, PACKAGE, compareVersions, semanticVersion, releaseCandidate, checkCompatibility, checkUpdateScope, dshPeerSatisfied, installPreservingPackage, restoreIfMissing, resultState, sourceKind, boundedFetch, packageManifest } from '../src/updates.mjs'
 const version = '0.6.0', tag = `v${version}`
 const filename = `local-dsh-pi-login-${version}.tgz`
@@ -310,6 +311,81 @@ test('later external installation supersedes a completed receipt and remains res
   updater.version = '0.7.0'
   assert.equal((await updater.status()).status, 'superseded')
   assert.equal((await updater.reconcile(id)).requestId, id)
+})
+test('manual rollback after a completed update permits checks across restart and reconnect', async t => {
+  const { updater, bundle, manager, directory, calls } = await fixture(t)
+  await updater.check()
+  const id = randomUUID()
+  await updater.begin('7', id, updater.base().profileKey)
+  await settle(updater)
+  updater.version = version
+  assert.equal((await updater.status()).status, 'applied')
+  const receiptPath = join(updater.cacheDir, `${id}.json`)
+  const receipt = await readFile(receiptPath, 'utf8')
+  bundle.version = '0.5.0'
+  // Until restart, the running and installed versions still disagree.
+  assert.equal((await updater.status()).status, 'unknown')
+  assert.equal((await updater.check()).reason, 'busy')
+  updater.dispose()
+  const restarted = new PluginUpdates({ manager: () => manager, profileDir: directory,
+    version: '0.5.0', runtimeVersion: async () => '0.2.1-alpha.2', fetcher })
+  t.after(() => restarted.dispose())
+  assert.equal((await restarted.status()).status, 'superseded')
+  assert.equal((await restarted.reconcile(id)).installedVersion, '0.5.0')
+  assert.equal((await restarted.check()).status, 'available')
+  const controller = new UpdateController({ rpc: { call: async (_path, method, payload) => ({
+    ok: true, value: method.endsWith('reconcile')
+      ? await restarted.reconcile(payload.requestId)
+      : await restarted[method.endsWith('check') ? 'check' : 'status'](),
+  }) } }, null)
+  t.after(() => controller.dispose())
+  await controller.load()
+  await controller.check()
+  assert.equal(controller.state.status, 'available')
+  await controller.load()
+  assert.equal(controller.state.status, 'superseded')
+  assert.equal(calls.length, 1)
+  assert.equal(await readFile(receiptPath, 'utf8'), receipt)
+  assert.equal(await restarted.lastOperation(), id)
+})
+test('rollback never supersedes uncertain, unsuccessful or unhealthy installations', async t => {
+  const { updater, bundle } = await fixture(t)
+  const success = { application: 'restart-required', bundle: PACKAGE, version }
+  const cases = [
+    { status: 'installing' },
+    { status: 'unknown' },
+    { status: 'failed' },
+    { status: 'unknown', result: { ...success, application: 'unknown' } },
+    { result: { ...success, application: 'failed' } },
+    { result: { ...success, application: 'cancelled' } },
+    { result: { ...success, application: 'overridden' } },
+    { result: { ...success, error: { code: 'install-failed' } } },
+    { result: { ...success, packageResult: { exitCode: 1 } } },
+    { result: { ...success, packageResult: { exitCode: 0, timedOut: true } } },
+    { result: { ...success, bundle: 'other-package' } },
+    { result: { ...success, version: '0.7.0' } },
+    ...['restored', 'restore-failed', 'version-differs'].map(reason => ({ reason })),
+  ]
+  for (const patch of cases) {
+    const id = randomUUID()
+    await updater.save({ requestId: id, version, status: 'restart-required', result: success, ...patch,
+      ...(patch.status === 'installing' ? { result: undefined } : {}) }, true)
+    const state = await updater.status()
+    assert.notEqual(state.status, 'superseded', JSON.stringify(patch))
+    if (['unknown', 'installing'].includes(patch.status)) assert.equal((await updater.check()).reason, 'busy')
+    if (patch.reason) assert.equal(state.status, 'failed')
+  }
+  for (const patch of [{ installed: false }, { error: { code: 'broken' } }, { readOnlyReason: 'managed' }]) {
+    const original = { ...bundle }
+    Object.assign(bundle, patch)
+    const id = randomUUID()
+    await updater.save({ requestId: id, version, status: 'restart-required', result: success }, true)
+    assert.notEqual((await updater.reconcile(id)).status, 'superseded')
+    assert.equal((await updater.status()).status, 'blocked')
+    assert.equal((await updater.check()).status, 'blocked')
+    for (const key of Object.keys(patch)) delete bundle[key]
+    Object.assign(bundle, original)
+  }
 })
 test('matching checksum cannot admit an unsafe archive to the manager', async t => {
   const unsafe = tarPackage(pkg, [tarEntry('package/../../outside', 'fixture')])

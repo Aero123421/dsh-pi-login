@@ -1,6 +1,6 @@
-# Pi 1.3.0 tool argument streaming
+# Pi 1.4.0 tool argument streaming
 
-The Host build includes Pi AI SDK 1.3.0 and its dependencies, with a narrowly scoped streaming patch applied by `scripts/pi-stream-patch.mjs`. The published `dist/index.js` contains the patched implementation. It does not require installation scripts, changes to the consumer's `node_modules`, or a DSH-owned Pi patch. The exact Pi version stays in `devDependencies` for the build and tests. The published package has no runtime dependencies, so installing it does not fetch `@google/genai` or `protobufjs` and does not run their build scripts.
+The Host build includes Pi AI SDK 1.4.0 and its dependencies, with a narrowly scoped streaming patch applied by `scripts/pi-stream-patch.mjs`. The published `dist/index.js` contains the patched implementation. It does not require installation scripts, changes to the consumer's `node_modules`, or a DSH-owned Pi patch. The exact Pi version stays in `devDependencies` for the build and tests. The published package has no runtime dependencies, so installing it does not fetch `@google/genai` or `protobufjs` and does not run their build scripts.
 
 ## Completed argument errors
 
@@ -12,7 +12,7 @@ Pi's `parseToolCallArguments()` accepts completed JSON objects, applies Pi's str
 
 Completions, Responses/Codex/Azure, Anthropic, Bedrock, Mistral Conversations, and Pi Messages keep their raw argument deltas. The patch removes only provisional `parseStreamingJson()` assignments that repeatedly parse the growing prefix. Final `parseToolCallArguments()` calls remain unchanged; Pi Messages retains its supplied terminal tool call. This matches the adapter's use of raw `event.delta`, rather than Pi's provisional parsed argument object.
 
-Every known replacement is checked for its exact occurrence count. The build rejects an installed Pi version other than 1.3.0 and rejects changed provider source or missing final validators. SDK upgrades must deliberately update this patch and rerun the SDK streaming tests.
+Every known replacement is checked for its exact occurrence count. The build rejects an installed Pi version other than 1.4.0 and rejects changed provider source or missing final validators. SDK upgrades must deliberately update this patch and rerun the SDK streaming tests.
 
 Pi's lazy OAuth loaders and Bedrock loader ordinarily hide Node imports behind variable specifiers. The Host build changes the nine known OAuth loader calls and the Bedrock call into literal dynamic imports so esbuild includes their modules. Other computed imports of Node builtins continue to use Node. The complete Pi module graph stays inside one Host bundle; no Pi package import remains external. This preserves SDK module state and avoids assuming that the dependency manager hoists Pi's transitive dependencies. The generated Host bundle is approximately 6.2 MiB uncompressed in the verification environment.
 
@@ -33,7 +33,7 @@ node scripts/pi-stream-benchmark.mjs
 
 The tests exercise the real Pi SDK with local SSE fixtures. They cover late/interleaved call identities, valid empty arguments, malformed/nonobject final arguments, the adapter's terminal failure, usage preservation, final argument validation for Completions/Responses/Anthropic, packaged OAuth loader resolution, Bedrock lazy API construction, and source drift rejection. Large Unicode/escaped argument strings arrive as 64-character deltas and must produce identical final arguments with exactly one complete-argument JSON parse. Timing is not a CI gate.
 
-The benchmark compares unmodified Pi 1.3.0 and the patched build under the same consumer and local SSE input. JSON wire construction happens outside the timed interval. Each implementation receives a 1 KiB warmup followed by three runs per size; elapsed time includes SDK SSE decoding and event consumption. No external API call is made. This measures synthetic SDK processing, not provider latency or the complete DSH agent loop.
+The historical benchmark below compares unmodified Pi 1.3.0 and the Pi 1.3.0 patched build under the same consumer and local SSE input. JSON wire construction happens outside the timed interval. Each implementation receives a 1 KiB warmup followed by three runs per size; elapsed time includes SDK SSE decoding and event consumption. No external API call is made. This measures synthetic SDK processing, not provider latency or the complete DSH agent loop.
 
 2026-10-17, Linux x64, Node v24.19.0, 64-byte argument deltas, three runs per input (milliseconds):
 
