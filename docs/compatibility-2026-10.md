@@ -4,10 +4,13 @@
 
 ## 対象版と配布元
 
+版確認の締切は2026-10-29 15:00 UTCです。締切後のreleaseは別の更新対象とし、この受入検証の対象を移動しません。
+
 | 公式配布 | 確認した版 | 本体コミット |
 | --- | --- | --- |
 | npm `@deepseek-ai/dsh@latest` | `0.2.1-rc.2` | `687f282e8625c6b8d11ff58211a90524be2e4317` |
 | 調査時のnpm `@deepseek-ai/dsh@next` | `0.2.1-rc.4` | `504a01a9578abc2c6f1fb896b1dc322c9fe24f66` |
+| 締切時のnpm `@deepseek-ai/dsh@next` | `0.2.1-rc.5` | 未公表・確認不能（下記参照） |
 | npm `@deepseek-ai/dsh@alpha` | `0.2.2-alpha.2` | `f3803c96974ad4a94195fb97e5c637e9c2a3afe3` |
 | npm `@earendil-works/pi-ai@latest` | `1.4.0` | タグ`v1.4.0`: `4a080252f06caf63a525d7873c5d94d3c23887e0` |
 
@@ -15,7 +18,9 @@ DSHの公開npm版に安定版はありません。`latest`もrcです。本体�
 
 基本受入対象はnpm latestのrc.2です。alphaは追加の互換検証対象で、nextのrc.4は版・ソース情報を確認しましたが最終候補の実Host検査はしていません。alphaのplugin managerにはrc.2に無い`listVersions`・`updateBundle`・`readBundleDetail`が追加されています。本プラグインはrc.2でも使える既存APIを維持します。
 
-PR公開前の再確認ではnpm nextが`0.2.1-rc.5`へ進んでいました（npm tarball SHA-1: `8e1bfd31869414f7a5ec10c34403a852ac9c3dc7`）。対応する公式Git tag・コミットは確認できず、rc.5での実行検査は未実施です。latestとalphaの上表の版は維持されていました。
+公式registryでrc.5の公開時刻は`2026-10-29T14:15:23.355Z`です。締切前の版として追加受入対象にしました。CLI tarballのSHA-1は`8e1bfd31869414f7a5ec10c34403a852ac9c3dc7`、SHA-256は`60987566f19e0ded1f7918c00a65c19c56ea25f5977ee0bfd5697c5c113ec4e1`です。npm metadataにgitHeadがなく、公式Git refsにもrc.5 tagがなく、調べたCLI・app-bootの配布物にもsourceCommit等は含まれませんでした。rc.4のsource SHAをrc.5のSHAとして代用しません。
+
+rc.4とrc.5の公式npm配布物を限定比較しました。CLIはpackage.jsonだけが異なり、プラグインが使うHost・Client関連17パッケージのJavaScriptと型宣言840ファイルはbyte一致しました（Cordis、Schemastery、LLM、Credentials、Authorization、Connection、Settings、app-boot、plugin-manager等）。Host向けAPIの追加修正は不要でした。Client UI primitivesは独立したnpm packageとして見つからず、このbyte比較には含めず、実Hostの画面操作で確認しました。
 
 隔離導入した公式`dsh-0.2.2-alpha.2.tgz`のSHA-256は`3c8fd2338d0e89b1a72484abc22fc9f7452088a5ad8e122566065ef5a803ea7a`、npmのSHA-1は`c149de1694cc156a79765faca2e90af8f237c40a`です。
 
@@ -52,6 +57,8 @@ Pi 1.4.0で追加されたMiniMax M3.1 Flashのlow〜maxと、xAI Grok 4.3/4.5�
 実SDKのstreamとHTTP送信内容は、ローカルSSE・fetch fixtureで検査します。公式DSHの型・Cordis・Authorization・Credentials・Connectionとの結合、隔離プロファイルへの配布tgz導入・起動・設定保持を別に検査します。これらを実サービスへのログイン・推論・課金・契約枠の確認とは扱いません。
 
 `npm test`は344件成功、失敗・skipとも0。`npm run build`、`test:compat`、`test:runtime`、`test:peers`、Chromiumの`test:browser`、`pack:plugin`も成功しました。rc.2の隔離Hostで起動、接続CRUD、Credentials保存、移行、再起動、モデル選択、削除を確認し、alphaでも起動を確認しました。rc.2の導入検査はlive Release照合を省略したfunctional harnessであり、完全な`test:install`成功とはしません。Issue #51固有のrollbackはmock manager・一時profileと実UpdateControllerで検査しています。
+
+rc.5でも、公式CLIの実行版を確認し、隔離profileへのtgz導入・起動、Credentials保存、移行・再起動、モデル選択、接続・資格情報の削除までfunctional harnessが成功しました。rc.5の実際の型宣言を使い、Compatibility、Credentials、Authorization、Connection、Settings、LLMのconsumer contractをTypeScriptのstrict/noEmitで検査しました（第三者ライブラリー内部はskipLibCheck）。実SDKのruntime回帰は344件の単体・既存runtime検査、実Host境界はこのrc.5操作検査で分けて確認しています。CIはrc.2、rc.5の完全な導入検査と、締切時のalpha起動を固定版で実行します。
 
 別環境の統合検証では、11プラグインを併用するrc.2の独立smokeで同時登録、停止・再有効化、再接続を確認しました。分離prefix構成の依存解決差によるpeer警告は残っています。Host版は対応範囲内ですが、警告が解消したとは扱いません。
 

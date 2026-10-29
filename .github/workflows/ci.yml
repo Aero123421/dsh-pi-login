@@ -40,7 +40,15 @@ jobs:
         run: npm install --prefix .cache/dsh-cli --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.2 pnpm@11.28.5
       - name: Verify installed profile and live Release lookup
         run: PATH="$PWD/.cache/dsh-cli/node_modules/.bin:$PATH" npm run test:install
-      - name: Boot the same package on the current DSH alpha
+      - name: Install cutoff DSH next for real profile regression
+        run: npm install --prefix .cache/dsh-cli-next --ignore-scripts @deepseek-ai/dsh@0.2.1-rc.5 pnpm@11.28.5
+      - name: Check consumer types against cutoff DSH next
         run: |
-          npm install --prefix .cache/dsh-cli-alpha --ignore-scripts @deepseek-ai/dsh@alpha pnpm@11.28.5
+          cp tests/host-api-contract.mts .cache/dsh-cli-next/pi-host-contract.mts
+          node_modules/.bin/tsc --noEmit --strict --skipLibCheck --module NodeNext --moduleResolution NodeNext --target ES2022 --types node --typeRoots "$PWD/node_modules/@types" .cache/dsh-cli-next/pi-host-contract.mts
+      - name: Verify installed profile and live Release lookup on cutoff DSH next
+        run: PATH="$PWD/.cache/dsh-cli-next/node_modules/.bin:$PATH" npm run test:install
+      - name: Boot the same package on the cutoff DSH alpha
+        run: |
+          npm install --prefix .cache/dsh-cli-alpha --ignore-scripts @deepseek-ai/dsh@0.2.2-alpha.2 pnpm@11.28.5
           PATH="$PWD/.cache/dsh-cli-alpha/node_modules/.bin:$PATH" npm run test:boot
