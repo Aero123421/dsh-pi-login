@@ -932,16 +932,24 @@ export class PluginUpdates {
     }
     const bundle = (await this.manager()?.listBundles())?.find(item => item.name === PACKAGE)
     const installed = bundle?.version
+    const completedStatus = ['applied', 'restart-required'].includes(operation.status)
     const recovery = operation.reason === 'restored' || operation.reason === 'restore-failed' || operation.reason === 'version-differs'
     if (operation.result && !recovery) operation.status = resultState(operation.result, operation.version, this.version, bundle)
     if (recovery) operation.status = 'failed'
     // A completed receipt cannot describe a later installation made by the
     // normal manager UI/CLI. Keep the old request, but report the actual need
     // for restart instead of leaving that completed request unknown forever.
+    const result = operation.result
+    const completed = completedStatus && result && ['applied', 'restart-required'].includes(result.application) &&
+      result.bundle === PACKAGE && result.version === operation.version && !result.error &&
+      (!result.packageResult || (result.packageResult.exitCode === 0 && !result.packageResult.timedOut))
+    // A rollback is conclusive only after the healthy installed version is
+    // running and the journal previously verified the successful installation.
+    const rolledBack = completed && bundle?.installed && this.version === installed && compareVersions(installed, operation.version) < 0
     if (!recovery && operation.result && bundle?.installed && !bundle.error && !bundle.readOnlyReason &&
-      compareVersions(installed, operation.version) > 0) {
+      (compareVersions(installed, operation.version) > 0 || rolledBack)) {
       return { ...this.base(), ...operation, installedVersion: installed,
-        // The recorded operation is older than the bundle now running. That is
+        // Another installation replaced this operation's version. That is
         // not a settings override of this operation's own install.
         status: this.version === installed ? 'superseded' : 'restart-required' }
     }

@@ -6,10 +6,14 @@ const COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 const positive = value => Number.isSafeInteger(value) && value > 0 ? value : undefined
 const label = (value, fallback) => typeof value === 'string' && value.trim() ? value.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 200) : fallback
 const object = value => value && typeof value === 'object' && !Array.isArray(value)
+// Pi 1.4.0 removed these IDs because the Codex backend rejects them for ChatGPT
+// accounts: https://github.com/earendil-works/pi/pull/11173
+const unsupportedCodexModels = new Set(['gpt-5.5', 'gpt-5.3-codex-spark'])
+export const isUnsupportedPiModel = (provider, id) => provider === 'openai-codex' && unsupportedCodexModels.has(id)
 const compatBooleans = new Set([
   'supportsStore', 'supportsDeveloperRole', 'supportsReasoningEffort', 'supportsUsageInStreaming',
   'requiresToolResultName', 'requiresAssistantAfterToolResult', 'requiresThinkingAsText',
-  'requiresAssistantReasoningContent', 'requiresMistralToolIds', 'supportsStrictMode',
+  'requiresAssistantReasoningContent', 'requiresReasoningContentOnAssistantMessages', 'requiresMistralToolIds', 'supportsStrictMode',
   'forceAdaptiveThinking', 'supportsLongCacheRetention', 'supportsInterleavedThinking',
   'supportsToolChoice', 'supportsTemperature', 'supportsTopP', 'supportsMidConvoSystemMessages',
 ])
@@ -39,6 +43,7 @@ export function parsePiCatalog(provider, body, baseline) {
   let skipped = 0
   for (const row of catalogRows(body)) {
     if (!object(row) || row.type && row.type !== 'chat') continue
+    if (isUnsupportedPiModel(provider, row.id)) { skipped++; continue }
     const base = baseline.get(row.id)
     let url
     try { url = new URL(row.baseUrl ?? base?.baseUrl) } catch { skipped++; continue }
@@ -93,7 +98,7 @@ export function parseCommandCatalog(body, references = {}) {
       maxTokens: positive(row.max_output_tokens) ?? positive(reference?.limit?.output) ?? 32768,
       input: Array.isArray(input) && input.includes('image') ? ['text', 'image'] : ['text'], cost: COST,
       ...controls,
-      compat: api === 'anthropic-messages' ? { forceAdaptiveThinking: controls.reasoning && /(?:opus[-.](?:4[-.][6-9]|5)|sonnet[-.](?:4[-.]6|5)|fable[-.]5|mythos[-.]5)/.test(row.id) }
+      compat: api === 'anthropic-messages' ? { forceAdaptiveThinking: controls.reasoning && /(?:opus[-.](?:4[-.][6-9]|5)|sonnet[-.](?:4[-.]6|5)|haiku[-.]5[-.]5|fable[-.]5|mythos[-.]5)/.test(row.id) }
         : { supportsDeveloperRole: false, supportsStore: false, supportsReasoningEffort: controls.reasoning, maxTokensField: 'max_tokens' },
       verified: !!effort && Array.isArray(input),
     })

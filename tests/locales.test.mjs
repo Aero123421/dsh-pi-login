@@ -11,7 +11,7 @@ test('login UI dictionaries agree in keys and placeholders', () => {
 test('the published package has no runtime dependency that installs build scripts', async () => {
   const manifest = JSON.parse(await readFile('package.json', 'utf8'))
   assert.equal(manifest.dependencies, undefined)
-  assert.equal(manifest.devDependencies['@earendil-works/pi-ai'], '1.3.0')
+  assert.equal(manifest.devDependencies['@earendil-works/pi-ai'], '1.4.0')
 })
 test('the standalone bundle registers its installed package ID', async () => {
   const manifest = JSON.parse(await readFile('package.json', 'utf8'))

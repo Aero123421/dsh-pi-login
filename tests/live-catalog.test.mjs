@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LiveCatalogSession, canUseLiveCatalog, liveCatalogProvider } from '../src/live-catalog.mjs'
+import { LiveCatalogSession, canUseLiveCatalog, liveCatalogProvider, catalogBinding } from '../src/live-catalog.mjs'
 import { parsePiCatalog, parseCommandCatalog, parseOllamaModel } from '../src/catalog-parsers.mjs'
 import { thinkingControls, modelForCatalogRequest } from '../src/catalog-controls.mjs'
 import { CATALOG_CONTROL, DISCOVERED_MODEL } from '../src/catalog-metadata.mjs'
@@ -14,6 +14,8 @@ const base = { id: 'old', name: 'Old', provider: 'opencode-go', api: 'openai-com
   reasoning: true, thinkingLevelMap: { off: 'none', low: 'low', high: 'high', minimal: null, medium: null, xhigh: null, max: 'max' },
   contextWindow: 100000, maxTokens: 8192, input: ['text'], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }
 const baseline = new Map([[base.id, base]])
+const codexBase = { ...base, id: 'gpt-6.1-sol', provider: 'openai-codex', api: 'openai-codex-responses', baseUrl: 'https://chatgpt.com/backend-api' }
+const rejectedCodexIds = ['gpt-5.5', 'gpt-5.3-codex-spark']
 function fixture(t, overrides = {}) {
   let saved, now = 10000, current = true
   const calls = [], writes = []
@@ -40,6 +42,36 @@ test('Pi/Go/Zen catalogs add versioned models with exact effort metadata and pre
   assert.equal(f.writes.length, 1)
   await f.session.refresh()
   assert.equal(f.calls.length, 1)
+})
+
+test('fresh Codex catalogs omit officially rejected IDs while retaining new IDs and OpenAI API choices', async t => {
+  const rows = [...rejectedCodexIds, 'future-codex-model'].map(id => ({ ...codexBase, id }))
+  const f = fixture(t, {
+    connection: connection('openai-codex'), baseline: new Map([[codexBase.id, codexBase]]),
+    fetch: async () => Response.json(rows),
+  })
+  await f.session.refresh()
+  const models = f.session.catalog('openai-codex')
+  assert.deepEqual([...models.keys()], [codexBase.id, 'future-codex-model'])
+  assert.equal(f.writes[0].skipped, 2)
+  assert.deepEqual(f.writes[0].models.map(model => model.id), ['future-codex-model'])
+  const apiModel = { ...codexBase, id: 'gpt-5.5', provider: 'openai', api: 'openai-responses', baseUrl: 'https://api.openai.com/v1' }
+  assert.deepEqual(parsePiCatalog('openai', [apiModel], new Map([[apiModel.id, apiModel]])).models.map(model => model.id), ['gpt-5.5'])
+})
+
+test('old persisted Codex catalogs cannot restore rejected IDs or rewrite saved selections', t => {
+  const savedConnection = { ...connection('openai-codex'), profile: {
+    enabledDiscoveredModels: [...rejectedCodexIds, 'future-codex-model'],
+    enabledFastModels: ['gpt-5.5::fast'], disabledModels: ['gpt-5.3-codex-spark'],
+  } }
+  const before = structuredClone(savedConnection)
+  const rows = [...rejectedCodexIds, 'future-codex-model'].map(id => ({ ...codexBase, id }))
+  const snapshot = JSON.stringify({ version: 1, binding: catalogBinding(savedConnection), checkedAt: 10000, models: rows })
+  const f = fixture(t, { connection: savedConnection, baseline: new Map([[codexBase.id, codexBase]]), snapshot: () => snapshot })
+  assert.deepEqual([...f.session.catalog('openai-codex').keys()], [codexBase.id, 'future-codex-model'])
+  assert.deepEqual(savedConnection, before)
+  assert.equal(f.calls.length, 0)
+  assert.equal(f.writes.length, 0)
 })
 
 test('ETag revalidation persists freshness, failed updates keep the last catalog across restarts', async t => {
