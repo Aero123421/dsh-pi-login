@@ -129545,8 +129545,10 @@ var PiLoginBroker = class {
       attempt.status = outcome.status === "authorized" && !attempt.controller.signal.aborted && this.isAttemptCurrent(attempt) ? "authorized" : "cancelled";
       if (attempt.status === "authorized") attempt.reason = void 0;
     }, (error2) => {
-      attempt.status = attempt.controller.signal.aborted ? "cancelled" : "failed";
-      if (!attempt.controller.signal.aborted && error2 instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error2.message)) attempt.reason = "provider-expired";
+      const staleConnection = error2 instanceof Error && error2.message === "stale-connection";
+      attempt.status = attempt.controller.signal.aborted || staleConnection ? "cancelled" : "failed";
+      if (staleConnection) attempt.reason = "connection-changed";
+      else if (!attempt.controller.signal.aborted && error2 instanceof Error && /^Device flow timed out(?:$| after one or more slow_down responses\.)/.test(error2.message)) attempt.reason = "provider-expired";
     }).finally(() => {
       if (attempt.loginStarted) this.connections.endLogin(connection.connectionId);
       clearTimeout(attempt.timer);
@@ -132300,6 +132302,35 @@ var ConnectionManager = class {
   }
 };
 
+// src/presentation.mjs
+var UPDATE_REFUSAL_REASONS = /* @__PURE__ */ new Set([
+  "busy",
+  "profile",
+  "stale-candidate",
+  "storage",
+  "interrupted",
+  "manager-unavailable",
+  "read-only",
+  "source",
+  "incompatible",
+  "compatibility-unknown",
+  "metadata",
+  "asset",
+  "channel",
+  "checksum",
+  "redirect",
+  "size",
+  "release-unavailable",
+  "replace",
+  "restored",
+  "restore-failed",
+  "version-differs"
+]);
+function updateRefusalReason(message) {
+  const code = String(message ?? "").split("/").pop();
+  return UPDATE_REFUSAL_REASONS.has(code) ? code : "network";
+}
+
 // src/routes.mjs
 function applyLoginUI(ctx, options = {}) {
   const broker = new PiLoginBroker(ctx.authorization, ctx.credentials, ctx.settings, options);
@@ -132359,7 +132390,8 @@ function applyLoginUI(ctx, options = {}) {
               else if (method === "update-begin") value = await updates.begin(payload2.candidateId, payload2.requestId, payload2.profileKey);
               else value = await updates.reconcile(payload2.requestId);
             } catch (error2) {
-              throw new LoginError(["busy", "profile"].includes(error2.message) ? error2.message : "update-failed");
+              const reason = updateRefusalReason(error2 instanceof Error ? error2.message : "");
+              throw new LoginError(reason === "network" ? "update-failed" : reason);
             }
           } else {
             const mutation = [...connectionMutations, "start", "answer", "enable", "set-model", "set-provider", "use-login"].includes(method);
