@@ -128,7 +128,7 @@ test('upstream transient errors map to retryable codes while permanent failures 
     ['403 The service is temporarily unavailable', 'AUTH'],
     ['429 upstream_stream_read_error', 'RATE_LIMIT'],
     ['400 Upstream HTTP/2 stream failed', 'INVALID_REQUEST'],
-    ['413 The service is temporarily unavailable', 'INVALID_REQUEST'],
+    ['413 The service is temporarily unavailable', 'CONTEXT_WINDOW_EXCEEDED'],
     ['Unrecognized model output', 'PI_AI_ERROR'],
   ]
   for (const [errorMessage, code] of examples) {

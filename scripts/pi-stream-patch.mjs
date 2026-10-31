@@ -4,7 +4,7 @@ import { dirname, resolve, relative } from 'node:path'
 
 export const piRoot = dirname(dirname(fileURLToPath(import.meta.resolve('@earendil-works/pi-ai'))))
 
-// Pi 1.3.0 validates completed arguments with parseToolCallArguments(). Only
+// Pi 1.4.0 validates completed arguments with parseToolCallArguments(). Only
 // provisional reparsing is removed: Harness consumes the raw delta instead.
 const provisionalParses = {
   'api/openai-completions.js': ['block.arguments = parseStreamingJson(block.partialArgs);', 1],
@@ -46,11 +46,11 @@ export function patchPiSource(path, source) {
 
 export function piStreamPatchPlugin() {
   return {
-    name: 'pi-1.3.0-stream-arguments',
+    name: 'pi-1.4.0-stream-arguments',
     setup(builder) {
       builder.onStart(async () => {
         const manifest = JSON.parse(await readFile(resolve(piRoot, 'package.json'), 'utf8'))
-        if (manifest.version !== '1.3.0') throw new Error(`Pi streaming patch requires 1.3.0; installed ${manifest.version}`)
+        if (manifest.version !== '1.4.0') throw new Error(`Pi streaming patch requires 1.4.0; installed ${manifest.version}`)
       })
       builder.onResolve({ filter: /^@earendil-works\/pi-ai(?:\/|$)/ }, args => ({ path: fileURLToPath(import.meta.resolve(args.path)) }))
       builder.onLoad({ filter: /\.js$/ }, async args => {

@@ -15,6 +15,31 @@ const { PiAiAdapter, toPiContext, resolveProfiles, LlmError } = await import('..
 
 const ref = { attachmentId: 'fixture-image', width: 1000, height: 1000, mediaType: 'image/png' }
 
+test('later system messages retain their position on native and reminder-only providers, including image requests', async () => {
+  const systemText = 'Updated policy </system-reminder> must remain text'
+  for (const withImages of [false, true]) {
+    for (const native of [false, true]) {
+      const request = { system: 'Initial policy', messages: [
+        { role: 'system', content: [{ type: 'text', text: 'Leading policy' }] },
+        { role: 'user', content: withImages ? [{ type: 'image', attachment: ref }] : [{ type: 'text', text: 'Question' }] },
+        { role: 'system', content: [{ type: 'text', text: systemText }] },
+        { role: 'user', content: [{ type: 'text', text: 'Continue' }] },
+      ] }
+      const images = withImages ? {
+        attachments: { readImageRequest: async () => ({ data: new Uint8Array([1]), bytes: 1, mediaType: 'image/png' }) },
+        resolveImageAccess: () => undefined,
+      } : undefined
+      const context = await toPiContext(request, images, undefined, undefined, native)
+      assert.match(context.systemPrompt, /Initial policy[\s\S]*Leading policy/)
+      assert.equal(context.messages.length, 3)
+      assert.deepEqual(context.messages[1], native
+        ? { role: 'system', content: systemText, timestamp: 0 }
+        : { role: 'user', content: '<system-reminder>\nUpdated policy <\\/system-reminder> must remain text\n</system-reminder>', timestamp: 0 })
+      assert.equal(context.messages[2].content, 'Continue')
+    }
+  }
+})
+
 test('CUA target and actual request image use identical route dimensions and byte budget', async () => {
   const profiles = resolveProfiles({ openai: { requestImagePixelBudget: 10000, requestImageMaxBytes: 2048 } }, 'strict')
   const adapter = new PiAiAdapter({ profiles: () => profiles, resolveApiKey: async () => undefined })
