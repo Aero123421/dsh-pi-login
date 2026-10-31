@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-pi-login",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "DeepSeek Harness用のPiログインとモデル管理",
   "type": "module",
   "license": "MIT",
@@ -114,7 +114,7 @@
     "typescript": "6.0.3",
     "use-sync-external-store": "^1.7.0",
     "yaml": "^2.9.1",
-    "zod": "^4.6.5",
+    "zod": "^4.6.7",
     "zustand": "^5.0.15"
   }
 }
