@@ -130258,7 +130258,7 @@ function updateRequestId(value = randomUUID2()) {
 // package.json
 var package_default = {
   name: "@local/dsh-pi-login",
-  version: "0.8.1",
+  version: "0.8.2",
   description: "DeepSeek Harness\u7528\u306EPi\u30ED\u30B0\u30A4\u30F3\u3068\u30E2\u30C7\u30EB\u7BA1\u7406",
   type: "module",
   license: "MIT",
@@ -130372,7 +130372,7 @@ var package_default = {
     typescript: "6.0.3",
     "use-sync-external-store": "^1.7.0",
     yaml: "^2.9.1",
-    zod: "^4.6.5",
+    zod: "^4.6.7",
     zustand: "^5.0.15"
   }
 };
