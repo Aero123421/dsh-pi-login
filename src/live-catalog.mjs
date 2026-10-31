@@ -1,6 +1,6 @@
 import { ProviderCache, ProviderReadError } from './provider-cache.mjs'
 import { readProviderJson } from './account-usage-providers.mjs'
-import { parsePiCatalog, parseCommandCatalog, parseOllamaModel } from './catalog-parsers.mjs'
+import { parsePiCatalog, parseCommandCatalog, parseOllamaModel, isUnsupportedPiModel } from './catalog-parsers.mjs'
 import { CATALOG_CONTROL, DISCOVERED_MODEL } from './catalog-metadata.mjs'
 import { createHash } from 'node:crypto'
 
@@ -68,6 +68,7 @@ export class LiveCatalogSession {
     const value = this.cache.value
     const models = gateways.has(provider) && value ? new Map() : new Map(this.baseline)
     for (const row of value?.models ?? []) {
+      if (isUnsupportedPiModel(provider, row.id)) continue
       const { control, verified, ...model } = row
       const base = this.baseline.get(row.id)
       models.set(row.id, { ...base, ...model, [CATALOG_CONTROL]: control ?? {},

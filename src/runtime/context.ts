@@ -223,6 +223,7 @@ function appendSharedHistory(
   toolNames: Map<ToolCallId, string>,
   onReplayDegrade?: (reason: string) => void,
   replayTarget?: PiAiReplayTarget,
+  supportsMidConvoSystemMessages = false,
 ): boolean {
   if (message.role === 'developer') {
     appendDeveloper(message, options, messages)
@@ -230,7 +231,14 @@ function appendSharedHistory(
   }
   if (message.role === 'system') {
     const content = flattenText(message)
-    if (content.length > 0) messages.push({ role: 'system', content, timestamp: 0 })
+    if (content.length > 0) {
+      if (supportsMidConvoSystemMessages) {
+        messages.push({ role: 'system', content, timestamp: 0 })
+      } else {
+        const reminder = content.replaceAll('</system-reminder>', '<\\/system-reminder>')
+        messages.push({ role: 'user', content: `<system-reminder>\n${reminder}\n</system-reminder>`, timestamp: 0 })
+      }
+    }
     return true
   }
   if (message.role === 'assistant') {
@@ -240,7 +248,7 @@ function appendSharedHistory(
   return false
 }
 
-function textOnlyContext(options: GenerateOptions, onReplayDegrade?: (reason: string) => void, replayTarget?: PiAiReplayTarget): PiContext {
+function textOnlyContext(options: GenerateOptions, onReplayDegrade?: (reason: string) => void, replayTarget?: PiAiReplayTarget, supportsMidConvoSystemMessages = false): PiContext {
   assertSupportedHistory(options.messages)
   const split = splitSystemPrompt(options)
   const toolNames = new Map<ToolCallId, string>()
@@ -249,7 +257,7 @@ function textOnlyContext(options: GenerateOptions, onReplayDegrade?: (reason: st
     if (contentHasImage(message.content)) {
       throw new LlmError('pi-ai image conversion requires the durable attachment service', 'UNSUPPORTED_CONTENT')
     }
-    if (appendSharedHistory(message, options, messages, toolNames, onReplayDegrade, replayTarget)) continue
+    if (appendSharedHistory(message, options, messages, toolNames, onReplayDegrade, replayTarget, supportsMidConvoSystemMessages)) continue
     if (message.role === 'tool') {
       messages.push(toolResultOf(message, toolNames, flattenText(message)))
       continue
@@ -298,6 +306,7 @@ export function toPiContext(
   images?: undefined,
   onReplayDegrade?: (reason: string) => void,
   replayTarget?: PiAiReplayTarget,
+  supportsMidConvoSystemMessages?: boolean,
 ): PiContext
 /**
  * Convert harness history to a pi-ai Context while resolving durable images.
@@ -316,16 +325,18 @@ export function toPiContext(
   images: PiImageRequestContext,
   onReplayDegrade?: (reason: string) => void,
   replayTarget?: PiAiReplayTarget,
+  supportsMidConvoSystemMessages?: boolean,
 ): Promise<PiContext>
 export function toPiContext(
   options: GenerateOptions,
   images?: PiImageRequestContext,
   onReplayDegrade?: (reason: string) => void,
   replayTarget?: PiAiReplayTarget,
+  supportsMidConvoSystemMessages = false,
 ): PiContext | Promise<PiContext> {
   return images === undefined
-    ? textOnlyContext(options, onReplayDegrade, replayTarget)
-    : toPiContextWithImages(options, images, onReplayDegrade, replayTarget)
+    ? textOnlyContext(options, onReplayDegrade, replayTarget, supportsMidConvoSystemMessages)
+    : toPiContextWithImages(options, images, onReplayDegrade, replayTarget, supportsMidConvoSystemMessages)
 }
 
 async function toPiContextWithImages(
@@ -333,6 +344,7 @@ async function toPiContextWithImages(
   images: PiImageRequestContext,
   onReplayDegrade?: (reason: string) => void,
   replayTarget?: PiAiReplayTarget,
+  supportsMidConvoSystemMessages = false,
 ): Promise<PiContext> {
   const { attachments, resolveImageAccess, maxRequestImageBytes } = images
   const requestImagePolicy = images.requestImagePolicy ?? {
@@ -364,7 +376,7 @@ async function toPiContextWithImages(
   const messages: PiMessage[] = []
 
   for (const message of exactMessages) {
-    if (appendSharedHistory(message, options, messages, toolNames, onReplayDegrade, replayTarget)) continue
+    if (appendSharedHistory(message, options, messages, toolNames, onReplayDegrade, replayTarget, supportsMidConvoSystemMessages)) continue
     if (message.role === 'tool') {
       messages.push(toolResultOf(message, toolNames, userContent(message.content, requestImages, resolveImageAccess)))
       continue

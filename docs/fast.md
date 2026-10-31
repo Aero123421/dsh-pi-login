@@ -22,7 +22,7 @@ Fastの内部選択IDは`<APIモデルID>::fast`です。APIへは元のモデ�
 
 ## SDK呼び出しと履歴
 
-Pi SDK `1.3.0`の`streamSimple()`は`serviceTier`を引き継ぎません。`buildBaseOptions()`もこの項目を含めません。対象モデルでは、SDKの`buildBaseOptions()`と`Models.stream()`を使います。これにより推論強度の変換、トークン上限、ヘッダー、通信方式、SDKのティア別料金計算を保ちます。非対象モデルは既存の呼び出しを使います。
+Pi SDK `1.4.0`の`streamSimple()`は`serviceTier`を引き継ぎません。`buildBaseOptions()`もこの項目を含めません。対象モデルでは、SDKの`buildBaseOptions()`と`Models.stream()`を使います。これにより推論強度の変換、トークン上限、ヘッダー、通信方式、SDKのティア別料金計算を保ちます。非対象モデルは既存の呼び出しを使います。
 
 APIペイロードだけを書き換えると、Codexがレスポンスでティアを省略した場合のSDK料金計算にFast指定が届きません。SDKオプションにもティアを渡すため、既存の正式なストリーム経路を使っています。DSに渡す使用量は従来どおりトークン数です。
 
@@ -39,7 +39,7 @@ Fastが拒否された場合に通常版で再送しません。接続先が実�
 | [DS Harness Codexサブエージェント](https://github.com/deepseek-ai/deepseek-harness/blob/d743267388641bc76f17c45ce8b4c231aed1d32c/packages/subagent/subagent-codex/README.md) | モデル名をCodexへそのまま渡す。Fastを独自に指定しない。 |
 | [Codexのモデル能力](https://github.com/openai/codex/blob/8c0f7011674145da7e10627769fb221c74fbf7a0/codex-rs/protocol/src/openai_models.rs) | カタログの`service_tiers`から対応を判定し、モデルIDとは別にティアを扱う。 |
 | [Codexのティア変換](https://github.com/openai/codex/blob/8c0f7011674145da7e10627769fb221c74fbf7a0/codex-rs/protocol/src/config_types.rs) | Fastの送信値は`priority`。 |
-| [Pi SDK](https://github.com/earendil-works/pi/blob/v1.3.0/packages/ai/src/api/openai-codex-responses.ts) | 正式なストリームオプションで`serviceTier`を渡し、料金計算にも使う。 |
+| [Pi SDK](https://github.com/earendil-works/pi/blob/v1.4.0/packages/ai/src/api/openai-codex-responses.ts) | 正式なストリームオプションで`serviceTier`を渡し、料金計算にも使う。 |
 | [pi-codex-fast](https://github.com/calesennett/pi-codex-fast/blob/e8c9eaf044d3c407f73c96c316680ddd4da6641e/extensions/codex-fast.ts)、[pi-codex-fast-mode](https://github.com/SI-RUI-ZHANG/pi-codex-fast-mode/blob/e2ef957395097476a97cc54cdcb680e19efa5598/extensions/core.ts) | 送信前フックで`service_tier=priority`を付ける。対応判定はモデル名に依存する。 |
 | [OpenCode Codex認証](https://github.com/numman-ali/opencode-openai-codex-auth/blob/bec2ad69b252ef4ad7dd33b9532ff8b4fdb6d016/lib/request/helpers/model-map.ts) | 表示用のモデル項目を実際のAPIモデルIDへ対応付ける。 |
 
